@@ -1304,6 +1304,18 @@
         "pauseMediaDescription": "Автоматически приостанавливать музыку при начале диктовки",
         "title": "Звуковые эффекты"
       },
+      "notifications": {
+        "title": "Уведомления",
+        "description": "Настройте, какие уведомления может показывать OpenWhispr",
+        "disableAll": "Отключить все уведомления",
+        "disableAllDescription": "Отключить всё, кроме сообщений об ошибках",
+        "meetingDetection": "Обнаружение встреч",
+        "meetingDetectionDescription": "Уведомлять при обнаружении встречи для начала записи",
+        "calendarReminders": "Напоминания календаря",
+        "calendarRemindersDescription": "Уведомлять, когда запланированная встреча скоро начнётся",
+        "updates": "Обновления приложения",
+        "updatesDescription": "Уведомлять о доступности новой версии"
+      },
       "clipboard": {
         "title": "Буфер обмена",
         "autoPaste": "Автоматическая вставка",

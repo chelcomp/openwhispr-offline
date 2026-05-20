@@ -1352,6 +1352,18 @@
         "pauseMediaDescription": "Mettre automatiquement la musique en pause au début de la dictée",
         "title": "Effets sonores"
       },
+      "notifications": {
+        "title": "Notifications",
+        "description": "Choisissez les notifications qu'OpenWhispr peut afficher",
+        "disableAll": "Désactiver toutes les notifications",
+        "disableAllDescription": "Tout couper sauf les messages d'erreur",
+        "meetingDetection": "Détection de réunion",
+        "meetingDetectionDescription": "Prévenir quand une réunion est détectée pour lancer l'enregistrement",
+        "calendarReminders": "Rappels de calendrier",
+        "calendarRemindersDescription": "Prévenir quand une réunion planifiée va commencer",
+        "updates": "Mises à jour",
+        "updatesDescription": "Prévenir quand une nouvelle version est disponible"
+      },
       "clipboard": {
         "title": "Presse-papiers",
         "autoPaste": "Collage automatique",

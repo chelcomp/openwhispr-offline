@@ -1352,6 +1352,18 @@
         "pauseMediaDescription": "Pausar la música automáticamente al iniciar el dictado",
         "title": "Efectos de sonido"
       },
+      "notifications": {
+        "title": "Notificaciones",
+        "description": "Controla qué notificaciones puede mostrar OpenWhispr",
+        "disableAll": "Desactivar todas las notificaciones",
+        "disableAllDescription": "Silenciar todo excepto los mensajes de error",
+        "meetingDetection": "Detección de reuniones",
+        "meetingDetectionDescription": "Notificar cuando se detecta una reunión para iniciar la grabación",
+        "calendarReminders": "Recordatorios del calendario",
+        "calendarRemindersDescription": "Notificar cuando una reunión programada está a punto de comenzar",
+        "updates": "Actualizaciones",
+        "updatesDescription": "Notificar cuando hay una nueva versión disponible"
+      },
       "clipboard": {
         "title": "Portapapeles",
         "autoPaste": "Pegado automático",

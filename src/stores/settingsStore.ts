@@ -132,6 +132,10 @@ const BOOLEAN_SETTINGS = new Set([
   "dictationAgentDisableThinking",
   "noteFormattingDisableThinking",
   "chatAgentDisableThinking",
+  "notificationsEnabled",
+  "notifyMeetingDetection",
+  "notifyCalendarReminders",
+  "notifyUpdates",
   "gcalPrimaryOnly",
 ]);
 
@@ -356,6 +360,10 @@ export interface SettingsState
   gcalAccounts: GoogleCalendarAccount[];
   gcalConnected: boolean;
   gcalEmail: string;
+  notificationsEnabled: boolean;
+  notifyMeetingDetection: boolean;
+  notifyCalendarReminders: boolean;
+  notifyUpdates: boolean;
   gcalPrimaryOnly: boolean;
   meetingProcessDetection: boolean;
   meetingAudioDetection: boolean;
@@ -536,6 +544,10 @@ export interface SettingsState
   setFloatingIconAutoHide: (enabled: boolean) => void;
   setStartMinimized: (enabled: boolean) => void;
   setGcalAccounts: (accounts: GoogleCalendarAccount[]) => void;
+  setNotificationsEnabled: (value: boolean) => void;
+  setNotifyMeetingDetection: (value: boolean) => void;
+  setNotifyCalendarReminders: (value: boolean) => void;
+  setNotifyUpdates: (value: boolean) => void;
   setGcalPrimaryOnly: (value: boolean) => void;
   setMeetingProcessDetection: (value: boolean) => void;
   setMeetingAudioDetection: (value: boolean) => void;
@@ -761,6 +773,10 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
   pauseMediaOnDictation: readBoolean("pauseMediaOnDictation", false),
   floatingIconAutoHide: readBoolean("floatingIconAutoHide", false),
   startMinimized: readBoolean("startMinimized", false),
+  notificationsEnabled: readBoolean("notificationsEnabled", true),
+  notifyMeetingDetection: readBoolean("notifyMeetingDetection", true),
+  notifyCalendarReminders: readBoolean("notifyCalendarReminders", true),
+  notifyUpdates: readBoolean("notifyUpdates", true),
   ...(() => {
     let accounts: GoogleCalendarAccount[] = [];
     try {
@@ -1225,6 +1241,10 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
       gcalEmail: accounts[0]?.email ?? "",
     });
   },
+  setNotificationsEnabled: createBooleanSetter("notificationsEnabled"),
+  setNotifyMeetingDetection: createBooleanSetter("notifyMeetingDetection"),
+  setNotifyCalendarReminders: createBooleanSetter("notifyCalendarReminders"),
+  setNotifyUpdates: createBooleanSetter("notifyUpdates"),
   setGcalPrimaryOnly: (value: boolean) => {
     if (isBrowser) localStorage.setItem("gcalPrimaryOnly", String(value));
     useSettingsStore.setState({ gcalPrimaryOnly: value });
@@ -1787,6 +1807,22 @@ export async function initializeSettings(): Promise<void> {
     } catch (err) {
       logger.warn(
         "Failed to sync meeting detection preferences on startup",
+        { error: (err as Error).message },
+        "settings"
+      );
+    }
+
+    try {
+      const currentState = useSettingsStore.getState();
+      await window.electronAPI.syncNotificationPreferences?.({
+        notificationsEnabled: currentState.notificationsEnabled,
+        notifyMeetingDetection: currentState.notifyMeetingDetection,
+        notifyCalendarReminders: currentState.notifyCalendarReminders,
+        notifyUpdates: currentState.notifyUpdates,
+      });
+    } catch (err) {
+      logger.warn(
+        "Failed to sync notification preferences on startup",
         { error: (err as Error).message },
         "settings"
       );

@@ -1304,6 +1304,18 @@
         "pauseMediaDescription": "Musik beim Starten der Diktat automatisch pausieren",
         "title": "Soundeffekte"
       },
+      "notifications": {
+        "title": "Benachrichtigungen",
+        "description": "Legen Sie fest, welche Benachrichtigungen OpenWhispr anzeigen darf",
+        "disableAll": "Alle Benachrichtigungen deaktivieren",
+        "disableAllDescription": "Alles stummschalten außer Fehlermeldungen",
+        "meetingDetection": "Meeting-Erkennung",
+        "meetingDetectionDescription": "Benachrichtigen, wenn ein Meeting erkannt wird, um die Aufnahme zu starten",
+        "calendarReminders": "Kalendererinnerungen",
+        "calendarRemindersDescription": "Benachrichtigen, wenn ein geplantes Meeting bald beginnt",
+        "updates": "App-Updates",
+        "updatesDescription": "Benachrichtigen, wenn eine neue Version verfügbar ist"
+      },
       "clipboard": {
         "title": "Zwischenablage",
         "autoPaste": "Automatisches Einfügen",

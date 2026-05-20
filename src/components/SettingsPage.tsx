@@ -708,6 +708,14 @@ export default function SettingsPage({
     setTranscriptionMode,
     remoteTranscriptionUrl,
     setRemoteTranscriptionUrl,
+    notificationsEnabled,
+    setNotificationsEnabled,
+    notifyMeetingDetection,
+    setNotifyMeetingDetection,
+    notifyCalendarReminders,
+    setNotifyCalendarReminders,
+    notifyUpdates,
+    setNotifyUpdates,
     audioCuesEnabled,
     setAudioCuesEnabled,
     pauseMediaOnDictation,
@@ -977,6 +985,15 @@ export default function SettingsPage({
     };
     loadAutoStart();
   }, [platform]);
+
+  useEffect(() => {
+    window.electronAPI?.syncNotificationPreferences?.({
+      notificationsEnabled,
+      notifyMeetingDetection,
+      notifyCalendarReminders,
+      notifyUpdates,
+    });
+  }, [notificationsEnabled, notifyMeetingDetection, notifyCalendarReminders, notifyUpdates]);
 
   const handleAutoStartChange = async (enabled: boolean) => {
     if (window.electronAPI?.setAutoStartEnabled) {
@@ -2352,6 +2369,67 @@ export default function SettingsPage({
                     description={t("settingsPage.general.soundEffects.pauseMediaDescription")}
                   >
                     <Toggle checked={pauseMediaOnDictation} onChange={setPauseMediaOnDictation} />
+                  </SettingsRow>
+                </SettingsPanelRow>
+              </SettingsPanel>
+            </div>
+
+            {/* Notifications */}
+            <div>
+              <SectionHeader
+                title={t("settingsPage.general.notifications.title")}
+                description={t("settingsPage.general.notifications.description")}
+              />
+              <SettingsPanel>
+                <SettingsPanelRow>
+                  <SettingsRow
+                    label={t("settingsPage.general.notifications.disableAll")}
+                    description={t("settingsPage.general.notifications.disableAllDescription")}
+                  >
+                    <Toggle
+                      checked={!notificationsEnabled}
+                      onChange={(v) => setNotificationsEnabled(!v)}
+                    />
+                  </SettingsRow>
+                </SettingsPanelRow>
+                <SettingsPanelRow>
+                  <SettingsRow
+                    label={t("settingsPage.general.notifications.meetingDetection")}
+                    description={t(
+                      "settingsPage.general.notifications.meetingDetectionDescription"
+                    )}
+                  >
+                    <Toggle
+                      checked={notifyMeetingDetection}
+                      onChange={setNotifyMeetingDetection}
+                      disabled={!notificationsEnabled}
+                    />
+                  </SettingsRow>
+                </SettingsPanelRow>
+                <SettingsPanelRow>
+                  <SettingsRow
+                    label={t("settingsPage.general.notifications.calendarReminders")}
+                    description={t(
+                      "settingsPage.general.notifications.calendarRemindersDescription"
+                    )}
+                  >
+                    <Toggle
+                      checked={notifyCalendarReminders}
+                      onChange={setNotifyCalendarReminders}
+                      disabled={!notificationsEnabled}
+                    />
+                  </SettingsRow>
+                </SettingsPanelRow>
+                <SettingsPanelRow>
+                  <SettingsRow
+                    label={t("settingsPage.general.notifications.updates")}
+                    description={t("settingsPage.general.notifications.updatesDescription")}
+                  >
+                    <Toggle
+                      checked={notifyUpdates}
+                      onChange={setNotifyUpdates}
+                      disabled={!notificationsEnabled}
+                    />
                   </SettingsRow>
                 </SettingsPanelRow>
               </SettingsPanel>
