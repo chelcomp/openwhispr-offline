@@ -51,7 +51,11 @@ export const useAudioRecording = (toast, options = {}) => {
           window.electronAPI?.pauseMediaPlayback?.();
         }
         window.electronAPI?.registerCancelHotkey?.("Escape");
-        void playStartCue();
+        setTimeout(() => {
+          if (audioManagerRef.current?.getState().isRecording) {
+            void playStartCue();
+          }
+        }, 300);
       }
 
       return didStart;

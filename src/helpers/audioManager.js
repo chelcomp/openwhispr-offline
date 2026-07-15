@@ -628,10 +628,6 @@ registerProcessor("pcm-collector-processor", PCMCollectorProcessor);
         micStream.getTracks().forEach((track) => track.stop());
       };
 
-      this.mediaRecorder.start(RECORDING_TIMESLICE_MS);
-      this.isRecording = true;
-      this.onStateChange?.({ isRecording: true, isProcessing: false });
-
       const {
         showTranscriptionPreview,
         useLocalWhisper,
@@ -639,12 +635,53 @@ registerProcessor("pcm-collector-processor", PCMCollectorProcessor);
         whisperModel,
         parakeetModel,
       } = getSettings();
-      if (showTranscriptionPreview && useLocalWhisper && this._gateCtx && this._gateSource) {
-        try {
-          if (!this._gateWorkletLoaded) {
+
+      // Pre-load worklet modules BEFORE starting capture so no audio is missed.
+      if (this._gateCtx && this._gateSource) {
+        if (showTranscriptionPreview && useLocalWhisper && !this._gateWorkletLoaded) {
+          try {
             await this._gateCtx.audioWorklet.addModule(this.getWorkletBlobUrl());
             this._gateWorkletLoaded = true;
+          } catch (e) {
+            logger.warn("Preview worklet load failed", { error: e.message }, "audio");
           }
+        }
+        if (!this._pcmCollectorLoaded) {
+          try {
+            await this._gateCtx.audioWorklet.addModule(this.getPcmCollectorBlobUrl());
+            this._pcmCollectorLoaded = true;
+          } catch (e) {
+            logger.warn("PCM collector load failed", { error: e.message }, "audio");
+          }
+        }
+      }
+
+      // Connect PCM collector BEFORE starting MediaRecorder so the first frame
+      // of audio is captured in PCM and nothing is lost to the async setup gap.
+      if (this._gateCtx && this._gateSource && this._pcmCollectorLoaded) {
+        try {
+          this._pcmChunks = [];
+          this._pcmCollector = new AudioWorkletNode(this._gateCtx, "pcm-collector-processor");
+          this._pcmCollector.port.onmessage = (event) => {
+            if (event.data !== null) {
+              this._pcmChunks.push(new Int16Array(event.data));
+            }
+          };
+          this._gateSource.connect(this._pcmCollector);
+        } catch (e) {
+          logger.warn("PCM collector setup failed, will fall back to WebM", { error: e.message }, "audio");
+          this._pcmCollector = null;
+        }
+      }
+
+      // Audio pipeline is ready — start capture now.
+      this.mediaRecorder.start(RECORDING_TIMESLICE_MS);
+      this.isRecording = true;
+      this.onStateChange?.({ isRecording: true, isProcessing: false });
+
+      // Connect preview worklet after start (non-critical; small delay acceptable).
+      if (showTranscriptionPreview && useLocalWhisper && this._gateCtx && this._gateSource && this._gateWorkletLoaded) {
+        try {
           this._previewProcessor = new AudioWorkletNode(this._gateCtx, "pcm-streaming-processor");
           this._previewProcessor.port.onmessage = (event) => {
             window.electronAPI?.sendDictationPreviewAudio?.(event.data);
@@ -657,28 +694,6 @@ registerProcessor("pcm-collector-processor", PCMCollectorProcessor);
           window.electronAPI?.startDictationPreview?.({ provider, model, language });
         } catch (e) {
           logger.warn("Preview worklet setup failed", { error: e.message }, "audio");
-        }
-      }
-
-      // Attach the PCM collector — this captures 16 kHz mono samples directly from
-      // the gate context so the main process can skip the FFmpeg decode round-trip.
-      if (this._gateCtx && this._gateSource) {
-        try {
-          if (!this._pcmCollectorLoaded) {
-            await this._gateCtx.audioWorklet.addModule(this.getPcmCollectorBlobUrl());
-            this._pcmCollectorLoaded = true;
-          }
-          this._pcmChunks = [];
-          this._pcmCollector = new AudioWorkletNode(this._gateCtx, "pcm-collector-processor");
-          this._pcmCollector.port.onmessage = (event) => {
-            if (event.data !== null) {
-              this._pcmChunks.push(new Int16Array(event.data));
-            }
-          };
-          this._gateSource.connect(this._pcmCollector);
-        } catch (e) {
-          logger.warn("PCM collector setup failed, will fall back to WebM", { error: e.message }, "audio");
-          this._pcmCollector = null;
         }
       }
 
