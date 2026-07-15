@@ -5867,8 +5867,13 @@ class IPCHandlers {
     });
 
     // ── Local dictation preview (whisper.cpp / parakeet) ─────────────────────
+    // Max audio retained for whisper re-transcription: 29s (whisper's hard limit is 30s)
+    const MAX_PREVIEW_ACCUM_BYTES = 29 * 16000 * 2; // 29s × 16 kHz × 2 bytes (Int16)
+
     let dictationPreviewMode = false;
-    let dictationPreviewBuffer = [];
+    let dictationPreviewBuffer = [];     // Nvidia startup temp buffer only
+    let dictationPreviewAccumBuffer = []; // Whisper: all audio since recording started
+    let dictationPreviewAccumBytes = 0;
     let dictationPreviewTimer = null;
     let dictationPreviewStream = null;
     let dictationPreviewGen = 0;
@@ -5893,6 +5898,8 @@ class IPCHandlers {
       dictationPreviewMode = false;
       if (!preserveSession) dictationPreviewSessionActive = false;
       dictationPreviewBuffer = [];
+      dictationPreviewAccumBuffer = [];
+      dictationPreviewAccumBytes = 0;
       dictationPreviewTranscribing = false;
       dictationPreviewProvider = null;
       dictationPreviewModel = null;
@@ -5902,57 +5909,51 @@ class IPCHandlers {
 
     const transcribeDictationPreviewChunk = async () => {
       if (dictationPreviewTranscribing) return;
-      if (!dictationPreviewBuffer.length) return;
+      if (!dictationPreviewAccumBuffer.length) return;
       dictationPreviewTranscribing = true;
       try {
-        const pcm = Buffer.concat(dictationPreviewBuffer);
-        dictationPreviewBuffer = [];
+        // Whisper path: re-transcribe ALL accumulated audio from the start.
+        // This overwrites (not appends) the preview, giving whisper full context
+        // and allowing early hallucinations to be self-corrected over time.
+        const pcm = Buffer.concat(dictationPreviewAccumBuffer);
+        // Skip if essentially silent (RMS check on full buffer)
         const samples = new Int16Array(pcm.buffer, pcm.byteOffset, pcm.length / 2);
         let sumSq = 0;
         for (let i = 0; i < samples.length; i++) {
           const n = samples[i] / 0x7fff;
           sumSq += n * n;
         }
-        if (Math.sqrt(sumSq / samples.length) < 0.002) return;
-        const wav = pcm16ToWav(pcm);
-        let result;
-        if (dictationPreviewProvider === "nvidia") {
-          result = await this.parakeetManager.transcribeLocalParakeet(wav, {
-            model: dictationPreviewModel,
-          });
-          if (result?.success && result.text?.trim()) {
-            this.windowManager.appendTranscriptionPreview(result.text.trim());
-          }
-        } else {
-          const vadOptions = this._resolveWhisperVadOptions("dictation");
-          result = await this.whisperManager.transcribeLocalWhisper(wav, {
-            model: dictationPreviewModel,
-            language: dictationPreviewLanguage || undefined,
-            initialPrompt: dictationPreviewInitialPrompt || undefined,
-            verboseJson: true,
-            ...vadOptions,
-          });
+        if (Math.sqrt(sumSq / samples.length) < 0.001) return;
 
-          if (result?.success) {
-            // Filter segments where whisper itself signals no speech
-            const NO_SPEECH_THRESHOLD = 0.6;
-            let text;
-            if (Array.isArray(result.segments) && result.segments.length > 0) {
-              text = result.segments
-                .filter((s) => (s.no_speech_prob ?? 0) < NO_SPEECH_THRESHOLD)
-                .map((s) => s.text)
-                .join(" ")
-                .trim();
-            } else {
-              text = result.text?.trim() || "";
-            }
-            if (text && !this.whisperManager.isHallucinatedText(text, dictationPreviewLanguage)) {
-              this.windowManager.appendTranscriptionPreview(text);
-            }
+        const wav = pcm16ToWav(pcm);
+        const vadOptions = this._resolveWhisperVadOptions("dictation");
+        const result = await this.whisperManager.transcribeLocalWhisper(wav, {
+          model: dictationPreviewModel,
+          language: dictationPreviewLanguage || undefined,
+          initialPrompt: dictationPreviewInitialPrompt || undefined,
+          verboseJson: true,
+          ...vadOptions,
+        });
+
+        if (result?.success) {
+          const NO_SPEECH_THRESHOLD = 0.6;
+          let text;
+          if (Array.isArray(result.segments) && result.segments.length > 0) {
+            text = result.segments
+              .filter((s) => (s.no_speech_prob ?? 0) < NO_SPEECH_THRESHOLD)
+              .map((s) => s.text)
+              .join(" ")
+              .trim();
+          } else {
+            text = result.text?.trim() || "";
+          }
+          if (text && !this.whisperManager.isHallucinatedText(text, dictationPreviewLanguage)) {
+            // Replace the entire preview (not append) — full retranscription result
+            this.windowManager.showTranscriptionPreview(text);
           }
         }
       } catch (error) {
-        debugLogger.error("Dictation preview chunk failed", { error: error.message }, "audio");
+        debugLogger.error("Dictation preview retranscription failed", { error: error.message }, "audio");
       } finally {
         dictationPreviewTranscribing = false;
       }
@@ -5996,7 +5997,7 @@ class IPCHandlers {
         }
       }
       if (gen !== dictationPreviewGen) return { success: true };
-      dictationPreviewTimer = setInterval(() => transcribeDictationPreviewChunk(), 1500);
+      dictationPreviewTimer = setInterval(() => transcribeDictationPreviewChunk(), 3000);
       return { success: true };
     });
 
@@ -6009,6 +6010,15 @@ class IPCHandlers {
         return;
       }
       dictationPreviewBuffer.push(pcm);
+
+      // Whisper path: accumulate all audio for full retranscription.
+      // Trim oldest chunks when total exceeds 29s (whisper's limit is 30s).
+      dictationPreviewAccumBuffer.push(pcm);
+      dictationPreviewAccumBytes += pcm.length;
+      while (dictationPreviewAccumBytes > MAX_PREVIEW_ACCUM_BYTES && dictationPreviewAccumBuffer.length > 1) {
+        dictationPreviewAccumBytes -= dictationPreviewAccumBuffer[0].length;
+        dictationPreviewAccumBuffer.shift();
+      }
     });
 
     ipcMain.handle("dismiss-dictation-preview", async () => {
