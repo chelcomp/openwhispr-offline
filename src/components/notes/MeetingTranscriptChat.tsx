@@ -586,6 +586,12 @@ interface MeetingTranscriptChatProps {
   onDismissSuggestion?: (speakerId: string) => void;
   onAttachSpeakerEmail?: (profileId: number, email: string | null) => void;
   onToggleSelect?: (segmentId: string) => void;
+  onSeek?: (startMs: number) => void;
+}
+
+function formatMmSs(ms: number): string {
+  const s = Math.floor(ms / 1000);
+  return `${String(Math.floor(s / 60)).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`;
 }
 
 export function MeetingTranscriptChat({
@@ -610,6 +616,7 @@ export function MeetingTranscriptChat({
   onDismissSuggestion,
   onAttachSpeakerEmail,
   onToggleSelect,
+  onSeek,
 }: MeetingTranscriptChatProps) {
   const { t } = useTranslation();
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -816,16 +823,6 @@ export function MeetingTranscriptChat({
               style={{ animation: "agent-message-in 200ms ease-out both" }}
             >
               {labelElement && !sameSpeaker && labelElement}
-              {labelElement && sameSpeaker && (
-                <div
-                  className={cn(
-                    "grid grid-rows-[0fr] opacity-0 pointer-events-none transition-[grid-template-rows,opacity] duration-150 ease-out",
-                    "group-hover:grid-rows-[1fr] group-hover:opacity-100 group-hover:pointer-events-auto"
-                  )}
-                >
-                  <div className="overflow-hidden">{labelElement}</div>
-                </div>
-              )}
               <div className="relative max-w-[80%]">
                 <div
                   className={cn(
@@ -844,7 +841,21 @@ export function MeetingTranscriptChat({
                     isSelected && "ring-2 ring-primary/60"
                   )}
                 >
-                  {segment.text}
+                  <span>{segment.text}</span>
+                  {segment.startMs != null && onSeek && (
+                    <button
+                      type="button"
+                      onClick={(e) => { e.stopPropagation(); onSeek(segment.startMs!); }}
+                      className={cn(
+                        "mt-1 block text-[10px] font-mono transition-colors",
+                        selfSide
+                          ? "text-primary-foreground/30 hover:text-primary-foreground/70"
+                          : "text-foreground/25 hover:text-primary/70"
+                      )}
+                    >
+                      {formatMmSs(segment.startMs)}
+                    </button>
+                  )}
                 </div>
                 {selectable && (
                   <SelectCheckbox

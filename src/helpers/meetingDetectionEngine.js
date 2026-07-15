@@ -243,10 +243,13 @@ class MeetingDetectionEngine {
 
     this._meetingModeActive = true;
 
+    const now = new Date();
+    const pad = (n) => String(n).padStart(2, "0");
+    const defaultTitle = `Meeting ${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}`;
     const event = {
       id: `manual-${Date.now()}`,
       calendar_id: "__manual__",
-      summary: "New note",
+      summary: defaultTitle,
       start_time: new Date().toISOString(),
       end_time: new Date(Date.now() + 3600000).toISOString(),
       is_all_day: 0,

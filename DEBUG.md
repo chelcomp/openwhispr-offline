@@ -8,10 +8,10 @@ Enable verbose logging to diagnose issues like "no audio detected" or transcript
 
 ```bash
 # macOS
-/Applications/OpenWhispr.app/Contents/MacOS/OpenWhispr --log-level=debug
+/Applications/EktosWhispr.app/Contents/MacOS/EktosWhispr --log-level=debug
 
 # Windows
-OpenWhispr.exe --log-level=debug
+EktosWhispr.exe --log-level=debug
 ```
 
 ### Option 2: Environment File
@@ -19,20 +19,20 @@ OpenWhispr.exe --log-level=debug
 Add to your `.env` file and restart:
 
 ```
-OPENWHISPR_LOG_LEVEL=debug
+EKTOSWHISPR_LOG_LEVEL=debug
 ```
 
 **Env file locations:**
 
-- macOS: `~/Library/Application Support/OpenWhispr/.env`
-- Windows: `%APPDATA%\OpenWhispr\.env`
-- Linux: `~/.config/OpenWhispr/.env`
+- macOS: `~/Library/Application Support/EktosWhispr/.env`
+- Windows: `%APPDATA%\EktosWhispr\.env`
+- Linux: `~/.config/EktosWhispr/.env`
 
 ## Log File Locations
 
-- **macOS**: `~/Library/Application Support/OpenWhispr/logs/debug-*.log`
-- **Windows**: `%APPDATA%\OpenWhispr\logs\debug-*.log`
-- **Linux**: `~/.config/OpenWhispr/logs/debug-*.log`
+- **macOS**: `~/Library/Application Support/EktosWhispr/logs/debug-*.log`
+- **Windows**: `%APPDATA%\EktosWhispr\logs\debug-*.log`
+- **Linux**: `~/.config/EktosWhispr/logs/debug-*.log`
 
 ## What Gets Logged
 
@@ -45,9 +45,9 @@ OPENWHISPR_LOG_LEVEL=debug
 | Agent Mode            | Streaming responses, conversation management, model selection    |
 | Meeting Detection     | Process monitoring, audio activity, calendar event matching      |
 | Meeting Transcription | WebSocket connection, Realtime API session, audio buffering      |
-| Google Calendar       | OAuth flow, token refresh, event sync                            |
 | Media Control         | Pause/resume events, player detection (MediaRemote/GSMTC/MPRIS2) |
 | Audio Storage         | File retention, cleanup cycles, storage usage                    |
+| Meeting Audio         | WebM/Opus save path, FFmpeg mix args, re-transcription chunks    |
 
 ## Common Issues
 
@@ -88,4 +88,4 @@ When reporting issues:
 Debug mode is off by default. To ensure it's disabled:
 
 - Remove `--log-level=debug` from command
-- Remove `OPENWHISPR_LOG_LEVEL` from `.env`
+- Remove `EKTOSWHISPR_LOG_LEVEL` from `.env`

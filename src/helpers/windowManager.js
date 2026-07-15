@@ -253,7 +253,7 @@ class WindowManager {
       }
       lastToggleTime = now;
 
-      // Capture target app PID before the window might steal focus
+      // Capture target app PID and name before the window might steal focus
       if (this.textEditMonitor) this.textEditMonitor.captureTargetPid();
 
       this.sendToggleDictation();

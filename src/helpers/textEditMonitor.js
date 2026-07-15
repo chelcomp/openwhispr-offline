@@ -82,24 +82,43 @@ class TextEditMonitor extends EventEmitter {
     this._lastValue = null;
     this._stdoutBuffer = "";
     this.lastTargetPid = null;
+    this.lastTargetAppName = null;
   }
 
   /**
-   * macOS: capture the active app's PID via NSWorkspace before the overlay steals focus.
-   * Must be called at hotkey press time, BEFORE showDictationPanel()/mainWindow.show().
-   * NSWorkspace.frontmostApplication correctly identifies the key window owner,
-   * ignoring panel-type windows like the OpenWhispr overlay.
+   * macOS: capture the active app's PID and localizedName via NSWorkspace before the
+   * overlay steals focus. Must be called at hotkey press time, BEFORE
+   * showDictationPanel()/mainWindow.show().
    */
   captureTargetPid() {
     if (process.platform !== "darwin") return;
-    this._readFrontmostPid().then((pid) => {
-      this.lastTargetPid = pid;
-      debugLogger.debug("[TextEditMonitor] Captured target PID", { pid });
+    const script =
+      'ObjC.import("AppKit"); const a = $.NSWorkspace.sharedWorkspace.frontmostApplication;' +
+      'JSON.stringify({pid: a.processIdentifier, name: ObjC.unwrap(a.localizedName) || ""})';
+    execFile("osascript", ["-l", "JavaScript", "-e", script], { timeout: 2000 }, (err, stdout) => {
+      try {
+        const { pid, name } = JSON.parse(stdout.trim());
+        this.lastTargetPid = typeof pid === "number" && !isNaN(pid) ? pid : null;
+        this.lastTargetAppName = name || null;
+        try {
+          require("./activeAppCapture").setMacOSAppName(this.lastTargetAppName);
+        } catch (_) {}
+        debugLogger.debug("[TextEditMonitor] Captured target PID and app name", {
+          pid: this.lastTargetPid,
+          name: this.lastTargetAppName,
+        });
+      } catch {
+        // Fallback: PID-only via the original script
+        this._readFrontmostPid().then((pid) => {
+          this.lastTargetPid = pid;
+        });
+      }
     });
   }
 
   /**
    * macOS: resolve the frontmost app's PID, or null if it can't be read.
+   * Still used by activateTargetPid() polling loop.
    */
   _readFrontmostPid() {
     return new Promise((resolve) => {

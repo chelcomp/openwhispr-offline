@@ -87,4 +87,28 @@ function listNvidiaGpus() {
   });
 }
 
-module.exports = { detectNvidiaGpu, listNvidiaGpus };
+const { app } = require("electron");
+
+let cachedIntelGpuInfo = null;
+
+async function detectIntelGpu() {
+  if (cachedIntelGpuInfo !== null) return cachedIntelGpuInfo;
+  if (process.platform === "darwin") {
+    cachedIntelGpuInfo = { hasIntelGpu: false };
+    return cachedIntelGpuInfo;
+  }
+  try {
+    const gpuInfo = await app.getGPUInfo("complete");
+    const devices = gpuInfo.gpuDevice || [];
+    const intelDevice = devices.find((d) => d.vendorId === 0x8086);
+    cachedIntelGpuInfo = {
+      hasIntelGpu: !!intelDevice,
+      gpuName: intelDevice?.description || null,
+    };
+  } catch {
+    cachedIntelGpuInfo = { hasIntelGpu: false };
+  }
+  return cachedIntelGpuInfo;
+}
+
+module.exports = { detectNvidiaGpu, listNvidiaGpus, detectIntelGpu };

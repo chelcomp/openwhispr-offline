@@ -16,7 +16,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "
 import { Input } from "../ui/input";
 import type { FolderItem } from "../../types/electron";
 import { findDefaultFolder, MEETINGS_FOLDER_NAME } from "./shared";
-import { useAuth } from "../../hooks/useAuth";
+
 import { useUsage } from "../../hooks/useUsage";
 import { useSettings } from "../../hooks/useSettings";
 import { useStartOnboarding } from "../../hooks/useStartOnboarding";
@@ -80,7 +80,7 @@ export default function UploadAudioView({ onNoteCreated, onOpenSettings }: Uploa
 
   const [providerReady, setProviderReady] = useState<boolean | null>(null);
 
-  const { isSignedIn } = useAuth();
+
   const usage = useUsage();
   const isProUser = usage?.isSubscribed || usage?.isTrial;
 
@@ -121,11 +121,10 @@ export default function UploadAudioView({ onNoteCreated, onOpenSettings }: Uploa
   );
   const useCleanupModel = useSettingsStore((s) => s.useCleanupModel);
 
-  const isOpenWhisprCloud =
-    isSignedIn && cloudTranscriptionMode === "openwhispr" && !useLocalWhisper;
+  const isEktosWhisprCloud = false;
 
   // Mode detection
-  const isByok = !useLocalWhisper && !isOpenWhisprCloud;
+  const isByok = !useLocalWhisper && !isEktosWhisprCloud;
 
   // Mode-aware file size validation
   // Local: no limits at all
@@ -145,11 +144,8 @@ export default function UploadAudioView({ onNoteCreated, onOpenSettings }: Uploa
       // Custom endpoints (e.g. local whisper.cpp): no file size restrictions
     } else if (isByok) {
       byokTooLarge = file.sizeBytes > BYOK_MAX_FILE_SIZE;
-      if (byokTooLarge && !isSignedIn) {
-        requiresAccount = true;
-      }
     } else {
-      // Cloud (OpenWhispr) — user is always signed in here
+      // Cloud (EktosWhispr) — user is always signed in here
       fileTooLarge = file.sizeBytes > CLOUD_PRO_MAX_FILE_SIZE;
       requiresUpgrade = !isProUser && file.sizeBytes > CLOUD_FREE_MAX_FILE_SIZE;
       isLargeFile = file.sizeBytes > CLOUD_FREE_MAX_FILE_SIZE;
@@ -173,7 +169,7 @@ export default function UploadAudioView({ onNoteCreated, onOpenSettings }: Uploa
   useEffect(() => {
     let cancelled = false;
     const checkProviderReady = async () => {
-      if (isOpenWhisprCloud) {
+      if (isEktosWhisprCloud) {
         setProviderReady(true);
         return;
       }
@@ -219,7 +215,7 @@ export default function UploadAudioView({ onNoteCreated, onOpenSettings }: Uploa
       cancelled = true;
     };
   }, [
-    isOpenWhisprCloud,
+    isEktosWhisprCloud,
     useLocalWhisper,
     localTranscriptionProvider,
     cloudTranscriptionProvider,
@@ -235,7 +231,7 @@ export default function UploadAudioView({ onNoteCreated, onOpenSettings }: Uploa
   ]);
 
   const getActiveModelLabel = (): string => {
-    if (isOpenWhisprCloud) return t("notes.upload.openwhisprCloud");
+    if (isEktosWhisprCloud) return t("notes.upload.ektoswhisprCloud");
     if (useLocalWhisper) {
       if (localTranscriptionProvider === "nvidia")
         return `Parakeet · ${parakeetModel || "default"}`;
@@ -336,45 +332,20 @@ export default function UploadAudioView({ onNoteCreated, onOpenSettings }: Uploa
     setProgress(0);
     setChunkProgress(null);
 
-    const useChunkProgress = isOpenWhisprCloud && isLargeFile;
-
-    if (useChunkProgress) {
-      progressCleanupRef.current =
-        window.electronAPI.onUploadTranscriptionProgress?.((data) => {
-          if (data.chunksTotal > 0) {
-            setChunkProgress({
-              chunksTotal: data.chunksTotal,
-              chunksCompleted: data.chunksCompleted,
-            });
-            setProgress((data.chunksCompleted / data.chunksTotal) * 90);
-          }
-        }) ?? null;
-    } else {
-      progressRef.current = setInterval(() => {
-        setProgress((prev) => {
-          if (prev >= 90) {
-            if (progressRef.current) clearInterval(progressRef.current);
-            return prev;
-          }
-          return prev + Math.random() * 6;
-        });
-      }, 500);
-    }
+    progressRef.current = setInterval(() => {
+      setProgress((prev) => {
+        if (prev >= 90) {
+          if (progressRef.current) clearInterval(progressRef.current);
+          return prev;
+        }
+        return prev + Math.random() * 6;
+      });
+    }, 500);
 
     try {
       let res: { success: boolean; text?: string; error?: string; code?: string; warning?: string };
 
-      if (isOpenWhisprCloud) {
-        res = await withSessionRefresh(async () => {
-          const r = await window.electronAPI.transcribeAudioFileCloud!(file.path);
-          if (!r.success && r.code) {
-            throw Object.assign(new Error(r.error || "Cloud transcription failed"), {
-              code: r.code,
-            });
-          }
-          return r;
-        });
-      } else if (useLocalWhisper) {
+      if (useLocalWhisper) {
         res = await window.electronAPI.transcribeAudioFile(file.path, {
           provider: localTranscriptionProvider as "whisper" | "nvidia",
           model: localTranscriptionProvider === "nvidia" ? parakeetModel : whisperModel,
@@ -473,13 +444,13 @@ export default function UploadAudioView({ onNoteCreated, onOpenSettings }: Uploa
   const handleCreateAccount = useStartOnboarding();
 
   const switchToCloud = () => {
-    setUploadTranscriptionMode("openwhispr");
-    setUploadCloudTranscriptionMode("openwhispr");
+    setUploadTranscriptionMode("providers");
+    setUploadCloudTranscriptionMode("byok");
     setUploadUseLocalWhisper(false);
   };
 
   const getTranscribingLabel = (): string => {
-    if (isOpenWhisprCloud) return t("notes.upload.transcribingCloud");
+    if (isEktosWhisprCloud) return t("notes.upload.transcribingCloud");
     if (useLocalWhisper) return t("notes.upload.transcribingLocal");
     return t("notes.upload.transcribingProvider", { provider: cloudTranscriptionProvider });
   };
@@ -516,7 +487,7 @@ export default function UploadAudioView({ onNoteCreated, onOpenSettings }: Uploa
               requiresUpgrade={!!requiresUpgrade}
               fileTooLarge={fileTooLarge}
               isLargeFile={isLargeFile}
-              isOpenWhisprCloud={isOpenWhisprCloud}
+              isEktosWhisprCloud={isEktosWhisprCloud}
               byokTooLarge={byokTooLarge}
               requiresAccount={requiresAccount}
               isProUser={!!isProUser}
@@ -758,7 +729,7 @@ interface SelectedViewProps {
   requiresUpgrade: boolean;
   fileTooLarge: boolean;
   isLargeFile: boolean;
-  isOpenWhisprCloud: boolean;
+  isEktosWhisprCloud: boolean;
   byokTooLarge: boolean;
   requiresAccount: boolean;
   isProUser: boolean;
@@ -776,7 +747,7 @@ function SelectedView({
   requiresUpgrade,
   fileTooLarge,
   isLargeFile,
-  isOpenWhisprCloud,
+  isEktosWhisprCloud,
   byokTooLarge,
   requiresAccount,
   isProUser,
@@ -845,7 +816,7 @@ function SelectedView({
       )}
 
       {/* Cloud large file info (Pro user, will be chunked) */}
-      {isLargeFile && !requiresUpgrade && !fileTooLarge && isOpenWhisprCloud && (
+      {isLargeFile && !requiresUpgrade && !fileTooLarge && isEktosWhisprCloud && (
         <p className="text-xs text-foreground/20 text-center mb-3">
           {t("notes.upload.largeFileNote")}
         </p>

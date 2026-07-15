@@ -3,7 +3,7 @@ import { useTranslation } from "react-i18next";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
-import { Download, Trash2, Cloud, Lock, X, Zap, Check } from "lucide-react";
+import { Download, Trash2, Cloud, Lock, X } from "lucide-react";
 import { ProviderIcon } from "./ui/ProviderIcon";
 import { ProviderTabs } from "./ui/ProviderTabs";
 import ModelCardList from "./ui/ModelCardList";
@@ -30,7 +30,7 @@ import { createExternalLinkHandler } from "../utils/externalLinks";
 import { API_ENDPOINTS, normalizeBaseUrl } from "../config/constants";
 import { GetApiKeyLink } from "./ui/GetApiKeyLink";
 import { getCachedPlatform } from "../utils/platform";
-import type { CudaWhisperStatus } from "../types/electron";
+import { GpuModeSelector } from "./ui/GpuModeSelector";
 import logger from "../utils/logger";
 
 interface LocalModel {
@@ -205,22 +205,11 @@ const CLOUD_PROVIDER_TABS = [
   { id: "groq", name: "Groq" },
   { id: "xai", name: "xAI" },
   { id: "mistral", name: "Mistral" },
-  { id: "corti", name: "Corti" },
-  { id: "tinfoil", name: "Tinfoil" },
   { id: "custom", name: "Custom" },
 ];
 
 interface ProviderCredentialField {
-  key:
-    | "openaiApiKey"
-    | "groqApiKey"
-    | "xaiApiKey"
-    | "mistralApiKey"
-    | "cortiClientId"
-    | "cortiClientSecret"
-    | "cortiEnvironment"
-    | "cortiTenant"
-    | "tinfoilApiKey";
+  key: "openaiApiKey" | "groqApiKey" | "xaiApiKey" | "mistralApiKey";
   input: "secret" | "text" | "select";
   labelKey?: string;
   placeholder?: string;
@@ -246,32 +235,6 @@ const PROVIDER_CREDENTIALS: Record<
   mistral: {
     consoleUrl: "https://console.mistral.ai/api-keys",
     fields: [{ key: "mistralApiKey", input: "secret" }],
-  },
-  corti: {
-    consoleUrl: "https://www.corti.ai/?utm_source=referral&utm_content=&utm_campaign=openwhispr",
-    fields: [
-      { key: "cortiClientId", input: "secret", labelKey: "transcription.corti.clientId" },
-      { key: "cortiClientSecret", input: "secret", labelKey: "transcription.corti.clientSecret" },
-      {
-        key: "cortiEnvironment",
-        input: "select",
-        labelKey: "transcription.corti.environment",
-        options: [
-          { value: "us", label: "US" },
-          { value: "eu", label: "EU" },
-        ],
-      },
-      {
-        key: "cortiTenant",
-        input: "text",
-        labelKey: "transcription.corti.tenant",
-        placeholder: "base",
-      },
-    ],
-  },
-  tinfoil: {
-    consoleUrl: "https://tinfoil.sh/inference?utm_source=referral&utm_campaign=openwhispr",
-    fields: [{ key: "tinfoilApiKey", input: "secret" }],
   },
 };
 
@@ -347,16 +310,6 @@ export default function TranscriptionModelPicker({
   const setXaiApiKey = useSettingsStore((s) => s.setXaiApiKey);
   const mistralApiKey = useSettingsStore((s) => s.mistralApiKey);
   const setMistralApiKey = useSettingsStore((s) => s.setMistralApiKey);
-  const cortiClientId = useSettingsStore((s) => s.cortiClientId);
-  const setCortiClientId = useSettingsStore((s) => s.setCortiClientId);
-  const cortiClientSecret = useSettingsStore((s) => s.cortiClientSecret);
-  const setCortiClientSecret = useSettingsStore((s) => s.setCortiClientSecret);
-  const cortiEnvironment = useSettingsStore((s) => s.cortiEnvironment);
-  const setCortiEnvironment = useSettingsStore((s) => s.setCortiEnvironment);
-  const cortiTenant = useSettingsStore((s) => s.cortiTenant);
-  const setCortiTenant = useSettingsStore((s) => s.setCortiTenant);
-  const tinfoilApiKey = useSettingsStore((s) => s.tinfoilApiKey);
-  const setTinfoilApiKey = useSettingsStore((s) => s.setTinfoilApiKey);
   const customTranscriptionApiKey = useSettingsStore((s) => s.customTranscriptionApiKey);
   const setCustomTranscriptionApiKey = useSettingsStore((s) => s.setCustomTranscriptionApiKey);
   const effectiveLocal = mode === "local" ? true : mode === "cloud" ? false : useLocalWhisper;
@@ -365,14 +318,6 @@ export default function TranscriptionModelPicker({
   const [internalLocalProvider, setInternalLocalProvider] = useState(selectedLocalProvider);
   const hasLoadedRef = useRef(false);
   const hasLoadedParakeetRef = useRef(false);
-  const [cudaStatus, setCudaStatus] = useState<CudaWhisperStatus | null>(null);
-  const [cudaDownloading, setCudaDownloading] = useState(false);
-  const [cudaProgress, setCudaProgress] = useState<DownloadProgress>({
-    downloadedBytes: 0,
-    totalBytes: 0,
-    percentage: 0,
-  });
-  const [cudaDismissed, setCudaDismissed] = useState(false);
 
   useEffect(() => {
     if (selectedLocalProvider !== internalLocalProvider) {
@@ -530,50 +475,9 @@ export default function TranscriptionModelPicker({
       loadLocalModels();
       loadParakeetModels();
     };
-    window.addEventListener("openwhispr-models-cleared", handleModelsCleared);
-    return () => window.removeEventListener("openwhispr-models-cleared", handleModelsCleared);
+    window.addEventListener("ektoswhispr-models-cleared", handleModelsCleared);
+    return () => window.removeEventListener("ektoswhispr-models-cleared", handleModelsCleared);
   }, [loadLocalModels, loadParakeetModels]);
-
-  useEffect(() => {
-    if (!effectiveLocal || internalLocalProvider !== "whisper") return;
-    if (getCachedPlatform() === "darwin") return;
-    window.electronAPI
-      ?.getCudaWhisperStatus?.()
-      ?.then(setCudaStatus)
-      .catch(() => {});
-  }, [effectiveLocal, internalLocalProvider]);
-
-  useEffect(() => {
-    if (!cudaDownloading) return;
-    const cleanup = window.electronAPI?.onCudaDownloadProgress?.((data) => {
-      setCudaProgress(data);
-    });
-    return cleanup;
-  }, [cudaDownloading]);
-
-  const handleCudaDownload = async () => {
-    setCudaDownloading(true);
-    try {
-      const result = await window.electronAPI?.downloadCudaWhisperBinary?.();
-      if (result?.success) {
-        const status = await window.electronAPI?.getCudaWhisperStatus?.();
-        setCudaStatus(status || null);
-      }
-    } finally {
-      setCudaDownloading(false);
-    }
-  };
-
-  const handleCudaDelete = async () => {
-    await window.electronAPI?.deleteCudaWhisperBinary?.();
-    const status = await window.electronAPI?.getCudaWhisperStatus?.();
-    setCudaStatus(status || null);
-  };
-
-  const handleCudaCancel = async () => {
-    await window.electronAPI?.cancelCudaWhisperDownload?.();
-    setCudaDownloading(false);
-  };
 
   const {
     downloadingModel,
@@ -721,22 +625,12 @@ export default function TranscriptionModelPicker({
     groqApiKey,
     xaiApiKey,
     mistralApiKey,
-    cortiClientId,
-    cortiClientSecret,
-    cortiEnvironment,
-    cortiTenant,
-    tinfoilApiKey,
   };
   const credentialSetters: Record<ProviderCredentialField["key"], (value: string) => void> = {
     openaiApiKey: setOpenaiApiKey,
     groqApiKey: setGroqApiKey,
     xaiApiKey: setXaiApiKey,
     mistralApiKey: setMistralApiKey,
-    cortiClientId: setCortiClientId,
-    cortiClientSecret: setCortiClientSecret,
-    cortiEnvironment: setCortiEnvironment,
-    cortiTenant: setCortiTenant,
-    tinfoilApiKey: setTinfoilApiKey,
   };
 
   const cloudModelOptions = useMemo(() => {
@@ -1057,69 +951,7 @@ export default function TranscriptionModelPicker({
 
           {progressDisplay}
 
-          {cudaDownloading && internalLocalProvider === "whisper" && (
-            <div>
-              <DownloadProgressBar modelName="GPU acceleration" progress={cudaProgress} />
-              <div className="px-2.5 pb-1 flex justify-end">
-                <button
-                  onClick={handleCudaCancel}
-                  className="text-xs text-muted-foreground hover:text-foreground transition-colors"
-                >
-                  Cancel
-                </button>
-              </div>
-            </div>
-          )}
-
-          {internalLocalProvider === "whisper" &&
-            !cudaDismissed &&
-            !cudaDownloading &&
-            getCachedPlatform() !== "darwin" &&
-            cudaStatus?.gpuInfo.hasNvidiaGpu && (
-              <div className="rounded-md border border-border bg-surface-1 p-2.5">
-                {cudaStatus.downloaded ? (
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-1.5">
-                      <Check size={13} className="text-success" />
-                      <span className="text-xs font-medium text-foreground">{t("gpu.active")}</span>
-                    </div>
-                    <Button
-                      onClick={handleCudaDelete}
-                      size="sm"
-                      variant="ghost"
-                      className="h-6 px-2 text-xs text-muted-foreground hover:text-destructive"
-                    >
-                      {t("gpu.remove")}
-                    </Button>
-                  </div>
-                ) : (
-                  <div className="flex items-start gap-2.5">
-                    <Zap size={13} className="text-primary shrink-0 mt-0.5" />
-                    <div className="flex-1 min-w-0">
-                      <p className="text-xs font-medium text-foreground">
-                        {t("gpu.transcriptionBanner")}
-                      </p>
-                      <div className="flex items-center gap-2 mt-1.5">
-                        <Button
-                          onClick={handleCudaDownload}
-                          size="sm"
-                          variant="default"
-                          className="h-6 px-2.5 text-xs"
-                        >
-                          {t("gpu.enableButton")}
-                        </Button>
-                        <button
-                          onClick={() => setCudaDismissed(true)}
-                          className="text-xs text-muted-foreground hover:text-foreground transition-colors"
-                        >
-                          {t("gpu.dismiss")}
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                )}
-              </div>
-            )}
+          {internalLocalProvider === "whisper" && <GpuModeSelector type="whisper" />}
 
           <div>
             {internalLocalProvider === "whisper" && renderLocalModels()}

@@ -50,20 +50,7 @@ const BYOK_API_KEYS = [
     save: "saveOpenrouterKey",
     storeKey: "openrouterApiKey",
   },
-  {
-    base: "tinfoil",
-    env: "TINFOIL_API_KEY",
-    get: "getTinfoilKey",
-    save: "saveTinfoilKey",
-    storeKey: "tinfoilApiKey",
-  },
-  {
-    base: "corti",
-    env: "CORTI_API_KEY",
-    get: "getCortiKey",
-    save: "saveCortiKey",
-    storeKey: "cortiApiKey",
-  },
+
 ];
 
 module.exports = { BYOK_API_KEYS };

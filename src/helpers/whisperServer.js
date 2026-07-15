@@ -9,7 +9,7 @@ const debugLogger = require("./debugLogger");
 const { killProcess } = require("../utils/process");
 const { isPortAvailable } = require("../utils/serverUtils");
 const { getSafeTempDir } = require("./safeTempDir");
-const { convertToWav } = require("./ffmpegUtils");
+const { convertToWav, isWhisperReadyWav } = require("./ffmpegUtils");
 const sidecarPidFile = require("./sidecarPidFile");
 const { sanitizeWhisperVadConfig, DEFAULT_WHISPER_VAD_CONFIG } = require("./whisperVadConfig");
 
@@ -648,14 +648,16 @@ class WhisperServerManager extends EventEmitter {
           : "too short",
     });
 
-    const { language, initialPrompt } = options;
+    const { language, initialPrompt, verboseJson } = options;
 
-    // Always convert to 16kHz mono WAV - whisper.cpp requires this exact format
+    // Skip FFmpeg when the renderer already built a 16 kHz mono PCM WAV.
     let finalBuffer = audioBuffer;
-    if (!this.canConvert) {
-      throw new Error("FFmpeg not found - required for audio conversion");
+    if (!isWhisperReadyWav(audioBuffer)) {
+      if (!this.canConvert) {
+        throw new Error("FFmpeg not found - required for audio conversion");
+      }
+      finalBuffer = await this._convertToWav(audioBuffer);
     }
-    finalBuffer = await this._convertToWav(audioBuffer);
 
     const boundary = `----WhisperBoundary${Date.now()}`;
     const parts = [];
@@ -689,7 +691,7 @@ class WhisperServerManager extends EventEmitter {
     parts.push(
       `--${boundary}\r\n` +
         `Content-Disposition: form-data; name="response_format"\r\n\r\n` +
-        `json\r\n`
+        `${verboseJson ? "verbose_json" : "json"}\r\n`
     );
     parts.push(`--${boundary}--\r\n`);
 

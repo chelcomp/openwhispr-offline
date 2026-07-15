@@ -5,15 +5,7 @@ import { TRANSLATIONS_BY_LOCALE } from "./locales/translations";
 
 export const SUPPORTED_UI_LANGUAGES = [
   "en",
-  "es",
-  "fr",
-  "de",
   "pt",
-  "it",
-  "ru",
-  "ja",
-  "zh-CN",
-  "zh-TW",
 ] as const;
 export type UiLanguage = (typeof SUPPORTED_UI_LANGUAGES)[number];
 
@@ -41,41 +33,9 @@ const resources = {
     translation: TRANSLATIONS_BY_LOCALE.en,
     prompts: PROMPTS_BY_LOCALE.en,
   },
-  es: {
-    translation: TRANSLATIONS_BY_LOCALE.es,
-    prompts: PROMPTS_BY_LOCALE.es,
-  },
-  fr: {
-    translation: TRANSLATIONS_BY_LOCALE.fr,
-    prompts: PROMPTS_BY_LOCALE.fr,
-  },
-  de: {
-    translation: TRANSLATIONS_BY_LOCALE.de,
-    prompts: PROMPTS_BY_LOCALE.de,
-  },
   pt: {
     translation: TRANSLATIONS_BY_LOCALE.pt,
     prompts: PROMPTS_BY_LOCALE.pt,
-  },
-  it: {
-    translation: TRANSLATIONS_BY_LOCALE.it,
-    prompts: PROMPTS_BY_LOCALE.it,
-  },
-  ru: {
-    translation: TRANSLATIONS_BY_LOCALE.ru,
-    prompts: PROMPTS_BY_LOCALE.ru,
-  },
-  ja: {
-    translation: TRANSLATIONS_BY_LOCALE.ja,
-    prompts: PROMPTS_BY_LOCALE.ja,
-  },
-  "zh-CN": {
-    translation: TRANSLATIONS_BY_LOCALE["zh-CN"],
-    prompts: PROMPTS_BY_LOCALE["zh-CN"],
-  },
-  "zh-TW": {
-    translation: TRANSLATIONS_BY_LOCALE["zh-TW"],
-    prompts: PROMPTS_BY_LOCALE["zh-TW"],
   },
 } as const;
 

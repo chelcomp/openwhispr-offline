@@ -3,9 +3,9 @@
  *
  * Captures system audio for meeting transcription via WASAPI process
  * loopback (VAD\Process_Loopback, Windows 10 2004+). Runs in EXCLUDE mode
- * against OpenWhispr's own process tree, so it hears every application on
+ * against EktosWhispr's own process tree, so it hears every application on
  * every render endpoint — independent of the default output device — while
- * never re-capturing OpenWhispr's own sounds.
+ * never re-capturing EktosWhispr's own sounds.
  *
  * Commands:
  *   windows-system-audio-helper.exe probe
@@ -39,15 +39,9 @@
 #include <stdlib.h>
 #include <string.h>
 
-/* The SDK declares these WASAPI IIDs via MIDL_INTERFACE for C++ __uuidof
- * only — no import library defines them and <initguid.h> skips them in C —
- * so they must be defined in-source to link. */
-DEFINE_GUID(IID_IAudioClient,
-    0x1cb9ad4c, 0xdbfa, 0x4c32, 0xb1, 0x78, 0xc2, 0xf5, 0x68, 0xa7, 0x03, 0xb2);
-DEFINE_GUID(IID_IAudioCaptureClient,
-    0xc8adbd64, 0xe71e, 0x48a0, 0xa4, 0xde, 0x18, 0x5c, 0x39, 0x5c, 0xd3, 0x17);
-DEFINE_GUID(IID_IActivateAudioInterfaceCompletionHandler,
-    0x41d949ab, 0x9862, 0x444a, 0x80, 0xf6, 0xc2, 0x61, 0x33, 0x4d, 0xa5, 0xeb);
+/* IID_IAudioClient, IID_IAudioCaptureClient, and
+ * IID_IActivateAudioInterfaceCompletionHandler are defined by the MinGW
+ * headers when <initguid.h> precedes the WASAPI includes above. */
 
 #if defined(__has_include)
 #if __has_include(<audioclientactivationparams.h>)

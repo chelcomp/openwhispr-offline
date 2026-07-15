@@ -1,7 +1,7 @@
 import { useCallback } from "react";
 
 // Restart the onboarding flow from the cloud-migration step (used when a
-// settings panel needs the user to sign in for OpenWhispr Cloud).
+// settings panel needs the user to sign in for EktosWhispr Cloud).
 export function useStartOnboarding() {
   return useCallback(() => {
     localStorage.setItem("pendingCloudMigration", "true");

@@ -1,10 +1,10 @@
 {
-  "appId": "com.gizmolabs.openwhispr",
+  "appId": "com.gizmolabs.ektoswhispr",
   "afterPack": "scripts/afterPack.js",
-  "productName": "OpenWhispr",
+  "productName": "EktosWhispr",
   "protocols": {
-    "name": "OpenWhispr Protocol",
-    "schemes": ["openwhispr"]
+    "name": "EktosWhispr Protocol",
+    "schemes": ["ektoswhispr"]
   },
   "directories": {
     "output": "dist"
@@ -148,10 +148,10 @@
     ],
     "extendInfo": {
       "LSUIElement": false,
-      "CFBundleIconName": "openwhispr",
-      "NSMicrophoneUsageDescription": "OpenWhispr uses the microphone to capture your voice for transcription.",
-      "NSAudioCaptureUsageDescription": "OpenWhispr uses system audio to capture other participants' audio from calls and meetings.",
-      "NSAccessibilityUsageDescription": "OpenWhispr needs accessibility permissions to paste transcribed text into other applications."
+      "CFBundleIconName": "ektoswhispr",
+      "NSMicrophoneUsageDescription": "EktosWhispr uses the microphone to capture your voice for transcription.",
+      "NSAudioCaptureUsageDescription": "EktosWhispr uses system audio to capture other participants' audio from calls and meetings.",
+      "NSAccessibilityUsageDescription": "EktosWhispr needs accessibility permissions to paste transcribed text into other applications."
     }
   },
   "win": {
@@ -159,8 +159,8 @@
     "icon": "src/assets/icon.ico",
     "azureSignOptions": {
       "endpoint": "https://eus.codesigning.azure.net/",
-      "certificateProfileName": "openwhispr-release",
-      "codeSigningAccountName": "OpenWhispr",
+      "certificateProfileName": "ektoswhispr-release",
+      "codeSigningAccountName": "EktosWhispr",
       "publisherName": "CN=Gizmo Labs Inc., O=Gizmo Labs Inc., L=Wilmington, S=Delaware, C=US"
     },
     "extraResources": [
@@ -244,7 +244,7 @@
     "include": "resources/nsis/installer.nsh"
   },
   "dmg": {
-    "title": "OpenWhispr",
+    "title": "EktosWhispr",
     "icon": "src/assets/icon.icns",
     "window": {
       "width": 540,
@@ -253,8 +253,8 @@
   },
   "publish": {
     "provider": "github",
-    "owner": "OpenWhispr",
-    "repo": "openwhispr",
+    "owner": "chelcomp",
+    "repo": "ektoswhispr-offline",
     "private": false,
     "releaseType": "draft"
   }

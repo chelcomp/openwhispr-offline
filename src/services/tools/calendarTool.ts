@@ -37,47 +37,11 @@ export const calendarTool: ToolDefinition = {
   },
   readOnly: true,
 
-  async execute(args: Record<string, unknown>): Promise<ToolResult> {
-    const timeRange = (args.timeRange as TimeRange) || "today";
-    const windowMinutes = getWindowMinutes(timeRange);
-
-    try {
-      const response = await window.electronAPI.gcalGetUpcomingEvents!(windowMinutes);
-
-      if (!response.success) {
-        return {
-          success: false,
-          data: null,
-          displayText: "Failed to fetch calendar events",
-        };
-      }
-
-      const events = response.events.map((event: Record<string, unknown>) => ({
-        summary: event.summary || "(No title)",
-        start: event.start,
-        end: event.end,
-        location: event.location || null,
-      }));
-
-      if (events.length === 0) {
-        return {
-          success: true,
-          data: [],
-          displayText: `No events found for ${timeRange}`,
-        };
-      }
-
-      return {
-        success: true,
-        data: events,
-        displayText: `Found ${events.length} event${events.length === 1 ? "" : "s"} for ${timeRange}`,
-      };
-    } catch (error) {
-      return {
-        success: false,
-        data: null,
-        displayText: `Failed to fetch calendar events: ${(error as Error).message}`,
-      };
-    }
+  async execute(_args: Record<string, unknown>): Promise<ToolResult> {
+    return {
+      success: true,
+      data: [],
+      displayText: "Google Calendar integration is not available in this version.",
+    };
   },
 };

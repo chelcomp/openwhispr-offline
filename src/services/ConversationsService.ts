@@ -1,102 +1,15 @@
-import { cloudGet, cloudPost, cloudPatch, cloudDelete } from "./cloudApi.js";
+// Cloud disabled — local-only stub
+const _disabled = (): never => {
+  throw new Error("cloud disabled");
+};
 
-interface ConversationInput {
-  client_conversation_id?: string;
-  title?: string;
-  created_at?: string;
-  updated_at?: string;
-  messages?: Array<{
-    role: "user" | "assistant" | "system";
-    content: string;
-    metadata?: Record<string, unknown> | null;
-  }>;
-}
-
-interface CloudConversation {
-  id: string;
-  client_conversation_id: string | null;
-  title: string;
-  archived_at: string | null;
-  deleted_at: string | null;
-  created_at: string;
-  updated_at: string;
-}
-
-interface CloudMessage {
-  id: string;
-  conversation_id: string;
-  role: "user" | "assistant" | "system";
-  content: string;
-  metadata: Record<string, unknown> | null;
-  created_at: string;
-}
-
-interface CloudConversationWithMessages extends CloudConversation {
-  messages?: CloudMessage[];
-}
-
-async function create(input: ConversationInput): Promise<CloudConversation> {
-  return cloudPost<CloudConversation>("/api/conversations/create", input);
-}
-
-async function update(
-  id: string,
-  updates: { title?: string; archived_at?: string }
-): Promise<CloudConversation> {
-  return cloudPatch<CloudConversation>("/api/conversations/update", { id, ...updates });
-}
-
-async function deleteConversation(id: string): Promise<void> {
-  await cloudDelete("/api/conversations/delete", { id });
-}
-
-async function list(
-  limit?: number,
-  before?: string,
-  archived?: boolean,
-  include?: string,
-  since?: string
-): Promise<{ conversations: CloudConversationWithMessages[] }> {
-  const params = new URLSearchParams();
-  if (limit !== undefined) params.set("limit", String(limit));
-  if (before !== undefined) params.set("before", before);
-  if (archived) params.set("archived", "true");
-  if (include !== undefined) params.set("include", include);
-  if (since !== undefined) params.set("since", since);
-  const query = params.toString();
-  return cloudGet<{ conversations: CloudConversationWithMessages[] }>(
-    `/api/conversations/list${query ? `?${query}` : ""}`
-  );
-}
-
-async function addMessage(
-  conversationId: string,
-  role: "user" | "assistant" | "system",
-  content: string,
-  metadata?: Record<string, unknown> | null
-): Promise<CloudMessage> {
-  return cloudPost<CloudMessage>("/api/conversations/messages", {
-    conversation_id: conversationId,
-    role,
-    content,
-    ...(metadata ? { metadata } : {}),
-  });
-}
-
-async function listMessages(conversationId: string): Promise<{ messages: CloudMessage[] }> {
-  const params = new URLSearchParams({ conversation_id: conversationId });
-  return cloudGet<{ messages: CloudMessage[] }>(`/api/conversations/messages?${params}`);
-}
-
-async function search(
-  query: string,
-  limit?: number
-): Promise<{ conversations: CloudConversation[] }> {
-  return cloudPost<{ conversations: CloudConversation[] }>("/api/conversations/search", {
-    query,
-    ...(limit !== undefined ? { limit } : {}),
-  });
-}
+async function create(_input: unknown): Promise<never> { return _disabled(); }
+async function update(_id: string, _updates: unknown): Promise<never> { return _disabled(); }
+async function deleteConversation(_id: string): Promise<never> { return _disabled(); }
+async function list(_limit?: number, _before?: string, _archived?: boolean, _include?: string, _since?: string): Promise<never> { return _disabled(); }
+async function addMessage(_conversationId: string, _role: string, _content: string, _metadata?: unknown): Promise<never> { return _disabled(); }
+async function listMessages(_conversationId: string): Promise<never> { return _disabled(); }
+async function search(_query: string, _limit?: number): Promise<never> { return _disabled(); }
 
 export { create, update, deleteConversation, list, addMessage, listMessages, search };
 

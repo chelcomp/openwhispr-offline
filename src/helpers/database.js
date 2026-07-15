@@ -5,7 +5,7 @@ const { randomUUID } = require("crypto");
 const debugLogger = require("./debugLogger");
 const { app } = require("electron");
 
-// Server-enforced trigger cap (openwhispr-api); enforced here so one oversized
+// Server-enforced trigger cap (ektoswhispr-api); enforced here so one oversized
 // trigger can't 400 the whole sync batch.
 const MAX_SNIPPET_TRIGGER_LENGTH = 100;
 
@@ -100,6 +100,12 @@ class DatabaseManager {
         )
       `);
 
+      try {
+        this.db.exec("ALTER TABLE snippets ADD COLUMN apps TEXT DEFAULT NULL");
+      } catch (err) {
+        if (!err.message.includes("duplicate column")) throw err;
+      }
+
       this.db.exec(`
         CREATE TABLE IF NOT EXISTS notes (
           id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -130,6 +136,11 @@ class DatabaseManager {
       }
       try {
         this.db.exec("ALTER TABLE notes ADD COLUMN cloud_id TEXT");
+      } catch (err) {
+        if (!err.message.includes("duplicate column")) throw err;
+      }
+      try {
+        this.db.exec("ALTER TABLE notes ADD COLUMN audio_path TEXT DEFAULT NULL");
       } catch (err) {
         if (!err.message.includes("duplicate column")) throw err;
       }
@@ -1080,11 +1091,21 @@ class DatabaseManager {
       if (!this.db) {
         throw new Error("Database not initialized");
       }
-      return this.db
+      const rows = this.db
         .prepare(
-          "SELECT trigger, replacement FROM snippets WHERE deleted_at IS NULL ORDER BY id ASC"
+          "SELECT trigger, replacement, apps FROM snippets WHERE deleted_at IS NULL ORDER BY id ASC"
         )
         .all();
+      return rows.map((row) => {
+        const snippet = { trigger: row.trigger, replacement: row.replacement };
+        if (row.apps) {
+          try {
+            const parsed = JSON.parse(row.apps);
+            if (Array.isArray(parsed) && parsed.length > 0) snippet.apps = parsed;
+          } catch {}
+        }
+        return snippet;
+      });
     } catch (error) {
       debugLogger.error("Error getting snippets", { error: error.message }, "database");
       throw error;
@@ -1105,7 +1126,9 @@ class DatabaseManager {
         if (!trigger || !replacement) continue;
         if (trigger.length > MAX_SNIPPET_TRIGGER_LENGTH) continue;
         const lower = trigger.toLowerCase();
-        if (!incomingByLower.has(lower)) incomingByLower.set(lower, { trigger, replacement });
+        const apps =
+          Array.isArray(raw.apps) && raw.apps.length > 0 ? JSON.stringify(raw.apps) : null;
+        if (!incomingByLower.has(lower)) incomingByLower.set(lower, { trigger, replacement, apps });
       }
       const cleaned = Array.from(incomingByLower.values());
       const incomingLower = new Set(incomingByLower.keys());
@@ -1123,13 +1146,13 @@ class DatabaseManager {
       );
       const hardDelete = this.db.prepare("DELETE FROM snippets WHERE id = ? AND cloud_id IS NULL");
       const restore = this.db.prepare(
-        "UPDATE snippets SET deleted_at = NULL, trigger = ?, replacement = ?, updated_at = datetime('now'), sync_status = 'pending' WHERE id = ?"
+        "UPDATE snippets SET deleted_at = NULL, trigger = ?, replacement = ?, apps = ?, updated_at = datetime('now'), sync_status = 'pending' WHERE id = ?"
       );
       const updateActive = this.db.prepare(
-        "UPDATE snippets SET trigger = ?, replacement = ?, updated_at = datetime('now'), sync_status = 'pending' WHERE id = ? AND (trigger != ? OR replacement != ?)"
+        "UPDATE snippets SET trigger = ?, replacement = ?, apps = ?, updated_at = datetime('now'), sync_status = 'pending' WHERE id = ? AND (trigger != ? OR replacement != ? OR COALESCE(apps,'') != COALESCE(?,''))"
       );
       const insert = this.db.prepare(
-        "INSERT OR IGNORE INTO snippets (trigger, replacement, client_snippet_id, sync_status, updated_at) VALUES (?, ?, ?, 'pending', datetime('now'))"
+        "INSERT OR IGNORE INTO snippets (trigger, replacement, apps, client_snippet_id, sync_status, updated_at) VALUES (?, ?, ?, ?, 'pending', datetime('now'))"
       );
 
       this.db.transaction(() => {
@@ -1144,19 +1167,21 @@ class DatabaseManager {
           const existing = existingByLower.get(snippet.trigger.toLowerCase());
           if (existing) {
             if (existing.deleted_at) {
-              restore.run(snippet.trigger, snippet.replacement, existing.id);
+              restore.run(snippet.trigger, snippet.replacement, snippet.apps, existing.id);
             } else {
               updateActive.run(
                 snippet.trigger,
                 snippet.replacement,
+                snippet.apps,
                 existing.id,
                 snippet.trigger,
-                snippet.replacement
+                snippet.replacement,
+                snippet.apps
               );
             }
             continue;
           }
-          insert.run(snippet.trigger, snippet.replacement, randomUUID());
+          insert.run(snippet.trigger, snippet.replacement, snippet.apps, randomUUID());
         }
       })();
 
@@ -1481,6 +1506,7 @@ class DatabaseManager {
         "deleted_at",
         "client_note_id",
         "cloud_id",
+        "audio_path",
       ];
       const fields = [];
       const values = [];

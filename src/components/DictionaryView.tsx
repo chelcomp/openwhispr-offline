@@ -14,9 +14,7 @@ import { Input } from "./ui/input";
 import { Textarea } from "./ui/textarea";
 import { Button } from "./ui/button";
 import { ConfirmDialog } from "./ui/dialog";
-import { Tabs, TabsList, TabsTrigger, TabsContent } from "./ui/tabs";
 import { useToast } from "./ui/useToast";
-import SnippetsView from "./SnippetsView";
 import { useSettings } from "../hooks/useSettings";
 import { getAgentName } from "../utils/agentName";
 
@@ -139,7 +137,7 @@ export default function DictionaryView() {
   );
 
   return (
-    <Tabs defaultValue="dictionary" className="flex flex-col h-full">
+    <div className="flex flex-col h-full">
       <ConfirmDialog
         open={confirmClear}
         onOpenChange={setConfirmClear}
@@ -149,18 +147,7 @@ export default function DictionaryView() {
         variant="destructive"
       />
 
-      <div className="px-5 pt-4">
-        <TabsList className="h-7 p-0.5 rounded-[7px]">
-          <TabsTrigger value="dictionary" className="h-6 px-2.5 text-xs rounded-[5px]">
-            {t("dictionary.tabDictionary")}
-          </TabsTrigger>
-          <TabsTrigger value="snippets" className="h-6 px-2.5 text-xs rounded-[5px]">
-            {t("dictionary.tabSnippets")}
-          </TabsTrigger>
-        </TabsList>
-      </div>
-
-      <TabsContent value="dictionary" className="flex-1 min-h-0 mt-0 overflow-y-auto">
+      <div className="flex-1 min-h-0 overflow-y-auto">
         <div className="px-5 py-4 flex flex-col gap-3">
           {/* ─── Add word ─── */}
           <div>
@@ -332,11 +319,7 @@ export default function DictionaryView() {
             )}
           </div>
         </div>
-      </TabsContent>
-
-      <TabsContent value="snippets" className="flex-1 min-h-0 mt-0 overflow-y-auto">
-        <SnippetsView />
-      </TabsContent>
-    </Tabs>
+      </div>
+    </div>
   );
 }

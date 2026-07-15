@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.7.5-offline.1] — 2026-07-14
+
+> First independent release of this offline fork, based on [OpenWhispr/openwhispr](https://github.com/OpenWhispr/openwhispr) v1.7.5.
+> All changes below are specific to this fork and are not present in the upstream repository.
+
+### Added
+
+- **Meeting audio recording & playback.** Microphone and system audio PCM streams are saved during each meeting and merged by FFmpeg into a compressed WebM/Opus file (~14 MB/hour) stored in `userData/meeting-audio/`. The transcript view shows an audio player bar when a recording is available. Deleting a meeting note deletes the audio file.
+- **Timestamped transcript lines with click-to-seek.** Every live transcript segment carries `startMs`/`endMs` derived from the recording wall-clock. Each bubble in the transcript chat shows a clickable `MM:SS` timestamp that seeks the audio player to that moment. Timestamps survive serialisation (persisted in the `transcript` JSON column via `serializeTranscriptSegments`) and are restored when reopening an old note.
+- **Re-transcription with progress.** A "Re-transcribe" button in the transcript view splits the saved audio into 30-second chunks, runs each through whisper with `verbose_json` for precise segment timestamps, and replaces the transcript. A progress bar and percentage counter update per chunk (0 → 100 %).
+- **App-scoped snippets.** Snippets can be restricted to a specific application; they only expand when that app is the active foreground window.
+- **Active-app detection (`activeAppCapture.js`).** The main process polls the foreground application on Windows (`Get-Process` / `GetForegroundWindow`) and exposes it via IPC so snippet and hotkey rules can be context-aware.
+- **Local text transforms (`transformManager.js`).** Post-transcription rules rewrite, format, or route dictated text entirely on-device before pasting.
+- **Meeting default title.** New manual meetings are titled `Meeting YYYY-MM-DD HH:MM` (local time) instead of the upstream "New note".
+- **Transcript view as default for meeting notes.** Opening a meeting note that already has a transcript goes directly to the Transcript tab rather than the Notes tab.
+
+### Changed
+
+- Speaker-name hover-reveal on consecutive same-speaker bubbles removed — the hidden popover was intercepting clicks on the timestamp button beneath it.
+- `whisperServer.js` supports `verbose_json` response format (controlled by a new `verboseJson` option passed through `transcribeLocalWhisper`) while keeping `json` for the live meeting path.
+
+### Fixed
+
+- Race condition between `meetingAudioStorage.saveAudio()` (reads system PCM via FFmpeg) and `_startOrSkipDiarization`'s `finally` block (deletes the same PCM). System PCM is now copied to a temporary path before being passed to either consumer; each consumer cleans up its own copy.
+- `note-updated` broadcast was missing after the async audio save, so `note.audio_path` was never reflected in the UI and the audio player never appeared without a full restart.
+- `startMs`/`endMs` were missing from `serializeTranscriptSegments`, so timestamps computed during live recording were lost on the first note save and did not appear when reopening the note.
+- Translation key `t("meeting.retranscribe")` corrected to `t("notes.meeting.retranscribe")`.
+- `onSeek` prop passed to `MeetingTranscriptChat` was always `undefined` because it was gated on `audioRef.current`, which is `null` during render. Now gated on `audioUrl` with the null-ref guard inside the callback.
+
 ## [1.7.5] - 2026-07-10
 
 A model-breadth and reliability release on top of 1.7.4: the latest cloud reasoning models (OpenAI GPT-5.6 and Anthropic Claude Fable 5 / Sonnet 5), Corti as a private clinical reasoning provider with in-region routing that keeps transcribed medical text off third-party LLMs, Tinfoil confidential transcription extended to uploaded audio and every batch path, OpenRouter as a first-class LLM provider with a searchable model picker, enterprise Agent Mode chat with region-aware Bedrock and a live model catalog, multiple hotkeys per action, and a broad stack of meeting-notes, notes, transcription, and platform fixes.

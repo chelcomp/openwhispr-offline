@@ -107,9 +107,7 @@ class ReasoningService extends BaseReasoningService {
           gemini: () => window.electronAPI.getGeminiKey(),
           groq: () => window.electronAPI.getGroqKey(),
           openrouter: () => window.electronAPI.getOpenrouterKey(),
-          tinfoil: () => window.electronAPI.getTinfoilKey?.(),
-          corti: () => window.electronAPI.getCortiKey?.(),
-        };
+        } as Record<string, () => Promise<string | null | undefined>>;
         apiKey = (await keyGetters[provider]()) ?? undefined;
 
         logger.logReasoning(`${provider.toUpperCase()}_KEY_FETCHED`, {
@@ -197,7 +195,10 @@ class ReasoningService extends BaseReasoningService {
       endpoint,
       model,
       hasApiKey: !!apiKey,
-      requestBody: JSON.stringify(requestBody).substring(0, 200),
+      temperature: requestBody.temperature,
+      max_tokens: requestBody.max_tokens,
+      reasoning_effort: requestBody.reasoning_effort,
+      messages: requestBody.messages,
     });
 
     const response = await withRetry(async () => {
@@ -251,7 +252,8 @@ class ReasoningService extends BaseReasoningService {
           responseKeys: jsonResponse ? Object.keys(jsonResponse) : [],
           hasChoices: !!jsonResponse?.choices,
           choicesLength: jsonResponse?.choices?.length || 0,
-          fullResponse: JSON.stringify(jsonResponse).substring(0, 500),
+          usage: jsonResponse?.usage,
+          fullResponse: jsonResponse,
         });
 
         return jsonResponse;
@@ -293,6 +295,7 @@ class ReasoningService extends BaseReasoningService {
       responseLength: responseText.length,
       tokensUsed: response.usage?.total_tokens || 0,
       success: true,
+      responseText,
     });
 
     return responseText;
@@ -306,9 +309,16 @@ class ReasoningService extends BaseReasoningService {
   ): Promise<string> {
     const trimmedModel = model?.trim?.() || "";
     const isLanCleanup = !!config.lanUrl || this.isLanCleanupMode();
-    const providerId = isLanCleanup ? "lan" : config.provider || getModelProvider(trimmedModel);
+    const rawProviderId = isLanCleanup ? "lan" : config.provider || getModelProvider(trimmedModel);
+    // If the stored provider key isn't in the registry (e.g. a stale local group id
+    // like 'gemma', 'qwen', 'llama'), re-derive from the model id so local GGUF
+    // models always route to the 'local' provider.
+    const providerId =
+      rawProviderId && PROVIDER_REGISTRY[rawProviderId]
+        ? rawProviderId
+        : getModelProvider(trimmedModel);
 
-    if (!trimmedModel && providerId !== "openwhispr" && providerId !== "lan") {
+    if (!trimmedModel && providerId !== "lan") {
       throw new Error("No reasoning model selected");
     }
 
@@ -730,79 +740,15 @@ class ReasoningService extends BaseReasoningService {
     this.streamAbortController = null;
   }
 
-  private streamFromIPC(
-    messages: Array<{ role: string; content: string | Array<unknown> }>,
-    opts: {
+  private async *streamFromIPC(
+    _messages: Array<{ role: string; content: string | Array<unknown> }>,
+    _opts: {
       systemPrompt?: string;
       tools?: Array<{ name: string; description: string; parameters: Record<string, unknown> }>;
     }
-  ): AsyncGenerator<
-    {
-      type: string;
-      text?: string;
-      id?: string;
-      name?: string;
-      arguments?: string;
-      finishReason?: string;
-    },
-    void,
-    unknown
-  > {
-    type StreamEvent = {
-      type: string;
-      text?: string;
-      id?: string;
-      name?: string;
-      arguments?: string;
-      finishReason?: string;
-    };
-    const queue: Array<StreamEvent | { type: "__error"; error: string } | { type: "__end" }> = [];
-    let resolve: (() => void) | null = null;
-
-    const cleanupChunk = window.electronAPI?.onAgentStreamChunk?.((chunk) => {
-      queue.push(chunk);
-      resolve?.();
-    });
-    const cleanupError = window.electronAPI?.onAgentStreamError?.((err) => {
-      queue.push({ type: "__error", error: err.error });
-      resolve?.();
-    });
-    const cleanupEnd = window.electronAPI?.onAgentStreamEnd?.(() => {
-      queue.push({ type: "__end" });
-      resolve?.();
-    });
-
-    const cleanup = () => {
-      cleanupChunk?.();
-      cleanupError?.();
-      cleanupEnd?.();
-    };
-
-    window.electronAPI?.startAgentStream?.(messages, opts);
-
-    const generator = async function* () {
-      try {
-        while (true) {
-          if (queue.length === 0) {
-            await new Promise<void>((r) => {
-              resolve = r;
-            });
-            resolve = null;
-          }
-
-          while (queue.length > 0) {
-            const item = queue.shift()!;
-            if (item.type === "__end") return;
-            if (item.type === "__error") throw new Error((item as { error: string }).error);
-            yield item as StreamEvent;
-          }
-        }
-      } finally {
-        cleanup();
-      }
-    };
-
-    return generator();
+  ): AsyncGenerator<{ type: string; text?: string; id?: string; name?: string; arguments?: string; finishReason?: string }, void, unknown> {
+    throw new Error("Cloud agent streaming is not available in this version");
+    yield;
   }
 
   async *processTextStreamingCloud(
@@ -940,8 +886,6 @@ class ReasoningService extends BaseReasoningService {
       const geminiKey = await window.electronAPI?.getGeminiKey?.();
       const groqKey = await window.electronAPI?.getGroqKey?.();
       const openrouterKey = await window.electronAPI?.getOpenrouterKey?.();
-      const tinfoilKey = await window.electronAPI?.getTinfoilKey?.();
-      const cortiKey = await window.electronAPI?.getCortiKey?.();
       const localAvailable = await window.electronAPI?.checkLocalReasoningAvailable?.();
 
       logger.logReasoning("API_KEY_CHECK", {
@@ -950,8 +894,6 @@ class ReasoningService extends BaseReasoningService {
         hasGemini: !!geminiKey,
         hasGroq: !!groqKey,
         hasOpenrouter: !!openrouterKey,
-        hasTinfoil: !!tinfoilKey,
-        hasCorti: !!cortiKey,
         hasLocal: !!localAvailable,
       });
 
@@ -961,8 +903,6 @@ class ReasoningService extends BaseReasoningService {
         geminiKey ||
         groqKey ||
         openrouterKey ||
-        tinfoilKey ||
-        cortiKey ||
         localAvailable
       );
     } catch (error) {

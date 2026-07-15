@@ -26,7 +26,27 @@ const LANGUAGE_INSTRUCTIONS: Record<string, string> = Object.fromEntries(
 
 export function getBaseLanguageCode(language: string | null | undefined): string | undefined {
   if (!language || language === "auto") return undefined;
+  // Multi-language: comma-separated → auto-detect
+  if (language.includes(",")) return undefined;
   return language.split("-")[0];
+}
+
+/**
+ * When multiple languages are selected, returns a prompt hint like
+ * "The audio may be in: English or Portuguese."
+ * Returns empty string for single/auto selection.
+ */
+export function getMultiLanguagePromptHint(language: string | null | undefined): string {
+  if (!language || language === "auto") return "";
+  const codes = language.split(",").filter((c) => c && c !== "auto");
+  if (codes.length <= 1) return "";
+  const labels = codes
+    .map((code) => {
+      const entry = registry.languages.find((l) => l.code === code.split("-")[0]);
+      return entry ? entry.label : code;
+    })
+    .filter(Boolean);
+  return `The audio may be in: ${labels.join(" or ")}.`;
 }
 
 export function getLanguageInstruction(language: string | undefined): string {

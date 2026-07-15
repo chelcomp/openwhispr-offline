@@ -12,6 +12,7 @@ const {
 } = require("./downloadUtils");
 const ParakeetServerManager = require("./parakeetServer");
 const { getModelsDirForService } = require("./modelDirUtils");
+const { getModelRuntime, REQUIRED_MODEL_FILES } = require("./parakeetModelInfo");
 
 const modelRegistryData = require("../models/modelRegistryData.json");
 
@@ -72,7 +73,7 @@ class ParakeetManager {
       if (
         localTranscriptionProvider === "nvidia" &&
         parakeetModel &&
-        this.serverManager.isAvailable()
+        this.serverManager.isAvailable(getModelRuntime(parakeetModel))
       ) {
         if (this.serverManager.isModelDownloaded(parakeetModel)) {
           debugLogger.info("Pre-warming parakeet server", { model: parakeetModel });
@@ -119,8 +120,8 @@ class ParakeetManager {
   async logDependencyStatus() {
     const status = {
       sherpaOnnx: {
-        available: this.serverManager.isAvailable(),
-        path: this.serverManager.getBinaryPath(),
+        available: this.serverManager.hasAnyWsBinary(),
+        path: this.serverManager.getBinaryPath("offline") || this.serverManager.getBinaryPath("online"),
       },
       models: [],
     };
@@ -154,16 +155,26 @@ class ParakeetManager {
   }
 
   async checkInstallation() {
-    const binaryPath = this.serverManager.getBinaryPath();
+    const binaryPath =
+      this.serverManager.getBinaryPath("offline") || this.serverManager.getBinaryPath("online");
     if (!binaryPath) {
       return { installed: false, working: false };
     }
 
-    return {
-      installed: true,
-      working: this.serverManager.isAvailable(),
-      path: binaryPath,
-    };
+    return { installed: true, working: true, path: binaryPath };
+  }
+
+  supportsOnlineStreaming(modelName) {
+    return getModelRuntime(modelName) === "online";
+  }
+
+  async createOnlineStream(modelName, options = {}) {
+    this.validateModelName(modelName);
+    const started = await this.serverManager.startServer(modelName);
+    if (!started.success) {
+      throw new Error(started.reason || "Failed to start parakeet streaming server");
+    }
+    return this.serverManager.createOnlineStream(options);
   }
 
   async startServer(modelName) {
@@ -187,13 +198,16 @@ class ParakeetManager {
       serverAvailable: this.serverManager.isAvailable(),
     });
 
-    if (!this.serverManager.isAvailable()) {
+    const model = options.model || "parakeet-tdt-0.6b-v3";
+    const runtime = getModelRuntime(model);
+    const serverAvailable = this.serverManager.isAvailable(runtime);
+
+    if (!serverAvailable) {
+      const binaryLabel = runtime === "online" ? "sherpa-onnx online WebSocket server" : "sherpa-onnx";
       throw new Error(
-        "sherpa-onnx binary not found. Please ensure the app is installed correctly."
+        `${binaryLabel} binary not found. Run "npm run download:sherpa-onnx" or reinstall the app.`
       );
     }
-
-    const model = options.model || "parakeet-tdt-0.6b-v3";
 
     if (!this.serverManager.isModelDownloaded(model)) {
       throw new Error(
@@ -341,7 +355,7 @@ class ParakeetManager {
         progressCallback({ type: "complete", model: modelName, percentage: 100 });
       }
 
-      if (this.serverManager.isAvailable()) {
+      if (this.serverManager.isAvailable(getModelRuntime(modelName))) {
         this.serverManager.startServer(modelName).catch((err) => {
           debugLogger.warn("Post-download server pre-warm failed (non-fatal)", {
             error: err.message,
@@ -392,7 +406,10 @@ class ParakeetManager {
         for (const entry of entries) {
           const entryPath = path.join(extractDir, entry);
           const stat = await fsPromises.stat(entryPath);
-          if (stat.isDirectory() && entry.includes("parakeet")) {
+          if (
+            stat.isDirectory() &&
+            REQUIRED_MODEL_FILES.every((file) => fs.existsSync(path.join(entryPath, file)))
+          ) {
             modelDir = entry;
             break;
           }
@@ -411,13 +428,7 @@ class ParakeetManager {
         }
       }
 
-      const requiredFiles = [
-        "encoder.int8.onnx",
-        "decoder.int8.onnx",
-        "joiner.int8.onnx",
-        "tokens.txt",
-      ];
-      const missing = requiredFiles.filter((f) => !fs.existsSync(path.join(targetDir, f)));
+      const missing = REQUIRED_MODEL_FILES.filter((f) => !fs.existsSync(path.join(targetDir, f)));
       if (missing.length > 0) {
         throw new Error(`Extracted model is missing required files: ${missing.join(", ")}`);
       }
@@ -601,7 +612,8 @@ class ParakeetManager {
       models: [],
     };
 
-    const binaryPath = this.serverManager.getBinaryPath();
+    const binaryPath =
+      this.serverManager.getBinaryPath("offline") || this.serverManager.getBinaryPath("online");
     if (binaryPath) {
       diagnostics.sherpaOnnx = { available: true, path: binaryPath };
     }

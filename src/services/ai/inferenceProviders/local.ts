@@ -12,10 +12,17 @@ export const localProvider: InferenceProvider = {
     logger.logReasoning("LOCAL_START", { model, agentName, environment: "browser" });
     const startTime = Date.now();
 
-    logger.logReasoning("LOCAL_IPC_CALL", { model, textLength: text.length });
-
     const systemPrompt = config.systemPrompt || ctx.getSystemPrompt(agentName);
     const userContent = config.systemPrompt ? text : wrapCleanupTranscript(text);
+
+    logger.logReasoning("LOCAL_REQUEST", {
+      model,
+      temperature: config.temperature,
+      max_tokens: config.maxTokens,
+      systemPrompt,
+      userContent,
+    });
+
     const result = await window.electronAPI.processLocalReasoning(userContent, model, agentName, {
       ...config,
       systemPrompt,
@@ -32,6 +39,7 @@ export const localProvider: InferenceProvider = {
       model,
       processingTimeMs,
       resultLength: result.text.length,
+      responseText: result.text,
     });
     return result.text;
   },

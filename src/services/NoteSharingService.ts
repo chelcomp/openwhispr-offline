@@ -1,4 +1,4 @@
-import { cloudGet, cloudPost, cloudPatch, cloudDelete } from "./cloudApi.js";
+// Cloud disabled — local-only stub
 import type { NoteShareInvitation, ShareSettings, ShareVisibility } from "../types/electron";
 
 export interface ShareStateResponse {
@@ -22,61 +22,16 @@ export interface CreateInvitationsResponse {
   email_failed_ids: string[];
 }
 
-function sharePath(cloudId: string, suffix: string = ""): string {
-  return `/api/notes/${encodeURIComponent(cloudId)}/share${suffix}`;
-}
-
-async function getShareSettings(cloudNoteId: string): Promise<ShareStateResponse> {
-  return cloudGet<ShareStateResponse>(sharePath(cloudNoteId));
-}
-
-async function updateShareSettings(
-  cloudNoteId: string,
-  visibility: ShareVisibility,
-  domainAllowlist: string[]
-): Promise<ShareMutationResponse> {
-  return cloudPatch<ShareMutationResponse>(sharePath(cloudNoteId), {
-    visibility,
-    domain_allowlist: domainAllowlist,
-  });
-}
-
-async function clearShare(cloudNoteId: string): Promise<{ share: ShareSettings }> {
-  return cloudDelete<{ share: ShareSettings }>(sharePath(cloudNoteId));
-}
-
-async function rotateToken(cloudNoteId: string): Promise<RotateTokenResponse> {
-  return cloudPost<RotateTokenResponse>(sharePath(cloudNoteId, "/rotate-token"));
-}
-
-async function inviteEmails(
-  cloudNoteId: string,
-  emails: string[]
-): Promise<CreateInvitationsResponse> {
-  return cloudPost<CreateInvitationsResponse>(sharePath(cloudNoteId, "/invitations"), {
-    emails,
-  });
-}
-
-async function revokeInvite(cloudNoteId: string, invitationId: string): Promise<void> {
-  await cloudDelete(sharePath(cloudNoteId, `/invitations/${encodeURIComponent(invitationId)}`));
-}
-
-async function resendInvite(
-  cloudNoteId: string,
-  invitationId: string
-): Promise<{ id: string; resent: boolean }> {
-  return cloudPost<{ id: string; resent: boolean }>(
-    sharePath(cloudNoteId, `/invitations/${encodeURIComponent(invitationId)}/resend`)
-  );
-}
+const _disabled = (): never => {
+  throw new Error("cloud disabled");
+};
 
 export const NoteSharingService = {
-  getShareSettings,
-  updateShareSettings,
-  clearShare,
-  rotateToken,
-  inviteEmails,
-  revokeInvite,
-  resendInvite,
+  getShareSettings: async (_cloudNoteId: string): Promise<ShareStateResponse> => _disabled(),
+  updateShareSettings: async (_cloudNoteId: string, _visibility: ShareVisibility, _domainAllowlist: string[]): Promise<ShareMutationResponse> => _disabled(),
+  clearShare: async (_cloudNoteId: string): Promise<{ share: ShareSettings }> => _disabled(),
+  rotateToken: async (_cloudNoteId: string): Promise<RotateTokenResponse> => _disabled(),
+  inviteEmails: async (_cloudNoteId: string, _emails: string[]): Promise<CreateInvitationsResponse> => _disabled(),
+  revokeInvite: async (_cloudNoteId: string, _invitationId: string): Promise<void> => _disabled(),
+  resendInvite: async (_cloudNoteId: string, _invitationId: string): Promise<{ id: string; resent: boolean }> => _disabled(),
 };

@@ -102,6 +102,7 @@ export interface ParakeetModelInfo {
   recommended?: boolean;
   downloadUrl: string;
   extractDir: string;
+  runtime?: "offline" | "online";
 }
 
 export type ParakeetModelsMap = Record<string, ParakeetModelInfo>;
@@ -331,10 +332,6 @@ export function getProviderDisplayName(provider: string): string {
 }
 
 export function getModelProvider(modelId: string): string {
-  if (isCloudCleanupMode()) {
-    return "openwhispr";
-  }
-
   const storedProvider = getSettings().cleanupProvider;
 
   if (storedProvider === "custom") {

@@ -54,10 +54,10 @@ class OnnxWorkerClient {
     this.spawnPromise = (async () => {
       const env = { ...process.env };
       const logPath = this._logPath();
-      if (logPath) env.OPENWHISPR_ONNX_WORKER_LOG = logPath;
+      if (logPath) env.EKTOSWHISPR_ONNX_WORKER_LOG = logPath;
 
       const child = utilityProcess.fork(WORKER_SCRIPT, [], {
-        serviceName: "openwhispr-onnx",
+        serviceName: "ektoswhispr-onnx",
         stdio: "pipe",
         env,
         execArgv: ["--max-old-space-size=512"],

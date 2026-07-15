@@ -12,10 +12,17 @@ export const anthropicProvider: InferenceProvider = {
     logger.logReasoning("ANTHROPIC_START", { model, agentName, environment: "browser" });
     const startTime = Date.now();
 
-    logger.logReasoning("ANTHROPIC_IPC_CALL", { model, textLength: text.length });
-
     const systemPrompt = config.systemPrompt || ctx.getSystemPrompt(agentName);
     const userContent = config.systemPrompt ? text : wrapCleanupTranscript(text);
+
+    logger.logReasoning("ANTHROPIC_REQUEST", {
+      model,
+      temperature: config.temperature,
+      max_tokens: config.maxTokens,
+      systemPrompt,
+      userContent,
+    });
+
     const result = await window.electronAPI.processAnthropicReasoning(
       userContent,
       model,
@@ -37,6 +44,7 @@ export const anthropicProvider: InferenceProvider = {
       model,
       processingTimeMs,
       resultLength: result.text.length,
+      responseText: result.text,
     });
     return result.text;
   },

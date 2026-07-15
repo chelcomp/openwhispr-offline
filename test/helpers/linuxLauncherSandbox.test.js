@@ -8,7 +8,7 @@ const cp = require("child_process");
 const { buildLinuxWrapperScript } = require("../../scripts/lib/linux-launcher.js");
 
 const isLinux = process.platform === "linux";
-const BINARY_NAME = "open-whispr";
+const BINARY_NAME = "ektos-whispr";
 
 function setupLauncher() {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "linux-launcher-test-"));

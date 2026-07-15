@@ -85,22 +85,7 @@ function reconcileSelectedModels(
 let inFlight: Promise<CloudModelDefinition[]> | null = null;
 
 async function fetchAndApply(): Promise<CloudModelDefinition[]> {
-  const fetchModels = window.electronAPI?.getTinfoilChatModels;
-  if (!fetchModels) {
-    throw new Error("Tinfoil model list is unavailable");
-  }
-
-  const models = toCloudModels(await fetchModels());
-  if (models.length === 0) {
-    // Far more likely something upstream broke, so keep what we already have.
-    throw new Error("Tinfoil returned no chat models");
-  }
-
-  const previous = getTinfoilModels();
-  applyTinfoilModels(models);
-  writeCachedTinfoilModels(models);
-  reconcileSelectedModels(previous, models);
-  return models;
+  throw new Error("Tinfoil provider disabled");
 }
 
 /** Whether refreshTinfoilModels would hit the network rather than short-circuit. */

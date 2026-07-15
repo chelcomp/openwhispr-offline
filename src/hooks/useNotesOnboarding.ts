@@ -13,7 +13,7 @@ interface UseNotesOnboardingReturn {
 export function useNotesOnboarding(): UseNotesOnboardingReturn {
   const usage = useUsage();
   const isProUser = !!(usage?.isSubscribed || usage?.isTrial);
-  const isProLoading = usage !== null && !usage.hasLoaded;
+  const isProLoading = false;
   const useCleanupModel = useSettingsStore((s) => s.useCleanupModel);
   const effectiveModel = useSettingsStore((s) => s.cleanupModel);
   const isCloudCleanup = useSettingsStore(selectIsCloudCleanupMode);

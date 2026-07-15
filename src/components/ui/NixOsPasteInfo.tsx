@@ -16,11 +16,11 @@ hardware.uinput.enable  = true;
 users.users.<you>.extraGroups = [ "ydotool" "uinput" ];`;
 
 const FLAKE_CONFIG = `# flake inputs
-inputs.openwhispr.url = "github:OpenWhispr/openwhispr";
+inputs.ektoswhispr.url = "github:EktosWhispr/ektoswhispr";
 
 # in your NixOS modules
-imports = [ openwhispr.nixosModules.default ];
-programs.openwhispr = {
+imports = [ ektoswhispr.nixosModules.default ];
+programs.ektoswhispr = {
   enable = true;
   users = [ "<you>" ];
 };`;
@@ -103,7 +103,7 @@ export default function NixOsPasteInfo({ status, onRecheck }: NixOsPasteInfoProp
         <p className="text-xs text-muted-foreground">
           {t("settingsPage.general.waylandPaste.nixos.flakeDesc", {
             defaultValue:
-              "If you install OpenWhispr from the flake, programs.openwhispr.enable turns on ydotool, the uinput module and the group memberships for you.",
+              "If you install EktosWhispr from the flake, programs.ektoswhispr.enable turns on ydotool, the uinput module and the group memberships for you.",
           })}
         </p>
         <CodeBlock code={FLAKE_CONFIG} copyLabel={copyLabel} />

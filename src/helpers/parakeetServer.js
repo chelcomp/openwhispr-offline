@@ -5,12 +5,14 @@ const { getModelsDirForService } = require("./modelDirUtils");
 const {
   getFFmpegPath,
   isWavFormat,
+  isWhisperReadyWav,
   convertToWav,
   wavToFloat32Samples,
   computeFloat32RMS,
 } = require("./ffmpegUtils");
 const { getSafeTempDir } = require("./safeTempDir");
 const ParakeetWsServer = require("./parakeetWsServer");
+const { getModelRuntime, REQUIRED_MODEL_FILES } = require("./parakeetModelInfo");
 
 const SAMPLE_RATE = 16000;
 const BYTES_PER_SAMPLE = 4; // float32
@@ -23,12 +25,16 @@ class ParakeetServerManager {
     this.wsServer = new ParakeetWsServer();
   }
 
-  getBinaryPath() {
-    return this.wsServer.getWsBinaryPath();
+  getBinaryPath(runtime) {
+    return this.wsServer.getWsBinaryPath(runtime);
   }
 
-  isAvailable() {
-    return this.wsServer.isAvailable();
+  isAvailable(runtime) {
+    return this.wsServer.isAvailable(runtime);
+  }
+
+  hasAnyWsBinary() {
+    return this.wsServer.hasAnyWsBinary();
   }
 
   getModelsDir() {
@@ -37,27 +43,17 @@ class ParakeetServerManager {
 
   isModelDownloaded(modelName) {
     const modelDir = path.join(this.getModelsDir(), modelName);
-    const requiredFiles = [
-      "encoder.int8.onnx",
-      "decoder.int8.onnx",
-      "joiner.int8.onnx",
-      "tokens.txt",
-    ];
-
     if (!fs.existsSync(modelDir)) return false;
-
-    for (const file of requiredFiles) {
-      if (!fs.existsSync(path.join(modelDir, file))) {
-        return false;
-      }
-    }
-
-    return true;
+    return REQUIRED_MODEL_FILES.every((file) => fs.existsSync(path.join(modelDir, file)));
   }
 
   async _ensureWav(audioBuffer) {
-    const isWav = isWavFormat(audioBuffer);
-    if (isWav) return { wavBuffer: audioBuffer, filesToCleanup: [] };
+    // Fast path: renderer already produced a 16 kHz mono PCM WAV — no FFmpeg needed.
+    if (isWhisperReadyWav(audioBuffer)) return { wavBuffer: audioBuffer, filesToCleanup: [] };
+    // Generic WAV but wrong rate/channels — fall through to FFmpeg for resampling.
+    if (isWavFormat(audioBuffer)) {
+      // Re-run through FFmpeg to ensure 16 kHz mono.
+    }
 
     const ffmpegPath = getFFmpegPath();
     if (!ffmpegPath) {
@@ -68,7 +64,8 @@ class ParakeetServerManager {
 
     const tempDir = getSafeTempDir();
     const timestamp = Date.now();
-    const tempInputPath = path.join(tempDir, `parakeet-input-${timestamp}.webm`);
+    const inputExt = isWavFormat(audioBuffer) ? "wav" : "webm";
+    const tempInputPath = path.join(tempDir, `parakeet-input-${timestamp}.${inputExt}`);
     const tempWavPath = path.join(tempDir, `parakeet-${timestamp}.wav`);
 
     fs.writeFileSync(tempInputPath, audioBuffer);
@@ -99,7 +96,7 @@ class ParakeetServerManager {
     const { wavBuffer, filesToCleanup } = await this._ensureWav(audioBuffer);
     try {
       if (!this.wsServer.ready || this.wsServer.modelName !== modelName) {
-        await this.wsServer.start(modelName, modelDir);
+        await this.wsServer.start(modelName, modelDir, getModelRuntime(modelName));
       }
 
       const samples = wavToFloat32Samples(wavBuffer);
@@ -168,7 +165,8 @@ class ParakeetServerManager {
   }
 
   async startServer(modelName) {
-    if (!this.wsServer.isAvailable()) {
+    const runtime = getModelRuntime(modelName);
+    if (!this.wsServer.isAvailable(runtime)) {
       return { success: false, reason: "parakeet WS server binary not found" };
     }
 
@@ -178,12 +176,16 @@ class ParakeetServerManager {
     }
 
     try {
-      await this.wsServer.start(modelName, modelDir);
+      await this.wsServer.start(modelName, modelDir, runtime);
       return { success: true, port: this.wsServer.port };
     } catch (error) {
       debugLogger.error("Failed to start parakeet WS server", { error: error.message });
       return { success: false, reason: error.message };
     }
+  }
+
+  createOnlineStream(options) {
+    return this.wsServer.createOnlineStream(options);
   }
 
   async stopServer() {
@@ -192,14 +194,6 @@ class ParakeetServerManager {
 
   getServerStatus() {
     return this.wsServer.getStatus();
-  }
-
-  getStatus() {
-    return {
-      available: this.isAvailable(),
-      binaryPath: this.getBinaryPath(),
-      modelsDir: this.getModelsDir(),
-    };
   }
 }
 

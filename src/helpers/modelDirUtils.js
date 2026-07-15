@@ -4,7 +4,7 @@ const path = require("path");
 
 function getCacheRoot() {
   const homeDir = app?.getPath?.("home") || os.homedir();
-  return path.join(homeDir, ".cache", "openwhispr");
+  return path.join(homeDir, ".cache", "ektoswhispr");
 }
 
 function getModelsDirForService(service) {

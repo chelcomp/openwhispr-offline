@@ -163,12 +163,28 @@ class LlamaServerManager {
   }
 
   async _startWithGpuFallback(binaryPaths, baseArgs, options) {
+    const gpuMode = process.env.LLAMA_GPU_MODE || "auto";
     const gpuArgs = [...baseArgs, "--n-gpu-layers", "99"];
     const cpuArgs = baseArgs;
 
+    // Force CPU — skip Vulkan entirely
+    if (gpuMode === "cpu") {
+      if (!binaryPaths.cpu) throw new Error("No CPU llama-server binary available");
+      debugLogger.debug("Starting llama-server with CPU backend (explicit mode)");
+      await this._startWithBinary(
+        binaryPaths.cpu,
+        cpuArgs,
+        this._buildEnv(binaryPaths.cpu),
+        STARTUP_TIMEOUT_MS
+      );
+      this.activeBackend = "cpu";
+      return;
+    }
+
+    // GPU modes: gpu-nvidia and gpu-intel both use the Vulkan binary on llama
     if (binaryPaths.vulkan) {
       try {
-        debugLogger.debug("Attempting Vulkan backend startup");
+        debugLogger.debug("Attempting Vulkan backend startup", { gpuMode });
         await this._startWithBinary(
           binaryPaths.vulkan,
           gpuArgs,
@@ -178,15 +194,17 @@ class LlamaServerManager {
         this.activeBackend = "vulkan";
         return;
       } catch (err) {
-        debugLogger.warn("Vulkan backend failed, falling back to CPU", { error: err.message });
+        debugLogger.warn("Vulkan backend failed, falling back to CPU", {
+          gpuMode,
+          error: err.message,
+        });
         await this._killCurrentProcess();
         this.port = await this.findAvailablePort();
       }
     }
 
     if (!binaryPaths.cpu) throw new Error("No CPU llama-server binary available");
-
-    debugLogger.debug("Starting with CPU backend");
+    debugLogger.debug("Starting llama-server with CPU backend");
     await this._startWithBinary(
       binaryPaths.cpu,
       cpuArgs,

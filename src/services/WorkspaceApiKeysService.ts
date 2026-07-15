@@ -1,34 +1,12 @@
-import { cloudGet, cloudPost, cloudDelete } from "./cloudApi.js";
+// Cloud disabled — local-only stub
 import type { WorkspaceApiKey, NewWorkspaceApiKey } from "../types/electron";
 
-interface DataWrap<T> {
-  data: T;
-}
-
-async function list(workspaceId: string): Promise<WorkspaceApiKey[]> {
-  const res = await cloudGet<DataWrap<WorkspaceApiKey[]>>(
-    `/api/workspaces/${workspaceId}/api-keys`
-  );
-  return res.data;
-}
-
-async function create(
-  workspaceId: string,
-  input: { name: string; scopes: string[]; expires_in_days?: number; description?: string }
-): Promise<NewWorkspaceApiKey> {
-  const res = await cloudPost<DataWrap<NewWorkspaceApiKey>>(
-    `/api/workspaces/${workspaceId}/api-keys`,
-    input
-  );
-  return res.data;
-}
-
-async function revoke(workspaceId: string, keyId: string): Promise<void> {
-  await cloudDelete(`/api/workspaces/${workspaceId}/api-keys/${keyId}`);
-}
+const _disabled = (): never => {
+  throw new Error("cloud disabled");
+};
 
 export const WorkspaceApiKeysService = {
-  list,
-  create,
-  revoke,
+  list: async (_workspaceId: string): Promise<WorkspaceApiKey[]> => _disabled(),
+  create: async (_workspaceId: string, _input: unknown): Promise<NewWorkspaceApiKey> => _disabled(),
+  revoke: async (_workspaceId: string, _keyId: string): Promise<void> => _disabled(),
 };

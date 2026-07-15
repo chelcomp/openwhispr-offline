@@ -391,7 +391,7 @@ class HotkeyManager extends EventEmitter {
 
   // Register one hotkey without mutating any slot. `accelerator` is null for
   // hotkeys handled by native listeners.
-  _registerSingleHotkey(hotkey, callback) {
+  _registerSingleHotkey(hotkey, callback, slotName = "unknown") {
     try {
       if (isMouseButtonHotkey(hotkey)) {
         if (process.platform !== "darwin") {
@@ -432,7 +432,10 @@ class HotkeyManager extends EventEmitter {
       }
 
       // Pass the triggering hotkey so shared callbacks act on the one that fired.
-      const success = globalShortcut.register(accelerator, () => callback(hotkey));
+      const success = globalShortcut.register(accelerator, () => {
+        console.log(`[HotkeyManager] Hotkey triggered: "${hotkey}" (slot: "${slotName}")`);
+        callback(hotkey);
+      });
       debugLogger.log(`[HotkeyManager] Registration result for "${hotkey}": ${success}`);
       if (success) {
         return { success: true, hotkey, accelerator };
@@ -514,7 +517,7 @@ class HotkeyManager extends EventEmitter {
     const registeredAccelerators = [];
     const failures = [];
     for (const hotkey of desired) {
-      const res = this._registerSingleHotkey(hotkey, callback);
+      const res = this._registerSingleHotkey(hotkey, callback, slotName);
       if (res.success) {
         registeredHotkeys.push(res.hotkey);
         registeredAccelerators.push(res.accelerator ?? null);

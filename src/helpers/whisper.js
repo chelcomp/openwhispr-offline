@@ -113,7 +113,9 @@ class WhisperManager {
 
           try {
             const serverStartTime = Date.now();
-            await this.serverManager.start(modelPath, { useCuda: !!useCuda });
+            const gpuMode = process.env.WHISPER_GPU_MODE || "auto";
+            const effectiveUseCuda = gpuMode === "cpu" ? false : !!useCuda;
+            await this.serverManager.start(modelPath, { useCuda: effectiveUseCuda });
             this.currentServerModel = whisperModel;
 
             debugLogger.info("whisper-server pre-warmed successfully", {
@@ -198,7 +200,7 @@ class WhisperManager {
       }
     }
 
-    debugLogger.info("OpenWhispr dependency check", status);
+    debugLogger.info("EktosWhispr dependency check", status);
 
     // Log a summary for easy scanning
     const serverStatus = status.whisperServer.available
@@ -316,6 +318,7 @@ class WhisperManager {
     const initialPrompt = options.initialPrompt || null;
     const vadEnabled = options.vadEnabled === true;
     const vadConfig = options.vadConfig || null;
+    const verboseJson = options.verboseJson === true;
     const modelPath = this.getModelPath(model);
 
     if (!fs.existsSync(modelPath)) {
@@ -325,6 +328,7 @@ class WhisperManager {
     return await this.transcribeViaServer(audioBlob, model, language, initialPrompt, {
       vadEnabled,
       vadConfig,
+      verboseJson,
     });
   }
 
@@ -384,7 +388,8 @@ class WhisperManager {
     });
 
     const startTime = Date.now();
-    const result = await this.serverManager.transcribe(audioBuffer, { language, initialPrompt });
+    const verboseJson = options.verboseJson === true;
+    const result = await this.serverManager.transcribe(audioBuffer, { language, initialPrompt, verboseJson });
     const elapsed = Date.now() - startTime;
 
     debugLogger.logWhisperPipeline("transcribeViaServer - completed", {
@@ -477,13 +482,17 @@ class WhisperManager {
       return { success: true, text };
     }
 
-    // Handle whisper-server format (has "text" field directly)
+    // Handle whisper-server format (has "text" field directly; verbose_json also has "segments")
     if (result.text !== undefined) {
       const text = typeof result.text === "string" ? this.normalizeWhitespace(result.text) : "";
       if (!text || this.isBlankAudioMarker(text)) {
         return { success: false, message: "No audio detected" };
       }
-      return { success: true, text };
+      const out = { success: true, text };
+      if (Array.isArray(result.segments) && result.segments.length > 0) {
+        out.segments = result.segments;
+      }
+      return out;
     }
 
     return { success: false, message: "No audio detected" };

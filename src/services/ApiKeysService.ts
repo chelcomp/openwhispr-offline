@@ -1,6 +1,5 @@
-import { cloudGet, cloudPost } from "./cloudApi.js";
-
-interface ApiKey {
+// Cloud disabled — local-only stub
+export interface ApiKey {
   id: string;
   name: string;
   key_prefix: string;
@@ -10,41 +9,25 @@ interface ApiKey {
   created_at: string;
 }
 
-interface CreateApiKeyResponse extends ApiKey {
+export interface CreateApiKeyResponse extends ApiKey {
   key: string;
 }
 
-interface CreateApiKeyOptions {
+export interface CreateApiKeyOptions {
   name: string;
   scopes: string[];
   expiresInDays?: number | null;
 }
 
-interface V1Response<T> {
-  data: T;
-}
+const _disabled = (): never => {
+  throw new Error("cloud disabled");
+};
 
-async function listApiKeys(): Promise<{ keys: ApiKey[] }> {
-  const res = await cloudGet<V1Response<{ keys: ApiKey[] }>>("/api/v1/keys/list");
-  return { keys: res.data.keys };
-}
-
-async function createApiKey(options: CreateApiKeyOptions): Promise<CreateApiKeyResponse> {
-  const res = await cloudPost<V1Response<CreateApiKeyResponse>>("/api/v1/keys/create", {
-    name: options.name,
-    scopes: options.scopes,
-    ...(options.expiresInDays != null ? { expires_in_days: options.expiresInDays } : {}),
-  });
-  return res.data;
-}
-
-async function revokeApiKey(id: string): Promise<{ revoked: true }> {
-  await cloudPost(`/api/v1/keys/${id}/revoke`);
-  return { revoked: true };
-}
+async function listApiKeys(): Promise<never> { return _disabled(); }
+async function createApiKey(_options: CreateApiKeyOptions): Promise<never> { return _disabled(); }
+async function revokeApiKey(_id: string): Promise<never> { return _disabled(); }
 
 export { listApiKeys, createApiKey, revokeApiKey };
-export type { ApiKey, CreateApiKeyResponse, CreateApiKeyOptions };
 
 export const ApiKeysService = {
   list: listApiKeys,

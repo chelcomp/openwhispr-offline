@@ -27,6 +27,10 @@ export interface TranscriptSegment {
   text: string;
   source: "mic" | "system";
   timestamp?: number;
+  /** Milliseconds from meeting start (approximate during live; precise after re-transcription) */
+  startMs?: number;
+  /** Milliseconds from meeting start */
+  endMs?: number;
   speaker?: string;
   speakerName?: string;
   speakerIsPlaceholder?: boolean;
@@ -143,8 +147,7 @@ const getMeetingTranscriptionOptions = () => {
   const provider =
     catalog?.find((p) => p.id === resolved.cloudTranscriptionProvider) ?? catalog?.[0];
   const byokKeyAvailable = provider?.id === "openai" ? !!state.openaiApiKey : true;
-  const mode =
-    resolved.cloudTranscriptionMode === "byok" && byokKeyAvailable ? "byok" : "openwhispr";
+  const mode = "byok";
   if (!provider) {
     logger.debug(
       "Streaming providers catalog not loaded, falling back to OpenAI default",
@@ -763,6 +766,7 @@ export async function startRecording(args: StartRecordingArgs): Promise<void> {
       window.electronAPI?.meetingTranscriptionStart?.({
         ...getMeetingTranscriptionOptions(),
         noteId: args.noteId ?? null,
+        aecEnabled: getSettings().meetingAecEnabled,
       }),
       getMeetingMicConstraints().then(async (constraints) => {
         try {

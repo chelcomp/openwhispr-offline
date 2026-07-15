@@ -22,7 +22,7 @@ function fetchJson(url, redirectCount = 0) {
     }
 
     const headers = {
-      "User-Agent": "OpenWhispr-Downloader",
+      "User-Agent": "EktosWhispr-Downloader",
       Accept: "application/vnd.github+json",
     };
 
@@ -161,7 +161,16 @@ function downloadFile(url, dest, retryCount = 0) {
         return;
       }
 
-      activeRequest = https.get(currentUrl, (response) => {
+      const reqHeaders = { "User-Agent": "EktosWhispr-Downloader" };
+      const hfToken = process.env.HF_TOKEN || process.env.HUGGING_FACE_HUB_TOKEN;
+      const ghToken = process.env.GITHUB_TOKEN || process.env.GH_TOKEN;
+      if (hfToken && currentUrl.includes("huggingface.co")) {
+        reqHeaders.Authorization = `Bearer ${hfToken}`;
+      } else if (ghToken && currentUrl.includes("github.com")) {
+        reqHeaders.Authorization = `Bearer ${ghToken}`;
+      }
+
+      activeRequest = https.get(currentUrl, { headers: reqHeaders }, (response) => {
         if ([301, 302, 303, 307, 308].includes(response.statusCode)) {
           const location = response.headers.location;
           if (!location) {
@@ -323,9 +332,10 @@ function cleanupFiles(binDir, prefix, keepPrefix) {
   // Never delete shared libraries; only platform binaries. The b9763 split ships
   // llama-server-impl.dll, which shares the "llama-server" prefix and must survive.
   const isLibrary = (f) => /\.(dll|dylib)$/i.test(f) || /\.so(\.\d+)*$/.test(f);
+  const keepPrefixes = Array.isArray(keepPrefix) ? keepPrefix : [keepPrefix];
   const files = fs.readdirSync(binDir).filter((f) => f.startsWith(prefix));
   files.forEach((file) => {
-    if (!file.startsWith(keepPrefix) && !isLibrary(file)) {
+    if (!keepPrefixes.some((keep) => file.startsWith(keep)) && !isLibrary(file)) {
       const filePath = path.join(binDir, file);
       console.log(`Removing old binary: ${file}`);
       fs.unlinkSync(filePath);

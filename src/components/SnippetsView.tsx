@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import type { KeyboardEvent } from "react";
 import { useTranslation } from "react-i18next";
 import { CornerDownLeft, Mic, Pencil, Plus, X } from "lucide-react";
 import {
@@ -26,6 +27,22 @@ interface EditSnippetDialogProps {
   onSave: (snippet: Snippet) => void;
 }
 
+function AppTag({ name, onRemove }: { name: string; onRemove: () => void }) {
+  return (
+    <span className="inline-flex items-center gap-1 rounded-full bg-primary/10 border border-primary/20 px-2 py-0.5 text-xs text-primary">
+      {name}
+      <button
+        type="button"
+        onClick={onRemove}
+        className="text-primary/50 hover:text-primary transition-colors"
+        aria-label={`Remove ${name}`}
+      >
+        <X size={9} strokeWidth={2.5} />
+      </button>
+    </span>
+  );
+}
+
 function EditSnippetDialog({
   snippet,
   onOpenChange,
@@ -35,11 +52,19 @@ function EditSnippetDialog({
   const { t } = useTranslation();
   const [trigger, setTrigger] = useState("");
   const [replacement, setReplacement] = useState("");
+  const [apps, setApps] = useState<string[]>([]);
+  const [appInput, setAppInput] = useState("");
+  const [lastDetectedApp, setLastDetectedApp] = useState<string | null>(null);
 
   useEffect(() => {
     if (snippet) {
       setTrigger(snippet.trigger);
       setReplacement(snippet.replacement);
+      setApps(snippet.apps ?? []);
+      setAppInput("");
+      window.electronAPI?.getLastTargetAppName?.().then((name: string | null) => {
+        setLastDetectedApp(name || null);
+      }).catch(() => {});
     }
   }, [snippet]);
 
@@ -47,17 +72,33 @@ function EditSnippetDialog({
   const duplicate = !!snippet && !!trimmedTrigger && triggerExists(trimmedTrigger, snippet.trigger);
   const canSave = !!trimmedTrigger && !!replacement.trim() && !duplicate;
 
+  function addApp() {
+    const val = appInput.trim();
+    if (!val || apps.some((a) => a.toLowerCase() === val.toLowerCase())) return;
+    setApps([...apps, val]);
+    setAppInput("");
+  }
+
+  function handleAppKeyDown(e: KeyboardEvent<HTMLInputElement>) {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      addApp();
+    }
+  }
+
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!canSave) return;
-    onSave({ trigger: trimmedTrigger, replacement: replacement.trim() });
+    onSave({ trigger: trimmedTrigger, replacement: replacement.trim(), apps });
   }
 
   return (
     <Dialog open={!!snippet} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-md">
         <DialogHeader>
-          <DialogTitle>{t("dictionary.snippets.editTitle")}</DialogTitle>
+          <DialogTitle>
+            {snippet?.trigger === "" ? t("dictionary.snippets.new") : t("dictionary.snippets.editTitle")}
+          </DialogTitle>
           <DialogDescription>{t("dictionary.snippets.dialogDescription")}</DialogDescription>
         </DialogHeader>
         <form onSubmit={handleSubmit} className="space-y-3">
@@ -67,6 +108,7 @@ function EditSnippetDialog({
             </Label>
             <Input
               id="snippet-trigger"
+              autoFocus={snippet?.trigger === ""}
               value={trigger}
               onChange={(e) => setTrigger(e.target.value)}
               placeholder={t("dictionary.snippets.triggerPlaceholder")}
@@ -82,13 +124,61 @@ function EditSnippetDialog({
             </Label>
             <Textarea
               id="snippet-replacement"
-              autoFocus
+              autoFocus={snippet?.trigger !== ""}
               value={replacement}
               onChange={(e) => setReplacement(e.target.value)}
               placeholder={t("dictionary.snippets.replacementPlaceholder")}
               className="min-h-[96px] text-xs"
             />
           </div>
+
+          {/* App filter */}
+          <div className="space-y-1.5">
+            <Label className="text-xs font-medium">Only in apps</Label>
+            <p className="text-[11px] text-foreground/40 leading-relaxed">
+              Leave empty to apply in all applications. Type a partial app name (e.g. <span className="font-mono">slack</span>, <span className="font-mono">chrome</span>).
+            </p>
+            {lastDetectedApp && !apps.some((a) => a.toLowerCase() === lastDetectedApp.toLowerCase()) && (
+              <p className="text-[11px] text-foreground/40">
+                Last detected:{" "}
+                <button
+                  type="button"
+                  onClick={() => setApps([...apps, lastDetectedApp])}
+                  className="font-mono text-primary/70 hover:text-primary underline underline-offset-2 transition-colors"
+                >
+                  {lastDetectedApp}
+                </button>
+              </p>
+            )}
+            <div className="flex gap-1.5">
+              <Input
+                value={appInput}
+                onChange={(e) => setAppInput(e.target.value)}
+                onKeyDown={handleAppKeyDown}
+                placeholder="App name…"
+                className="h-7 text-xs flex-1"
+                maxLength={60}
+              />
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                onClick={addApp}
+                disabled={!appInput.trim()}
+                className="h-7 px-2 text-xs"
+              >
+                <Plus size={11} />
+              </Button>
+            </div>
+            {apps.length > 0 && (
+              <div className="flex flex-wrap gap-1 pt-0.5">
+                {apps.map((a) => (
+                  <AppTag key={a} name={a} onRemove={() => setApps(apps.filter((x) => x !== a))} />
+                ))}
+              </div>
+            )}
+          </div>
+
           <DialogFooter className="pt-2">
             <Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>
               {t("common.cancel")}
@@ -146,15 +236,22 @@ export default function SnippetsView() {
   };
 
   const handleCreate = () => {
-    setSnippets([...snippets, { trigger: trimmedTrigger, replacement: expansion.trim() }]);
+    setSnippets([...snippets, { trigger: trimmedTrigger, replacement: expansion.trim(), apps: [] }]);
     setTrigger("");
     closePanel();
   };
 
   const handleSaveEdit = (snippet: Snippet) => {
-    setSnippets(snippets.map((s) => (s.trigger === editing?.trigger ? snippet : s)));
+    if (editing?.trigger === "") {
+      // Creating via dialog
+      setSnippets([...snippets, snippet]);
+    } else {
+      setSnippets(snippets.map((s) => (s.trigger === editing?.trigger ? snippet : s)));
+    }
     setEditing(null);
   };
+
+  const openNewDialog = () => setEditing({ trigger: "", replacement: "", apps: [] });
 
   const handleRemove = (removed: string) => {
     setSnippets(snippets.filter((s) => s.trigger !== removed));
@@ -259,7 +356,7 @@ export default function SnippetsView() {
               <p className="mt-1.5 text-xs text-foreground/30 leading-relaxed">
                 {t("dictionary.snippets.emptyDescription")}
               </p>
-              <Button size="sm" className="mt-4" onClick={() => triggerInputRef.current?.focus()}>
+              <Button size="sm" className="mt-4" onClick={openNewDialog}>
                 <Plus size={12} />
                 {t("dictionary.snippets.new")}
               </Button>
@@ -294,6 +391,11 @@ export default function SnippetsView() {
                   <span className="text-xs text-foreground/60 shrink-0">{snippet.trigger}</span>
                   <span className="text-xs text-foreground/20 shrink-0">→</span>
                   <span className="text-xs text-foreground/35 truncate">{snippet.replacement}</span>
+                  {snippet.apps && snippet.apps.length > 0 && (
+                    <span className="shrink-0 inline-flex items-center gap-0.5 rounded-full bg-primary/8 border border-primary/15 px-1.5 py-px text-[10px] text-primary/60">
+                      {snippet.apps.join(", ")}
+                    </span>
+                  )}
                 </div>
                 <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity duration-150">
                   <button

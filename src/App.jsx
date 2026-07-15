@@ -8,7 +8,8 @@ import { useHotkey } from "./hooks/useHotkey";
 import { formatHotkeyListLabel } from "./utils/hotkeys";
 import { useWindowDrag } from "./hooks/useWindowDrag";
 import { useAudioRecording } from "./hooks/useAudioRecording";
-import { useSettingsStore } from "./stores/settingsStore";
+import { useSettingsStore, selectResolvedLLMConfig } from "./stores/settingsStore";
+import { playTransformStartCue, playTransformDoneCue } from "./utils/dictationCues";
 
 // Sound Wave Icon Component (for idle/hover states)
 const SoundWaveIcon = ({ size = 16 }) => {
@@ -47,6 +48,14 @@ const VoiceWaveIndicator = ({ isListening }) => {
   );
 };
 
+// Transform Icon — two interleaved arrows suggesting text rewrite
+const TransformIcon = () => (
+  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M5 12h14" />
+    <path d="M15 6l6 6-6 6" />
+  </svg>
+);
+
 // Tooltip Component
 const Tooltip = ({ children, content, emoji, align = "center" }) => {
   const [isVisible, setIsVisible] = useState(false);
@@ -79,6 +88,7 @@ const Tooltip = ({ children, content, emoji, align = "center" }) => {
 
 export default function App() {
   const [isHovered, setIsHovered] = useState(false);
+  const [isTransforming, setIsTransforming] = useState(false);
   const [isCommandMenuOpen, setIsCommandMenuOpen] = useState(false);
   const commandMenuRef = useRef(null);
   const buttonRef = useRef(null);
@@ -206,6 +216,35 @@ export default function App() {
     return () => unsubscribe?.();
   }, []);
 
+  // Handle transform execution requests from main process
+  useEffect(() => {
+    const unsubscribe = window.electronAPI?.onRunTransform?.(async ({ id, text, systemPrompt }) => {
+      console.log(`[Transform] Received run-transform id=${id} textLength=${text?.length}`);
+      setIsTransforming(true);
+      playTransformStartCue();
+      let succeeded = false;
+      try {
+        const ReasoningService = (await import("./services/ReasoningService")).default;
+        const cfg = selectResolvedLLMConfig(useSettingsStore.getState(), "dictationAgent");
+        console.log(`[Transform] Calling LLM provider=${cfg.provider} model=${cfg.model}`);
+        const result = await ReasoningService.processText(text, cfg.model, null, {
+          systemPrompt,
+          provider: cfg.provider || undefined,
+        });
+        console.log(`[Transform] LLM result: ${JSON.stringify(result?.slice(0, 120))}`);
+        succeeded = !!result;
+        await window.electronAPI?.sendTransformResult?.(id, result || "");
+      } catch (err) {
+        console.error(`[Transform] Error during LLM call: ${err.message}`);
+        await window.electronAPI?.sendTransformResult?.(id, "");
+      } finally {
+        setIsTransforming(false);
+        if (succeeded) playTransformDoneCue();
+      }
+    });
+    return () => unsubscribe?.();
+  }, []);
+
   const isRecordingRef = useRef(isRecording);
 
   useLayoutEffect(() => {
@@ -279,7 +318,8 @@ export default function App() {
   const getMicState = () => {
     if (isRecording) return "recording";
     if (isProcessing) return "processing";
-    if (isHovered && !isRecording && !isProcessing) return "hover";
+    if (isTransforming) return "transforming";
+    if (isHovered) return "hover";
     return "idle";
   };
 
@@ -305,6 +345,11 @@ export default function App() {
         return {
           className: `${baseClasses} bg-accent cursor-not-allowed`,
           tooltip: t("app.mic.processing"),
+        };
+      case "transforming":
+        return {
+          className: `${baseClasses} bg-violet-600 cursor-not-allowed`,
+          tooltip: t("app.mic.transforming"),
         };
       default:
         return {
@@ -414,7 +459,7 @@ export default function App() {
               style={{
                 ...micProps.style,
                 cursor:
-                  micState === "processing"
+                  micState === "processing" || micState === "transforming"
                     ? "not-allowed !important"
                     : isDragging
                       ? "grabbing !important"
@@ -442,6 +487,8 @@ export default function App() {
                 <LoadingDots />
               ) : micState === "processing" ? (
                 <VoiceWaveIndicator isListening={true} />
+              ) : micState === "transforming" ? (
+                <TransformIcon />
               ) : null}
 
               {/* State indicator ring for recording */}
@@ -452,6 +499,14 @@ export default function App() {
               {/* State indicator ring for processing */}
               {micState === "processing" && (
                 <div className="absolute inset-0 rounded-full border-2 border-primary/30 opacity-50"></div>
+              )}
+
+              {/* Spinning ring for transform */}
+              {micState === "transforming" && (
+                <div
+                  className="absolute inset-0 rounded-full border-2 border-t-white border-r-white/30 border-b-transparent border-l-white/30 animate-spin"
+                  style={{ animationDuration: "0.9s" }}
+                ></div>
               )}
             </button>
           </Tooltip>

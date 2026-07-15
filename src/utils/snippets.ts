@@ -1,6 +1,8 @@
 export interface Snippet {
   trigger: string;
   replacement: string;
+  /** App names that this snippet applies to. Empty or omitted = all apps. */
+  apps?: string[];
 }
 
 interface SnippetMatcher {

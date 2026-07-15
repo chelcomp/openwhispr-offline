@@ -36,7 +36,7 @@ export function createSearchNotesTool(options: SearchToolOptions): ToolDefinitio
 
       // Fallback chain: cloud → local semantic (hybrid RRF) → FTS5 keyword
       const strategies: Array<() => Promise<ToolResult>> = [];
-      if (useCloudSearch) strategies.push(() => executeCloudSearch(query, limit));
+
       strategies.push(() => executeLocalSearch(query, limit, true));
       strategies.push(() => executeLocalSearch(query, limit, false));
 
@@ -91,30 +91,4 @@ async function executeLocalSearch(
   };
 }
 
-async function executeCloudSearch(query: string, limit: number): Promise<ToolResult> {
-  const { NotesService } = await import("../../services/NotesService.js");
-  const { notes: cloudNotes } = await NotesService.search(query, limit);
 
-  if (cloudNotes.length === 0) {
-    return {
-      success: true,
-      data: [],
-      displayText: `No notes found for "${query}"`,
-    };
-  }
-
-  const results = cloudNotes.map((cn) => ({
-    id: cn.client_note_id ? parseInt(cn.client_note_id, 10) : null,
-    title: cn.title,
-    date: cn.created_at,
-    type: cn.note_type,
-    score: cn.score,
-    content: (cn.enhanced_content || cn.content).slice(0, MAX_CONTENT_LENGTH),
-  }));
-
-  return {
-    success: true,
-    data: results,
-    displayText: `Found ${results.length} note${results.length === 1 ? "" : "s"} for "${query}" (semantic search)`,
-  };
-}

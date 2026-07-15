@@ -14,6 +14,7 @@ import {
   Plus,
   Check,
   Share2,
+  RotateCcw,
 } from "lucide-react";
 import ShareNoteDialog from "./ShareNoteDialog";
 import { useShareCacheEntry } from "../../stores/noteStore";
@@ -145,13 +146,18 @@ export default function NoteEditor({
   onCreateFolderAndMove,
 }: NoteEditorProps) {
   const { t } = useTranslation();
-  const [viewMode, setViewMode] = useState<MeetingViewMode>("raw");
+  const [viewMode, setViewMode] = useState<MeetingViewMode>(
+    note.note_type === "meeting" && note.transcript ? "transcript" : "raw"
+  );
   const [chatMode, setChatMode] = useState<EmbeddedChatMode>("hidden");
   const [folderSearch, setFolderSearch] = useState("");
   const [isCreatingFolder, setIsCreatingFolder] = useState(false);
   const [newFolderName, setNewFolderName] = useState("");
   const [isDiarizing, setIsDiarizing] = useState(false);
   const [shareDialogOpen, setShareDialogOpen] = useState(false);
+  const [audioUrl, setAudioUrl] = useState<string | null>(null);
+  const [retranscribeProgress, setRetranscribeProgress] = useState<number | null>(null);
+  const audioRef = useRef<HTMLAudioElement>(null);
   const shareCache = useShareCacheEntry(note.cloud_id);
   const isShared = (shareCache?.share.visibility ?? "private") !== "private";
   const [diarizedSegments, setDiarizedSegments] = useState<TranscriptSegment[] | null>(null);
@@ -295,7 +301,7 @@ export default function NoteEditor({
         setIsDiarizing(false);
         setSpeakerMappings({});
         if (!isRecording) {
-          setViewMode("raw");
+          setViewMode(note.note_type === "meeting" && note.transcript ? "transcript" : "raw");
         }
         if (titleRef.current && titleRef.current.textContent !== note.title) {
           titleRef.current.textContent = note.title || "";
@@ -540,6 +546,44 @@ export default function NoteEditor({
     const text = e.clipboardData.getData("text/plain").replace(/\n/g, " ");
     document.execCommand("insertText", false, text);
   }, []);
+
+  // Load meeting audio when the note changes or audio_path becomes available.
+  useEffect(() => {
+    if (note.note_type !== "meeting") return;
+    if (!note.audio_path) { setAudioUrl(null); return; }
+    let objectUrl: string | null = null;
+    window.electronAPI?.getNoteAudio?.(note.id).then((buf) => {
+      if (buf) {
+        objectUrl = URL.createObjectURL(new Blob([buf], { type: "audio/webm" }));
+        setAudioUrl(objectUrl);
+      } else {
+        setAudioUrl(null);
+      }
+    }).catch(() => setAudioUrl(null));
+    return () => { if (objectUrl) URL.revokeObjectURL(objectUrl); };
+  }, [note.id, note.audio_path, note.note_type]);
+
+  // Subscribe to re-transcription progress events.
+  useEffect(() => {
+    return window.electronAPI?.onRetranscribeProgress?.((data) => {
+      setRetranscribeProgress(data.pct >= 100 ? null : data.pct);
+    });
+  }, []);
+
+  const handleRetranscribe = useCallback(async () => {
+    if (retranscribeProgress !== null) return;
+    setRetranscribeProgress(0);
+    try {
+      const result = await window.electronAPI?.retranscribeMeeting?.(note.id);
+      if (result?.success && Array.isArray(result.segments)) {
+        setDiarizedSegments(
+          (result.segments as TranscriptSegment[]).map((s, i) => ({ ...s, id: `retrans-${i}` }))
+        );
+      }
+    } finally {
+      setRetranscribeProgress(null);
+    }
+  }, [note.id, retranscribeProgress]);
 
   const prevRecordingRef = useRef(false);
   useEffect(() => {
@@ -880,29 +924,66 @@ export default function NoteEditor({
         <div className="flex-1 relative min-h-0">
           <div className="h-full overflow-y-auto">
             {viewMode === "transcript" && (hasChatSegments || isRecording) ? (
-              <MeetingTranscriptChat
-                segments={displaySegments}
-                micPartial={isRecording ? meetingMicPartial : undefined}
-                systemPartial={isRecording ? meetingSystemPartial : undefined}
-                systemPartialSpeakerId={isRecording ? meetingSystemPartialSpeakerId : undefined}
-                systemPartialSpeakerName={isRecording ? meetingSystemPartialSpeakerName : undefined}
-                speakerMappings={speakerMappings}
-                speakerProfiles={knownSpeakers}
-                participants={parsedParticipants}
-                isRecording={isRecording}
-                isDiarizing={isDiarizing}
-                sessionDiarizationEnabled={sessionDiarizationEnabled}
-                sessionExpectedCount={sessionExpectedCount}
-                userTouchedStepper={userTouchedStepper}
-                onSetSessionDiarizationEnabled={onSetSessionDiarizationEnabled}
-                onSetSessionExpectedCount={onSetSessionExpectedCount}
-                onMapSpeaker={handleMapSpeaker}
-                onConfirmSuggestion={handleConfirmSuggestion}
-                onDismissSuggestion={handleDismissSuggestion}
-                onAttachSpeakerEmail={handleAttachSpeakerEmail}
-                selectedSegmentIds={!isRecording ? selectedSegmentIds : undefined}
-                onToggleSelect={!isRecording ? handleToggleSelect : undefined}
-              />
+              <>
+                {audioUrl && !isRecording && (
+                  <div className="px-4 pt-3 pb-1 space-y-1.5">
+                    <audio
+                      ref={audioRef}
+                      src={audioUrl}
+                      controls
+                      className="w-full h-8 opacity-80 hover:opacity-100 transition-opacity"
+                    />
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={handleRetranscribe}
+                        disabled={retranscribeProgress !== null}
+                        className="flex items-center gap-1.5 text-[11px] text-foreground/40 hover:text-foreground/70 transition-colors disabled:opacity-40"
+                      >
+                        {retranscribeProgress !== null ? (
+                          <Loader2 size={11} className="animate-spin" />
+                        ) : (
+                          <RotateCcw size={11} />
+                        )}
+                        {retranscribeProgress !== null
+                          ? `${t("notes.meeting.retranscribing")} ${retranscribeProgress}%`
+                          : t("notes.meeting.retranscribe")}
+                      </button>
+                      {retranscribeProgress !== null && (
+                        <div className="flex-1 h-0.5 bg-muted rounded-full overflow-hidden">
+                          <div
+                            className="h-full bg-primary transition-all duration-300"
+                            style={{ width: `${retranscribeProgress}%` }}
+                          />
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+                <MeetingTranscriptChat
+                  segments={displaySegments}
+                  micPartial={isRecording ? meetingMicPartial : undefined}
+                  systemPartial={isRecording ? meetingSystemPartial : undefined}
+                  systemPartialSpeakerId={isRecording ? meetingSystemPartialSpeakerId : undefined}
+                  systemPartialSpeakerName={isRecording ? meetingSystemPartialSpeakerName : undefined}
+                  speakerMappings={speakerMappings}
+                  speakerProfiles={knownSpeakers}
+                  participants={parsedParticipants}
+                  isRecording={isRecording}
+                  isDiarizing={isDiarizing}
+                  sessionDiarizationEnabled={sessionDiarizationEnabled}
+                  sessionExpectedCount={sessionExpectedCount}
+                  userTouchedStepper={userTouchedStepper}
+                  onSetSessionDiarizationEnabled={onSetSessionDiarizationEnabled}
+                  onSetSessionExpectedCount={onSetSessionExpectedCount}
+                  onMapSpeaker={handleMapSpeaker}
+                  onConfirmSuggestion={handleConfirmSuggestion}
+                  onDismissSuggestion={handleDismissSuggestion}
+                  onAttachSpeakerEmail={handleAttachSpeakerEmail}
+                  selectedSegmentIds={!isRecording ? selectedSegmentIds : undefined}
+                  onToggleSelect={!isRecording ? handleToggleSelect : undefined}
+                  onSeek={audioUrl ? (ms) => { if (audioRef.current) audioRef.current.currentTime = ms / 1000; } : undefined}
+                />
+              </>
             ) : viewMode === "transcript" && hasMeetingTranscript ? (
               <RichTextEditor value={effectiveTranscript} disabled />
             ) : viewMode === "enhanced" && enhancement ? (

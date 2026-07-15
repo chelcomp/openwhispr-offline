@@ -97,3 +97,10 @@ const playCue = async (notes) => {
 export const playStartCue = () => playCue(START_NOTES);
 
 export const playStopCue = () => playCue(STOP_NOTES);
+
+// Transform cues — higher register, distinct from recording start/stop
+const TRANSFORM_START_NOTES = [659.25, 830.6];  // E5 → G#5
+const TRANSFORM_DONE_NOTES  = [830.6, 1046.5];  // G#5 → C6
+
+export const playTransformStartCue = () => playCue(TRANSFORM_START_NOTES);
+export const playTransformDoneCue  = () => playCue(TRANSFORM_DONE_NOTES);

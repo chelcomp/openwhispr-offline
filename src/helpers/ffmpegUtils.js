@@ -116,7 +116,7 @@ function convertToWav(inputPath, outputPath, options = {}) {
     if (!ffmpegPath) {
       reject(
         new Error(
-          "FFmpeg not found - the bundled FFmpeg is missing from this install and no system FFmpeg was found on PATH; reinstalling OpenWhispr should fix this"
+          "FFmpeg not found - the bundled FFmpeg is missing from this install and no system FFmpeg was found on PATH; reinstalling EktosWhispr should fix this"
         )
       );
       return;
@@ -328,9 +328,25 @@ function clearCache() {
   cachedFFmpegPath = null;
 }
 
+/**
+ * Returns true when the buffer is a WAV already formatted exactly as
+ * whisper.cpp and sherpa-onnx require: 16 kHz, mono, 16-bit PCM.
+ * Only these files can bypass FFmpeg conversion.
+ */
+function isWhisperReadyWav(buffer) {
+  if (!buffer || buffer.length < 44) return false;
+  if (!isWavFormat(buffer)) return false;
+  const audioFormat = buffer.readUInt16LE(20);
+  const channels = buffer.readUInt16LE(22);
+  const sampleRate = buffer.readUInt32LE(24);
+  const bitsPerSample = buffer.readUInt16LE(34);
+  return audioFormat === 1 && channels === 1 && sampleRate === 16000 && bitsPerSample === 16;
+}
+
 module.exports = {
   getFFmpegPath,
   isWavFormat,
+  isWhisperReadyWav,
   convertToWav,
   splitAudioFile,
   wavToFloat32Samples,

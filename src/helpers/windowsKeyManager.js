@@ -136,12 +136,14 @@ class WindowsKeyManager extends EventEmitter {
     }
 
     if (line === "KEY_DOWN") {
+      console.log(`[WindowsKeyManager] Hotkey triggered (KEY_DOWN): "${key}"`);
       debugLogger.debug("[WindowsKeyManager] KEY_DOWN detected", { key });
       this.emit("key-down", key);
       return;
     }
 
     if (line === "KEY_UP") {
+      console.log(`[WindowsKeyManager] Hotkey released (KEY_UP): "${key}"`);
       debugLogger.debug("[WindowsKeyManager] KEY_UP detected", { key });
       this.emit("key-up", key);
       return;

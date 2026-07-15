@@ -141,7 +141,18 @@ export const useAudioRecording = (toast, options = {}) => {
             return;
           }
 
-          result.text = expandSnippets(result.text, getSettings().snippets);
+          const { snippets } = getSettings();
+          // Non-app snippets expand immediately in the renderer (no async needed).
+          // App-filtered snippets are forwarded to the main process paste handler,
+          // which detects the foreground app after window blur (see ipcHandlers.js).
+          const nonAppSnippets = snippets.filter((s) => !s.apps?.length);
+          const appSnippets = snippets.filter((s) => s.apps?.length > 0);
+          result.text = expandSnippets(result.text, nonAppSnippets);
+          logger.debug("Snippet expansion", {
+            total: snippets.length,
+            nonApp: nonAppSnippets.length,
+            appFiltered: appSnippets.length,
+          });
 
           setTranscript(result.text);
           window.electronAPI?.completeDictationPreview?.({ text: result.text });
@@ -163,6 +174,7 @@ export const useAudioRecording = (toast, options = {}) => {
               ...(isStreaming ? { fromStreaming: true } : {}),
               restoreClipboard: !keepTranscriptionInClipboard,
               allowClipboardFallback: isAccessibilitySkipped(),
+              ...(appSnippets.length > 0 ? { appSnippets } : {}),
             });
             logger.info(
               "Paste timing",
@@ -186,18 +198,6 @@ export const useAudioRecording = (toast, options = {}) => {
               title: t("hooks.audioRecording.fallback.title"),
               description: t("hooks.audioRecording.fallback.description"),
               variant: "default",
-            });
-          }
-
-          // Cloud usage: limit reached after this transcription
-          if (result.source === "openwhispr" && result.limitReached) {
-            // Notify control panel to show UpgradePrompt dialog
-            window.electronAPI?.notifyLimitReached?.({
-              wordsUsed: result.wordsUsed,
-              limit:
-                result.wordsRemaining !== undefined
-                  ? result.wordsUsed + result.wordsRemaining
-                  : 2000,
             });
           }
 

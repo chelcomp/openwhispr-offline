@@ -85,7 +85,6 @@ CONTENT RULES:
 Instructions: `;
 
 export interface RunActionOptions {
-  isCloudMode: boolean;
   modelId: string;
   isMeetingNote?: boolean;
   /** Opt-in so enhancement never renames a note the user has titled. */
@@ -112,7 +111,7 @@ export function runBackgroundAction(
   if (processingFlags.get(noteId)) return;
 
   const modelId = options.modelId;
-  if (!modelId && !options.isCloudMode) {
+  if (!modelId) {
     pushErrorEvent({ noteId, message: labels.noModel });
     return;
   }
@@ -126,11 +125,8 @@ export function runBackgroundAction(
       const basePrompt = options.isMeetingNote ? MEETING_SYSTEM_PROMPT : BASE_SYSTEM_PROMPT;
       const settings = getSettings();
       const noteFormatting = selectResolvedNoteFormatting(settings);
-      const provider = options.isCloudMode
-        ? "openwhispr"
-        : noteFormatting.mode === "providers"
-          ? noteFormatting.provider || undefined
-          : undefined;
+      const provider =
+        noteFormatting.mode === "providers" ? noteFormatting.provider || undefined : undefined;
       const isCustom = provider === "custom";
       const providerOverrides = {
         provider,

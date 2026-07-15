@@ -1,14 +1,10 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import type {
-  LlamaServerStatus,
-  LlamaVulkanStatus,
-  VulkanGpuResult,
-  LlamaVulkanDownloadProgress,
   InferenceMode,
 } from "../types/electron";
-import { Button } from "./ui/button";
-import { Cloud, Lock, Zap } from "lucide-react";
+import { Cloud, Lock } from "lucide-react";
+import { GpuModeSelector } from "./ui/GpuModeSelector";
 import ApiKeyInput from "./ui/ApiKeyInput";
 import ModelCardList from "./ui/ModelCardList";
 import LocalModelPicker, { type LocalProvider } from "./LocalModelPicker";
@@ -16,13 +12,10 @@ import { ProviderTabs } from "./ui/ProviderTabs";
 import OpenAICompatiblePanel from "./OpenAICompatiblePanel";
 import { API_ENDPOINTS } from "../config/constants";
 import logger from "../utils/logger";
-import { REASONING_PROVIDERS, toReasoningModel } from "../models/ModelRegistry";
-import { useTinfoilModels } from "../hooks/useTinfoilModels";
-import { pickDefaultTinfoilModel } from "../models/tinfoilModels";
+import { REASONING_PROVIDERS } from "../models/ModelRegistry";
 import { modelRegistry } from "../models/ModelRegistry";
 import { getRemoteProviderIcon } from "../utils/providerIcons";
 import { GetApiKeyLink } from "./ui/GetApiKeyLink";
-import { getCachedPlatform } from "../utils/platform";
 import { useSettingsStore } from "../stores/settingsStore";
 
 type CloudModelOption = {
@@ -44,8 +37,6 @@ const CLOUD_PROVIDER_IDS = [
   "gemini",
   "groq",
   OPENROUTER_TAB,
-  "tinfoil",
-  "corti",
   "custom",
 ];
 
@@ -62,256 +53,6 @@ interface ReasoningModelSelectorProps {
   mode?: "cloud" | "local";
 }
 
-function GpuStatusBadge() {
-  const { t } = useTranslation();
-  const [serverStatus, setServerStatus] = useState<LlamaServerStatus | null>(null);
-  const [vulkanStatus, setVulkanStatus] = useState<LlamaVulkanStatus | null>(null);
-  const [gpuResult, setGpuResult] = useState<VulkanGpuResult | null>(null);
-  const [progress, setProgress] = useState<LlamaVulkanDownloadProgress | null>(null);
-  const [downloading, setDownloading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [activating, setActivating] = useState(false);
-  const [activationFailed, setActivationFailed] = useState(false);
-  const [dismissed, setDismissed] = useState(
-    () => localStorage.getItem("llamaVulkanBannerDismissed") === "true"
-  );
-  const platform = getCachedPlatform();
-
-  useEffect(() => {
-    const poll = () => {
-      window.electronAPI
-        ?.llamaServerStatus?.()
-        .then(setServerStatus)
-        .catch(() => {});
-      if (platform !== "darwin") {
-        window.electronAPI
-          ?.getLlamaVulkanStatus?.()
-          .then(setVulkanStatus)
-          .catch(() => {});
-      }
-    };
-    poll();
-    const id = setInterval(poll, 5000);
-    return () => clearInterval(id);
-  }, [platform]);
-
-  useEffect(() => {
-    if (platform !== "darwin") {
-      window.electronAPI
-        ?.detectVulkanGpu?.()
-        .then(setGpuResult)
-        .catch(() => {});
-    }
-  }, [platform]);
-
-  useEffect(() => {
-    const cleanup = window.electronAPI?.onLlamaVulkanDownloadProgress?.((data) => {
-      setProgress(data);
-    });
-    return () => cleanup?.();
-  }, []);
-
-  useEffect(() => {
-    if (!activating) return;
-    if (serverStatus?.gpuAccelerated || vulkanStatus?.downloaded) {
-      setActivating(false);
-      setActivationFailed(false);
-      return;
-    }
-    const timeout = setTimeout(() => {
-      setActivating(false);
-      setActivationFailed(true);
-    }, 10000);
-    const fastPoll = setInterval(() => {
-      window.electronAPI
-        ?.llamaServerStatus?.()
-        .then(setServerStatus)
-        .catch(() => {});
-      window.electronAPI
-        ?.getLlamaVulkanStatus?.()
-        .then(setVulkanStatus)
-        .catch(() => {});
-    }, 1000);
-    return () => {
-      clearTimeout(timeout);
-      clearInterval(fastPoll);
-    };
-  }, [activating, serverStatus?.gpuAccelerated, vulkanStatus?.downloaded]);
-
-  const handleDownload = async () => {
-    setDownloading(true);
-    setError(null);
-    try {
-      const result = await window.electronAPI?.downloadLlamaVulkanBinary?.();
-      if (result?.success) {
-        setVulkanStatus((prev) => (prev ? { ...prev, downloaded: true } : prev));
-        await window.electronAPI?.llamaGpuReset?.();
-        setActivating(true);
-        setActivationFailed(false);
-      } else if (result && !result.cancelled) {
-        setError(result.error || t("gpu.activationFailed"));
-      }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : t("gpu.activationFailed"));
-    } finally {
-      setDownloading(false);
-      setProgress(null);
-    }
-  };
-
-  const handleDelete = async () => {
-    await window.electronAPI?.deleteLlamaVulkanBinary?.();
-    setVulkanStatus((prev) => (prev ? { ...prev, downloaded: false } : prev));
-  };
-
-  const handleRetry = async () => {
-    setActivationFailed(false);
-    setActivating(true);
-    await window.electronAPI?.llamaGpuReset?.();
-  };
-
-  // State 1: macOS
-  if (platform === "darwin") {
-    if (!serverStatus?.running) return null;
-    return (
-      <div className="flex items-center gap-1.5 mt-2 px-1">
-        <span className="inline-block w-1.5 h-1.5 rounded-full shrink-0 bg-success" />
-        <span className="text-xs text-muted-foreground">{t("gpu.active")}</span>
-      </div>
-    );
-  }
-
-  // State 3: Downloading
-  if (downloading && progress) {
-    return (
-      <div className="flex items-center gap-2 mt-2 px-1">
-        <div className="flex-1 h-1 bg-muted rounded-full overflow-hidden">
-          <div
-            className="h-full bg-primary transition-all"
-            style={{ width: `${progress.percentage}%` }}
-          />
-        </div>
-        <span className="text-xs text-muted-foreground tabular-nums">{progress.percentage}%</span>
-        <button
-          type="button"
-          onClick={() => window.electronAPI?.cancelLlamaVulkanDownload?.()}
-          className="text-xs text-muted-foreground hover:text-foreground transition-colors"
-        >
-          {t("gpu.cancel")}
-        </button>
-      </div>
-    );
-  }
-
-  // State 3b: Error
-  if (error) {
-    return (
-      <div className="flex items-center gap-1.5 mt-2 px-1">
-        <span className="text-xs text-destructive">{error}</span>
-        <button
-          type="button"
-          onClick={() => setError(null)}
-          className="text-xs text-muted-foreground hover:text-foreground transition-colors ml-1"
-        >
-          {t("gpu.dismiss")}
-        </button>
-      </div>
-    );
-  }
-
-  // State 5: Activating
-  if (activating) {
-    return (
-      <div className="flex items-center gap-1.5 mt-2 px-1">
-        <span className="inline-block w-1.5 h-1.5 rounded-full shrink-0 bg-primary animate-pulse" />
-        <span className="text-xs text-muted-foreground">{t("gpu.activating")}</span>
-      </div>
-    );
-  }
-
-  // State 4: Downloaded + GPU active
-  if (vulkanStatus?.downloaded) {
-    const isGpu = serverStatus?.gpuAccelerated && serverStatus?.backend === "vulkan";
-
-    // State 6: Activation failed
-    if (!isGpu && activationFailed) {
-      return (
-        <div className="flex items-center gap-1.5 mt-2 px-1">
-          <span className="inline-block w-1.5 h-1.5 rounded-full shrink-0 bg-warning" />
-          <span className="text-xs text-muted-foreground">{t("gpu.activationFailed")}</span>
-          <button
-            type="button"
-            onClick={handleRetry}
-            className="text-xs text-muted-foreground hover:text-foreground transition-colors ml-1"
-          >
-            {t("gpu.retry")}
-          </button>
-          <button
-            type="button"
-            onClick={handleDelete}
-            className="text-xs text-muted-foreground hover:text-foreground transition-colors ml-auto"
-          >
-            {t("gpu.remove")}
-          </button>
-        </div>
-      );
-    }
-
-    // State 4: GPU active or just downloaded
-    return (
-      <div className="flex items-center gap-1.5 mt-2 px-1">
-        <span
-          className={`inline-block w-1.5 h-1.5 rounded-full shrink-0 ${isGpu ? "bg-success" : "bg-primary"}`}
-        />
-        <span className="text-xs text-muted-foreground">
-          {isGpu ? t("gpu.active") : t("gpu.ready")}
-        </span>
-        <button
-          type="button"
-          onClick={handleDelete}
-          className="text-xs text-muted-foreground hover:text-foreground transition-colors ml-auto"
-        >
-          {t("gpu.remove")}
-        </button>
-      </div>
-    );
-  }
-
-  // State 7: GPU available, not downloaded — show banner
-  if (gpuResult?.available && !dismissed) {
-    return (
-      <div className="mt-2 rounded-md border border-primary/20 bg-primary/5 p-2.5">
-        <div className="flex items-start gap-2.5">
-          <Zap size={13} className="text-primary shrink-0 mt-0.5" />
-          <div className="flex-1 min-w-0">
-            <p className="text-xs font-medium text-foreground">{t("gpu.reasoningBanner")}</p>
-            <div className="flex items-center gap-2 mt-1.5">
-              <Button
-                onClick={handleDownload}
-                size="sm"
-                variant="default"
-                className="h-6 px-2.5 text-xs"
-              >
-                {t("gpu.enableButton")}
-              </Button>
-              <button
-                onClick={() => {
-                  localStorage.setItem("llamaVulkanBannerDismissed", "true");
-                  setDismissed(true);
-                }}
-                className="text-xs text-muted-foreground hover:text-foreground transition-colors"
-              >
-                {t("gpu.dismiss")}
-              </button>
-            </div>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  return null;
-}
 
 export default function ReasoningModelSelector({
   reasoningModel,
@@ -336,18 +77,9 @@ export default function ReasoningModelSelector({
   const setGroqApiKey = useSettingsStore((s) => s.setGroqApiKey);
   const openrouterApiKey = useSettingsStore((s) => s.openrouterApiKey);
   const setOpenrouterApiKey = useSettingsStore((s) => s.setOpenrouterApiKey);
-  const tinfoilApiKey = useSettingsStore((s) => s.tinfoilApiKey);
-  const setTinfoilApiKey = useSettingsStore((s) => s.setTinfoilApiKey);
-  const cortiApiKey = useSettingsStore((s) => s.cortiApiKey);
-  const setCortiApiKey = useSettingsStore((s) => s.setCortiApiKey);
   const [selectedMode, setSelectedMode] = useState<"cloud" | "local">(mode || "cloud");
   const [selectedCloudProvider, setSelectedCloudProvider] = useState("openai");
   const [selectedLocalProvider, setSelectedLocalProvider] = useState("qwen");
-  const {
-    models: tinfoilModels,
-    loading: tinfoilModelsLoading,
-    error: tinfoilModelsError,
-  } = useTinfoilModels(selectedCloudProvider === "tinfoil");
 
   const effectiveMode = mode || selectedMode;
 
@@ -397,9 +129,7 @@ export default function ReasoningModelSelector({
     const { icon: iconUrl, invertInDark } = getRemoteProviderIcon(selectedCloudProvider);
 
     const models =
-      selectedCloudProvider === "tinfoil"
-        ? tinfoilModels.map(toReasoningModel)
-        : REASONING_PROVIDERS[selectedCloudProvider as keyof typeof REASONING_PROVIDERS]?.models;
+      REASONING_PROVIDERS[selectedCloudProvider as keyof typeof REASONING_PROVIDERS]?.models;
 
     if (!models) return [];
 
@@ -411,7 +141,7 @@ export default function ReasoningModelSelector({
       icon: iconUrl,
       invertInDark,
     }));
-  }, [selectedCloudProvider, openaiModelOptions, tinfoilModels, t]);
+  }, [selectedCloudProvider, openaiModelOptions, t]);
 
   useEffect(() => {
     const localProviderIds = localProviders.map((p) => p.id);
@@ -453,12 +183,6 @@ export default function ReasoningModelSelector({
     // presetting so another provider's model id can't persist under this one.
     if (provider === "custom" || provider === OPENROUTER_TAB) {
       setReasoningModel("");
-      return;
-    }
-
-    if (provider === "tinfoil") {
-      const defaultModel = pickDefaultTinfoilModel(tinfoilModels);
-      if (defaultModel) setReasoningModel(defaultModel.id);
       return;
     }
 
@@ -640,37 +364,6 @@ export default function ReasoningModelSelector({
                   </div>
                 )}
 
-                {selectedCloudProvider === "tinfoil" && (
-                  <div className="space-y-2">
-                    <div className="flex items-baseline justify-between">
-                      <h4 className="font-medium text-foreground">{t("common.apiKey")}</h4>
-                      <GetApiKeyLink url="https://tinfoil.sh/inference?utm_source=referral&utm_campaign=openwhispr" />
-                    </div>
-                    <ApiKeyInput
-                      apiKey={tinfoilApiKey}
-                      setApiKey={setTinfoilApiKey}
-                      label=""
-                      helpText=""
-                    />
-                  </div>
-                )}
-
-                {selectedCloudProvider === "corti" && (
-                  <div className="space-y-2">
-                    <p className="text-xs text-muted-foreground">{t("reasoning.corti.euOnly")}</p>
-                    <div className="flex items-baseline justify-between">
-                      <h4 className="font-medium text-foreground">{t("common.apiKey")}</h4>
-                      <GetApiKeyLink url="https://www.corti.ai/?utm_source=referral&utm_campaign=openwhispr" />
-                    </div>
-                    <ApiKeyInput
-                      apiKey={cortiApiKey}
-                      setApiKey={setCortiApiKey}
-                      label=""
-                      helpText=""
-                    />
-                  </div>
-                )}
-
                 <div className="pt-3 space-y-2">
                   <h4 className="text-sm font-medium text-foreground">
                     {t("reasoning.selectModel")}
@@ -680,20 +373,6 @@ export default function ReasoningModelSelector({
                     selectedModel={reasoningModel}
                     onModelSelect={setReasoningModel}
                   />
-                  {selectedCloudProvider === "tinfoil" && (
-                    <>
-                      {tinfoilModelsLoading && (
-                        <p className="text-xs text-muted-foreground">
-                          {t("reasoning.tinfoil.refreshingModels")}
-                        </p>
-                      )}
-                      {!tinfoilModelsLoading && tinfoilModelsError && (
-                        <p className="text-xs text-destructive">
-                          {t("reasoning.custom.unableToLoadModels")}
-                        </p>
-                      )}
-                    </>
-                  )}
                 </div>
               </>
             )}
@@ -713,7 +392,7 @@ export default function ReasoningModelSelector({
             colorScheme="purple"
             onDownloadComplete={loadDownloadedModels}
           />
-          <GpuStatusBadge />
+          <GpuModeSelector type="llama" />
         </>
       )}
     </div>

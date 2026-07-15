@@ -22,6 +22,8 @@ interface LanguageSelectorProps {
   onChange: (value: string) => void;
   options?: LanguageOption[];
   className?: string;
+  /** When true, allows selecting multiple languages. Value is comma-separated. */
+  multiSelect?: boolean;
 }
 
 export default function LanguageSelector({
@@ -29,6 +31,7 @@ export default function LanguageSelector({
   onChange,
   options,
   className = "",
+  multiSelect = false,
 }: LanguageSelectorProps) {
   const { t } = useTranslation();
   const items = options ?? REGISTRY_OPTIONS;
@@ -45,6 +48,14 @@ export default function LanguageSelector({
   const triggerRef = useRef<HTMLButtonElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
 
+  // Parse comma-separated value into array (for multi-select)
+  const selectedValues = multiSelect
+    ? value
+        .split(",")
+        .map((v) => v.trim())
+        .filter(Boolean)
+    : [value];
+
   const filteredLanguages = showSearch
     ? items.filter(
         (lang) =>
@@ -53,13 +64,11 @@ export default function LanguageSelector({
       )
     : items;
 
-  const handleSearchQueryChange = useCallback((value: string) => {
-    setSearchQuery(value);
+  const handleSearchQueryChange = useCallback((v: string) => {
+    setSearchQuery(v);
     setHighlightedIndex(0);
   }, []);
 
-  // Determine the portal container: use the closest dialog if inside one (to stay
-  // within Radix's focus trap), otherwise fall back to document.body.
   const setContainerNode = useCallback((node: HTMLDivElement | null) => {
     containerRef.current = node;
     if (!node) return;
@@ -71,8 +80,6 @@ export default function LanguageSelector({
     if (isOpen && triggerRef.current && portalTarget) {
       const triggerRect = triggerRef.current.getBoundingClientRect();
       const target = portalTarget;
-      // When portaled into a transformed ancestor (e.g. Radix Dialog),
-      // fixed positioning is relative to that ancestor, not the viewport.
       const offsetX = target === document.body ? 0 : target.getBoundingClientRect().left;
       const offsetY = target === document.body ? 0 : target.getBoundingClientRect().top;
       setDropdownPosition({
@@ -85,6 +92,7 @@ export default function LanguageSelector({
       });
     }
   }, [isOpen, portalTarget]);
+
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
       const target = event.target as Node;
@@ -101,6 +109,7 @@ export default function LanguageSelector({
     document.addEventListener("mousedown", handleClickOutside);
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
+
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (!isOpen) {
       if (e.key === "Enter" || e.key === " " || e.key === "ArrowDown") {
@@ -134,21 +143,82 @@ export default function LanguageSelector({
   };
 
   const handleSelect = (languageValue: string) => {
-    onChange(languageValue);
-    setIsOpen(false);
-    handleSearchQueryChange("");
+    if (!multiSelect) {
+      onChange(languageValue);
+      setIsOpen(false);
+      handleSearchQueryChange("");
+      return;
+    }
+
+    // Multi-select logic
+    if (languageValue === "auto") {
+      // "Auto" is exclusive — clear all specific selections
+      onChange("auto");
+      return;
+    }
+
+    const current = selectedValues.filter((v) => v !== "auto");
+    const isAlreadySelected = current.includes(languageValue);
+
+    let next: string[];
+    if (isAlreadySelected) {
+      next = current.filter((v) => v !== languageValue);
+    } else {
+      next = [...current, languageValue];
+    }
+
+    // If nothing selected, fall back to auto
+    onChange(next.length === 0 ? "auto" : next.join(","));
   };
 
-  const clearSearch = () => {
-    handleSearchQueryChange("");
-    if (searchInputRef.current) {
-      searchInputRef.current.focus();
+  // Build trigger label for multi-select
+  const triggerContent = () => {
+    if (!multiSelect) {
+      const found = items.find((l) => l.value === value);
+      return (
+        <span className="truncate text-foreground">
+          <span className="mr-1.5">{found?.flag ?? "🌐"}</span>
+          {found?.label ?? value}
+        </span>
+      );
     }
+
+    const specific = selectedValues.filter((v) => v !== "auto");
+    if (specific.length === 0 || selectedValues.includes("auto")) {
+      const auto = items.find((l) => l.value === "auto");
+      return (
+        <span className="truncate text-foreground">
+          <span className="mr-1.5">{auto?.flag ?? "🌐"}</span>
+          {auto?.label ?? "Auto-detect"}
+        </span>
+      );
+    }
+    if (specific.length === 1) {
+      const found = items.find((l) => l.value === specific[0]);
+      return (
+        <span className="truncate text-foreground">
+          <span className="mr-1.5">{found?.flag ?? ""}</span>
+          {found?.label ?? specific[0]}
+        </span>
+      );
+    }
+    return (
+      <span className="truncate text-foreground flex items-center gap-1">
+        {specific.slice(0, 3).map((code) => {
+          const found = items.find((l) => l.value === code);
+          return (
+            <span key={code} className="mr-0.5">
+              {found?.flag ?? code}
+            </span>
+          );
+        })}
+        <span className="ml-0.5 text-muted-foreground">{specific.length} languages</span>
+      </span>
+    );
   };
 
   return (
     <div className={`relative ${className}`} ref={setContainerNode}>
-      {/* Trigger button - premium, tight, tactile macOS-style */}
       <button
         ref={triggerRef}
         type="button"
@@ -170,12 +240,7 @@ export default function LanguageSelector({
         aria-haspopup="listbox"
         aria-expanded={isOpen}
       >
-        <span className="truncate text-foreground">
-          <span className="mr-1.5">
-            {items.find((l) => l.value === value)?.flag ?? "\uD83C\uDF10"}
-          </span>
-          {items.find((l) => l.value === value)?.label ?? value}
-        </span>
+        {triggerContent()}
         <ChevronDown
           className={`w-3.5 h-3.5 shrink-0 text-muted-foreground transition-[color,transform] duration-200 ${
             isOpen ? "rotate-180 text-primary" : "group-hover:text-foreground"
@@ -183,7 +248,6 @@ export default function LanguageSelector({
         />
       </button>
 
-      {/* Dropdown - ultra-premium glassmorphic panel (rendered via portal) */}
       {isOpen &&
         portalTarget &&
         createPortal(
@@ -213,7 +277,10 @@ export default function LanguageSelector({
                   {searchQuery && (
                     <button
                       type="button"
-                      onClick={clearSearch}
+                      onClick={() => {
+                        handleSearchQueryChange("");
+                        searchInputRef.current?.focus();
+                      }}
                       className="absolute right-1.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors rounded p-0.5 hover:bg-muted/50"
                     >
                       <X className="w-3 h-3" />
@@ -223,7 +290,6 @@ export default function LanguageSelector({
               </div>
             )}
 
-            {/* Language list - tight, premium with smart scrollbar */}
             <div className="max-h-48 overflow-y-auto px-1 pb-1 scrollbar-thin scrollbar-track-transparent scrollbar-thumb-border">
               {filteredLanguages.length === 0 ? (
                 <div className="px-2.5 py-2 text-xs text-muted-foreground">
@@ -232,7 +298,12 @@ export default function LanguageSelector({
               ) : (
                 <div role="listbox" className="space-y-0.5 pt-1">
                   {filteredLanguages.map((language, index) => {
-                    const isSelected = language.value === value;
+                    const isSelected = multiSelect
+                      ? selectedValues.includes(language.value) ||
+                        (language.value === "auto" &&
+                          (selectedValues.includes("auto") ||
+                            selectedValues.filter((v) => v !== "auto").length === 0))
+                      : language.value === value;
                     const isHighlighted = index === highlightedIndex;
 
                     return (

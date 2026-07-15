@@ -95,9 +95,24 @@ export function useChatStreaming({
       setAgentState("thinking");
 
       const settings = getSettings();
-      const chatAgentMode = settings.chatAgentMode || "openwhispr";
-      const isCloudAgent = chatAgentMode === "openwhispr" && settings.isSignedIn;
+      const chatAgentMode = settings.chatAgentMode || "providers";
+
+      const isCloudAgent = false;
       const isLanAgent = chatAgentMode === "self-hosted" && !!settings.chatAgentRemoteUrl;
+      if (!isLanAgent && !settings.chatAgentModel?.trim()) {
+        const assistantId = crypto.randomUUID();
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: assistantId,
+            role: "assistant",
+            content: t("agentMode.chat.noModelConfigured"),
+            isStreaming: false,
+          },
+        ]);
+        setAgentState("idle");
+        return;
+      }
       const isCustomAgent =
         chatAgentMode === "providers" && settings.chatAgentProvider === "custom";
       const isLocalProvider =
@@ -118,12 +133,11 @@ export function useChatStreaming({
 
       let registry: ToolRegistry | null = null;
       if (supportsTools) {
-        const cacheKey = `${settings.isSignedIn}-${settings.gcalConnected}-${settings.cloudBackupEnabled}`;
+        const cacheKey = `${settings.gcalConnected}-${settings.cloudBackupEnabled}`;
         if (toolRegistryRef.current?.key === cacheKey) {
           registry = toolRegistryRef.current.registry;
         } else {
           registry = createToolRegistry({
-            isSignedIn: settings.isSignedIn,
             gcalConnected: settings.gcalConnected,
             cloudBackupEnabled: settings.cloudBackupEnabled,
           });

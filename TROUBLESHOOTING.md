@@ -31,7 +31,7 @@
 **macOS:**
 
 1. Open System Settings → Privacy & Security → Microphone
-2. Ensure OpenWhispr is listed and enabled
+2. Ensure EktosWhispr is listed and enabled
 3. If not listed, click "Grant Access" in the app to trigger the permission prompt
 4. You can also click "Open Microphone Privacy" button in the app
 
@@ -39,7 +39,7 @@
 
 1. Open Settings → Privacy → Microphone
 2. Ensure "Allow apps to access your microphone" is ON
-3. Ensure OpenWhispr is listed and enabled
+3. Ensure EktosWhispr is listed and enabled
 4. You can also click "Open Privacy Settings" button in the app
 
 **Linux:**
@@ -99,7 +99,7 @@
 3. If bundled binary fails, install via package manager:
    - macOS: `brew install whisper-cpp`
    - Linux: Build from source at https://github.com/ggml-org/whisper.cpp
-4. Clear model cache: `rm -rf ~/.cache/openwhispr/whisper-models`
+4. Clear model cache: `rm -rf ~/.cache/ektoswhispr/whisper-models`
 5. Try cloud transcription as fallback
 
 ### Wayland Clipboard Issues (Linux)
@@ -115,9 +115,9 @@
    - Fedora/RHEL: `sudo dnf install wl-clipboard`
    - Arch: `sudo pacman -S wl-clipboard`
 2. Ensure a paste tool is installed (`xdotool` recommended, or `wtype` for Sway/Hyprland, or `ydotool` with daemon)
-3. Restart OpenWhispr after installing
+3. Restart EktosWhispr after installing
 
-OpenWhispr tries clipboard methods in order: `wl-copy` (most reliable) → renderer `navigator.clipboard` → X11 fallback.
+EktosWhispr tries clipboard methods in order: `wl-copy` (most reliable) → renderer `navigator.clipboard` → X11 fallback.
 
 ### Linux System Audio PipeWire Issues
 
@@ -131,8 +131,8 @@ OpenWhispr tries clipboard methods in order: `wl-copy` (most reliable) → rende
    - Arch: `sudo pacman -S pipewire`
 2. Make sure the PipeWire user service is running for the current session
 3. Sign out and back in after installing or updating PipeWire packages
-4. Restart OpenWhispr and start meeting transcription again
-5. No screen-share chooser is expected for Linux system audio; OpenWhispr captures the default sink monitor directly through PipeWire
+4. Restart EktosWhispr and start meeting transcription again
+5. No screen-share chooser is expected for Linux system audio; EktosWhispr captures the default sink monitor directly through PipeWire
 
 ### Meeting Transcription Issues
 
@@ -140,14 +140,13 @@ OpenWhispr tries clipboard methods in order: `wl-copy` (most reliable) → rende
 
 **macOS:**
 
-1. Grant Screen Recording permission: System Settings → Privacy & Security → Screen Recording → enable OpenWhispr
+1. Grant Screen Recording permission: System Settings → Privacy & Security → Screen Recording → enable EktosWhispr
 2. Restart the app after granting permission
-3. Ensure Google Calendar is connected in Integrations
 
 **Windows:**
 
 1. System audio is captured by `windows-system-audio-helper.exe` (WASAPI process loopback), which hears every app on every output device — no permission prompt is needed
-2. If the helper is missing or fails (requires Windows 10 2004+), OpenWhispr automatically falls back to Chromium loopback, which only hears the _default_ output device — make sure your meeting app plays through the default device in that case
+2. If the helper is missing or fails (requires Windows 10 2004+), EktosWhispr automatically falls back to Chromium loopback, which only hears the _default_ output device — make sure your meeting app plays through the default device in that case
 3. If transcription shows "Continuing with microphone only", system audio capture failed entirely; check debug logs for `windows-system-audio-helper` entries
 
 **All Platforms:**
@@ -173,36 +172,60 @@ OpenWhispr tries clipboard methods in order: `wl-copy` (most reliable) → rende
 
 **No window appears (process running in Task Manager but invisible):**
 
-1. Check the system tray (click the `^` caret) for the OpenWhispr icon
-2. Run with debug logging: `OpenWhispr.exe --log-level=debug`
-3. Try disabling GPU acceleration: `OpenWhispr.exe --disable-gpu`
+1. Check the system tray (click the `^` caret) for the EktosWhispr icon
+2. Run with debug logging: `EktosWhispr.exe --log-level=debug`
+3. Try disabling GPU acceleration: `EktosWhispr.exe --disable-gpu`
 
 **Antivirus / Windows Defender blocking binaries:**
 
-whisper.cpp and FFmpeg may be quarantined silently. Add OpenWhispr to exclusions: Settings → Virus & threat protection → Exclusions.
+whisper.cpp and FFmpeg may be quarantined silently. Add EktosWhispr to exclusions: Settings → Virus & threat protection → Exclusions.
 
 **Permission errors:**
 
-Right-click OpenWhispr → Run as administrator (or set permanently in Properties → Compatibility).
+Right-click EktosWhispr → Run as administrator (or set permanently in Properties → Compatibility).
 
 **Firewall blocking cloud mode:**
 
-Allow OpenWhispr through Windows Firewall when using cloud transcription providers.
+Allow EktosWhispr through Windows Firewall when using cloud transcription providers.
 
 **Firewall prompt for sherpa-onnx (local Parakeet transcription):**
 
-Windows may ask whether to allow `sherpa-onnx-ws-win32-x64` on public and private networks the first time local Parakeet transcription starts. The bundled sherpa-onnx server only serves OpenWhispr itself over `127.0.0.1`, but it has no loopback-only bind option, so Windows sees it listening on all interfaces. Either choice is safe — Windows never filters loopback traffic, so transcription works even if you click Cancel. All-users installs register a firewall rule that blocks outside access and suppresses the prompt entirely; per-user and portable builds may still see it once.
+Windows may ask whether to allow `sherpa-onnx-ws-win32-x64` on public and private networks the first time local Parakeet transcription starts. The bundled sherpa-onnx server only serves EktosWhispr itself over `127.0.0.1`, but it has no loopback-only bind option, so Windows sees it listening on all interfaces. Either choice is safe — Windows never filters loopback traffic, so transcription works even if you click Cancel. All-users installs register a firewall rule that blocks outside access and suppresses the prompt entirely; per-user and portable builds may still see it once.
 
 **Complete reset (after uninstalling):**
 
 ```batch
-rd /s /q "%APPDATA%\OpenWhispr"
-rd /s /q "%LOCALAPPDATA%\OpenWhispr"
+rd /s /q "%APPDATA%\EktosWhispr"
+rd /s /q "%LOCALAPPDATA%\EktosWhispr"
 ```
 
 Then reinstall.
 
-**Logs location:** `%APPDATA%\OpenWhispr\logs\`
+**Logs location:** `%APPDATA%\EktosWhispr\logs\`
+
+### Meeting Audio Recording Not Appearing
+
+*(Fork-specific feature — not present in upstream.)*
+
+**Symptoms:** No audio player visible after a meeting, re-transcribe button missing.
+
+**Checklist:**
+
+1. The note must be of type `meeting` and have a saved transcript — the player only shows in the **Transcript** tab.
+2. Check that `userData/meeting-audio/` contains a `.webm` file for the note. Location:
+   - Windows: `%APPDATA%\EktosWhispr\meeting-audio\`
+   - macOS: `~/Library/Application Support/EktosWhispr/meeting-audio/`
+   - Linux: `~/.config/EktosWhispr/meeting-audio/`
+3. Enable debug logging and look for `[MeetingAudio]` entries. A successful save logs: `Audio saved for note`.
+4. If FFmpeg is missing or the bundled binary was quarantined by antivirus, the audio save will fail silently but transcription will still work.
+5. The audio player only loads when `note.audio_path` is set in the database. If the app was restarted immediately after recording before the async save completed, the path may not have been written — re-transcription will still work if the `.webm` file exists on disk; open the note again after a few seconds.
+
+### Re-transcription Fails or Freezes
+
+1. The audio file must exist on disk (see above).
+2. Re-transcription splits audio into 30-second chunks and calls whisper for each. If whisper is unavailable or the model is not downloaded, it will fail. Check that local transcription works for a normal dictation first.
+3. For very long meetings (> 2 hours) the process may take several minutes. The progress bar will update per chunk.
+4. Look for `[retranscribe-meeting]` in debug logs for per-chunk errors.
 
 ## Enable Debug Mode
 
@@ -210,10 +233,10 @@ For detailed diagnostics, see [DEBUG.md](DEBUG.md).
 
 ## Getting Help
 
-1. Enable debug mode and reproduce the issue
-2. Collect diagnostic output from commands above
-3. Open an issue at https://github.com/OpenWhispr/openwhispr/issues with:
-   - OS version
-   - OpenWhispr version
-   - Relevant log sections
-   - Steps to reproduce
+- Open an issue at [github.com/chelcomp/ektoswhispr-offline/issues](https://github.com/chelcomp/ektoswhispr-offline/issues)
+
+When filing an issue, include:
+- OS version and architecture
+- App version (visible in Settings → About)
+- Relevant log sections from `%APPDATA%\EktosWhispr\logs\` (Windows) or the platform equivalent
+- Steps to reproduce
