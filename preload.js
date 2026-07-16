@@ -751,6 +751,6 @@ contextBridge.exposeInMainWorld("electronAPI", {
     "run-transform",
     (callback) => (_event, payload) => callback(payload)
   ),
-  sendTransformResult: (transformId, result, error) =>
-    ipcRenderer.invoke("transform-result", transformId, result, error),
+  sendTransformResult: (transformId, result, error, debugInfo) =>
+    ipcRenderer.invoke("transform-result", transformId, result, error, debugInfo),
 });

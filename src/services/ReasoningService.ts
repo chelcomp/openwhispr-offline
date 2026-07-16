@@ -335,6 +335,10 @@ class ReasoningService extends BaseReasoningService {
       throw new Error(`Unsupported reasoning provider: ${providerId}`);
     }
 
+    console.log(`[LLM] ▶ provider=${providerId} model=${trimmedModel}`);
+    console.log(`[LLM] System prompt:\n${config.systemPrompt || "(default cleanup prompt)"}`);
+    console.log(`[LLM] User input (${text.length} chars):\n${text.length > 800 ? text.substring(0, 800) + "…" : text}`);
+
     const startTime = Date.now();
     try {
       const result = await handler.call({
@@ -344,6 +348,8 @@ class ReasoningService extends BaseReasoningService {
         config,
         ctx: this.providerContext,
       });
+
+      console.log(`[LLM] ◀ output (${result.length} chars, ${Date.now() - startTime}ms):\n${result.length > 800 ? result.substring(0, 800) + "…" : result}`);
 
       logger.logReasoning("PROVIDER_SUCCESS", {
         provider: providerId,

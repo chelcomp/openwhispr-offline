@@ -44,6 +44,8 @@ export interface Transform {
   enabled: boolean;
   rules: TransformRules;
   customPrompt: string;
+  includeActiveApp?: boolean;
+  richText?: boolean;
 }
 
 let _ReasoningService: typeof import("../services/ReasoningService").default | null = null;
@@ -504,6 +506,11 @@ export interface SettingsState
   noteFormattingDisableThinking: boolean;
   chatAgentDisableThinking: boolean;
 
+  localModel: string;
+  localProvider: string;
+  setLocalModel: (value: string) => void;
+  setLocalProvider: (value: string) => void;
+
   customPrompts: Record<PromptKind, string>;
   setCustomPrompt: (kind: PromptKind, value: string) => void;
 
@@ -938,6 +945,8 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
   useDictationAgent: readBoolean("useDictationAgent", true),
   cleanupModel: readString("cleanupModel", ""),
   cleanupProvider: readString("cleanupProvider", "openai"),
+  localModel: readString("localModel", ""),
+  localProvider: readString("localProvider", "qwen"),
 
   // Secrets hydrate from main process in initializeSettings, never from localStorage.
   openaiApiKey: "",
@@ -1262,6 +1271,8 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
   setUseDictationAgent: createBooleanSetter("useDictationAgent"),
   setCleanupProvider: createStringSetter("cleanupProvider"),
   setCleanupModel: createStringSetter("cleanupModel"),
+  setLocalModel: createStringSetter("localModel"),
+  setLocalProvider: createStringSetter("localProvider"),
 
   setCustomDictionary: (words: string[]) => {
     if (isBrowser) localStorage.setItem("customDictionary", JSON.stringify(words));
@@ -1934,11 +1945,14 @@ export const selectResolvedLLMConfig = (
   const disableThinkingKey = def.storeKeys.disableThinking;
   const disableThinking = disableThinkingKey ? (state[disableThinkingKey] as boolean) : true;
 
+  const mode = state[def.storeKeys.mode] as InferenceMode;
+  const useSharedLocal = mode === "local" && !!state.localModel;
+
   return {
     scope,
-    mode: state[def.storeKeys.mode] as InferenceMode,
-    provider: read("provider") || fallback?.provider || "",
-    model: read("model") || fallback?.model || "",
+    mode,
+    provider: useSharedLocal ? state.localProvider : (read("provider") || fallback?.provider || ""),
+    model: useSharedLocal ? state.localModel : (read("model") || fallback?.model || ""),
     cloudMode: read("cloudMode") || fallback?.cloudMode,
     cloudBaseUrl: read("cloudBaseUrl") || fallback?.cloudBaseUrl,
     remoteUrl: read("remoteUrl") || fallback?.remoteUrl,
@@ -1990,7 +2004,7 @@ export function getEffectiveCleanupModel() {
   if (selectIsCloudCleanupMode(state)) {
     return "";
   }
-  return state.cleanupModel;
+  return state.cleanupMode === "local" ? state.localModel : state.cleanupModel;
 }
 
 export function isCloudCleanupMode() {

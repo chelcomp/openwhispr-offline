@@ -6589,8 +6589,18 @@ class IPCHandlers {
       }
     });
 
-    ipcMain.handle("transform-result", async (_event, transformId, result, error) => {
-      if (error) {
+    ipcMain.handle("transform-result", async (_event, transformId, result, error, debugInfo) => {
+      if (debugInfo) {
+        const trunc = (s, n) => (s && s.length > n ? s.substring(0, n) + "…" : s || "");
+        console.log(`[LLM] ▶ provider=${debugInfo.provider} model=${debugInfo.model}`);
+        if (debugInfo.systemPrompt) console.log(`[LLM] System prompt:\n${trunc(debugInfo.systemPrompt, 800)}`);
+        console.log(`[LLM] User input (${(debugInfo.inputText || "").length} chars):\n${trunc(debugInfo.inputText, 800)}`);
+        if (error) {
+          console.error(`[LLM] ✗ error: ${error}`);
+        } else {
+          console.log(`[LLM] ◀ output (${(result || "").length} chars):\n${trunc(result, 800)}`);
+        }
+      } else if (error) {
         console.error(`[Transform] Renderer error for id=${transformId}: ${error}`);
         try {
           debugLogger.error("Transform renderer error", { transformId, error }, "transform");

@@ -1,6 +1,7 @@
 const { clipboard } = require("electron");
 const { spawn, exec } = require("child_process");
-const activeAppCapture = require("./activeAppCapture");
+const { detectAsync: detectActiveApp } = require("./activeAppCapture");
+const { marked } = require("marked");
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -28,6 +29,11 @@ function buildSystemPrompt(transform) {
       (rules.length > 0 ? "\n\n" : "") +
       "Additional instructions:\n" +
       transform.customPrompt.trim();
+  }
+
+  if (transform.richText) {
+    prompt +=
+      "\n\nFormat the output using standard Markdown: **bold**, *italic*, - unordered lists, 1. ordered lists, > blockquotes, `inline code`. The output will be converted to HTML and pasted as rich text.";
   }
 
   return prompt;
@@ -90,9 +96,12 @@ class TransformManager {
   }
 
   async _execute(transform) {
+    // Detect the foreground app before the 50ms sleep so the OS still reports
+    // the user's target window (not the Electron overlay) as the active window.
+    const activeApp = await detectActiveApp();
+
     await sleep(50);
 
-    const activeApp = activeAppCapture.getLastAppName();
     require("./debugLogger").info("[Transform] Activating transform", {
       id: transform.id,
       activeApp,
@@ -135,6 +144,8 @@ class TransformManager {
         id: transform.id,
         text: selectedText,
         systemPrompt: buildSystemPrompt(transform),
+        activeApp: transform.includeActiveApp ? activeApp : undefined,
+        richText: transform.richText ?? false,
       });
     });
 
@@ -143,8 +154,14 @@ class TransformManager {
       return;
     }
 
-    console.log(`[Transform] Writing to clipboard and pasting. resultLength=${result.length}`);
-    clipboard.writeText(result);
+    console.log(`[Transform] Writing to clipboard and pasting. resultLength=${result.length} richText=${transform.richText ?? false}`);
+    if (transform.richText) {
+      const html = marked.parse(result);
+      const wrappedHtml = `<html><body>${html}</body></html>`;
+      clipboard.write({ text: result, html: wrappedHtml });
+    } else {
+      clipboard.writeText(result);
+    }
     await sleep(50);
     await this._simulatePaste();
     console.log("[Transform] Paste simulated");

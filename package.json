@@ -157,6 +157,7 @@
     "i18next": "^26.0.4",
     "kysely": "^0.29.3",
     "lucide-react": "^1.7.0",
+    "marked": "^18.0.6",
     "object-assign": "^4.1.1",
     "onnxruntime-node": "^1.21.0",
     "ps-list": "^9.0.0",

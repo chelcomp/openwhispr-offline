@@ -24,7 +24,6 @@ import {
   BookOpen,
   Copy,
   Info,
-  MessageSquare,
   FileAudio,
   Wand2,
   Upload,
@@ -73,6 +72,7 @@ import DeveloperSection from "./DeveloperSection";
 import ChatAgentSettings from "./settings/ChatAgentSettings";
 import DictationAgentSettings from "./settings/DictationAgentSettings";
 import InferenceConfigEditor from "./settings/InferenceConfigEditor";
+import LocalModelSection from "./settings/LocalModelSection";
 import { MeetingTranscriptionPanel } from "./settings/MeetingSettings";
 import { UploadTranscriptionPanel } from "./settings/UploadSettings";
 import LanguageSelector from "./ui/LanguageSelector";
@@ -423,20 +423,18 @@ function AiModelsSection({ useCleanupModel, setUseCleanupModel, toast }: AiModel
       </SettingsPanel>
 
       {useCleanupModel && (
-        <>
-          <InferenceConfigEditor scope="dictationCleanup" onModeChange={handleCleanupModeChange} />
-          <GpuDeviceSelector purpose="intelligence" />
-        </>
+        <InferenceConfigEditor scope="dictationCleanup" onModeChange={handleCleanupModeChange} />
       )}
     </div>
   );
 }
 
 type SpeechTab = "dictation" | "noteRecording" | "upload";
-type LlmTab = "dictationCleanup" | "dictationAgent" | "noteFormatting" | "chatIntelligence";
+type LlmTab = "localModel" | "dictationCleanup" | "dictationAgent" | "noteFormatting" | "chatIntelligence";
 
 const SPEECH_TABS: SpeechTab[] = ["dictation", "noteRecording", "upload"];
 const LLM_TABS: LlmTab[] = [
+  "localModel",
   "dictationCleanup",
   "dictationAgent",
   "noteFormatting",
@@ -528,12 +526,14 @@ function SpeechToTextTabs({
 
 function LlmsTabs({
   initialTab,
+  renderLocalModel,
   renderDictationCleanup,
   renderDictationAgent,
   renderNoteFormatting,
   renderChatIntelligence,
 }: {
   initialTab?: LlmTab;
+  renderLocalModel: () => React.ReactNode;
   renderDictationCleanup: () => React.ReactNode;
   renderDictationAgent: () => React.ReactNode;
   renderNoteFormatting: () => React.ReactNode;
@@ -543,6 +543,7 @@ function LlmsTabs({
   const [tab, setTab] = useSubTab<LlmTab>("settings.llmsTab", LLM_TABS, initialTab);
 
   const subTabs = [
+    { id: "localModel", name: t("settingsPage.llms.tabs.localModel") },
     { id: "dictationCleanup", name: t("settingsPage.llms.tabs.dictationCleanup") },
     { id: "dictationAgent", name: t("settingsPage.llms.tabs.dictationAgent") },
     { id: "noteFormatting", name: t("settingsPage.llms.tabs.noteFormatting") },
@@ -560,12 +561,14 @@ function LlmsTabs({
         selectedId={tab}
         onSelect={(id) => setTab(id as LlmTab)}
         renderIcon={(id) => {
+          if (id === "localModel") return <Cpu className="w-3.5 h-3.5" />;
           if (id === "dictationCleanup") return <Wand2 className="w-3.5 h-3.5" />;
           if (id === "dictationAgent") return <Sparkles className="w-3.5 h-3.5" />;
           if (id === "noteFormatting") return <BookOpen className="w-3.5 h-3.5" />;
-          return <MessageSquare className="w-3.5 h-3.5" />;
+          return <Wand2 className="w-3.5 h-3.5" />;
         }}
       />
+      <TabPanel active={tab === "localModel"}>{renderLocalModel()}</TabPanel>
       <TabPanel active={tab === "dictationCleanup"}>{renderDictationCleanup()}</TabPanel>
       <TabPanel active={tab === "dictationAgent"}>{renderDictationAgent()}</TabPanel>
       <TabPanel active={tab === "noteFormatting"}>{renderNoteFormatting()}</TabPanel>
@@ -755,8 +758,6 @@ export default function SettingsPage({
     setWhisperVadSamplesOverlap,
   } = useSettings();
 
-  const chatAgentKey = useSettingsStore((s) => s.chatAgentKey);
-  const setChatAgentKey = useSettingsStore((s) => s.setChatAgentKey);
   const voiceAgentKey = useSettingsStore((s) => s.voiceAgentKey);
   const setVoiceAgentKey = useSettingsStore((s) => s.setVoiceAgentKey);
 
@@ -901,12 +902,11 @@ export default function SettingsPage({
         hotkey,
         {
           "settingsPage.general.meetingHotkey.title": meetingKey,
-          "agentMode.settings.hotkey": chatAgentKey,
           "settingsPage.general.voiceAgentHotkey.title": voiceAgentKey,
         },
         t
       ),
-    [meetingKey, chatAgentKey, voiceAgentKey, t]
+    [meetingKey, voiceAgentKey, t]
   );
 
   const validateMeetingHotkey = useCallback(
@@ -915,26 +915,11 @@ export default function SettingsPage({
         hotkey,
         {
           "settingsPage.general.hotkey.title": dictationKey,
-          "agentMode.settings.hotkey": chatAgentKey,
           "settingsPage.general.voiceAgentHotkey.title": voiceAgentKey,
         },
         t
       ),
-    [dictationKey, chatAgentKey, voiceAgentKey, t]
-  );
-
-  const validateChatAgentHotkey = useCallback(
-    (hotkey: string) =>
-      validateHotkeyForSlot(
-        hotkey,
-        {
-          "settingsPage.general.hotkey.title": dictationKey,
-          "settingsPage.general.meetingHotkey.title": meetingKey,
-          "settingsPage.general.voiceAgentHotkey.title": voiceAgentKey,
-        },
-        t
-      ),
-    [dictationKey, meetingKey, voiceAgentKey, t]
+    [dictationKey, voiceAgentKey, t]
   );
 
   const validateVoiceAgentHotkey = useCallback(
@@ -944,11 +929,10 @@ export default function SettingsPage({
         {
           "settingsPage.general.hotkey.title": dictationKey,
           "settingsPage.general.meetingHotkey.title": meetingKey,
-          "agentMode.settings.hotkey": chatAgentKey,
         },
         t
       ),
-    [dictationKey, meetingKey, chatAgentKey, t]
+    [dictationKey, meetingKey, t]
   );
 
   const { isUsingNativeShortcut, isUsingHyprland, hyprlandConfigStatus, supportsPushToTalk } =
@@ -2263,25 +2247,6 @@ EOF`,
               </SettingsPanel>
             </div>
 
-            {/* Chat Agent Hotkey */}
-            <div>
-              <SectionHeader
-                title={t("agentMode.settings.hotkey")}
-                description={t("agentMode.settings.hotkeyDescription")}
-              />
-              <SettingsPanel>
-                <SettingsPanelRow>
-                  <HotkeyListInput
-                    value={chatAgentKey}
-                    onChange={(list) => commitAgentHotkey(setChatAgentKey, list)}
-                    onClear={() => commitAgentHotkey(setChatAgentKey, "")}
-                    validate={validateChatAgentHotkey}
-                    disabled={isAgentHotkeyCommitting}
-                    maxHotkeys={isUsingNativeShortcut ? 1 : undefined}
-                  />
-                </SettingsPanelRow>
-              </SettingsPanel>
-            </div>
           </div>
         );
 
@@ -2669,6 +2634,12 @@ EOF`,
             initialTab={
               activeSection === "llms" ? (initialSubTab as LlmTab | undefined) : undefined
             }
+            renderLocalModel={() => (
+              <div className="space-y-4">
+                <LocalModelSection />
+                <GpuDeviceSelector purpose="intelligence" />
+              </div>
+            )}
             renderChatIntelligence={() => <ChatAgentSettings />}
             renderDictationCleanup={() => (
               <div className="space-y-6">

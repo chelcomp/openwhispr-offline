@@ -207,6 +207,8 @@ export default function TransformEditor({
   const [enabled, setEnabled] = useState(transform?.enabled ?? true);
   const [rules, setRules] = useState<TransformRules>(transform?.rules ?? { ...DEFAULT_RULES });
   const [customPrompt, setCustomPrompt] = useState(transform?.customPrompt ?? "");
+  const [includeActiveApp, setIncludeActiveApp] = useState(transform?.includeActiveApp ?? false);
+  const [richText, setRichText] = useState(transform?.richText ?? false);
 
   const setRule = (key: keyof TransformRules) => (val: boolean) =>
     setRules((prev) => ({ ...prev, [key]: val }));
@@ -223,6 +225,8 @@ export default function TransformEditor({
       enabled,
       rules,
       customPrompt,
+      includeActiveApp,
+      richText,
     });
   };
 
@@ -327,6 +331,27 @@ export default function TransformEditor({
                   label="Remove frustration, anxiety, or any bad emotion from the text. Always write and transform texts in a way which is direct, polite, professional, and helpful. Always replace bad words with something more polite."
                   checked={rules.removeFrustration}
                   onChange={setRule("removeFrustration")}
+                />
+              </div>
+            </section>
+
+            {/* Context */}
+            <section>
+              <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1">
+                Context
+              </h3>
+              <div className="rounded-xl border border-border/30 bg-muted/20 px-3">
+                <RuleRow
+                  label="Include application name"
+                  description="Sends the active application name to the AI so it can format the output accordingly (e.g. Slack, Notion, Gmail)"
+                  checked={includeActiveApp}
+                  onChange={setIncludeActiveApp}
+                />
+                <RuleRow
+                  label="Rich text output"
+                  description="Converts the result to HTML before pasting. Text pasted into apps like Slack, Notion, or Gmail will render bold, italic, and lists instead of showing raw symbols."
+                  checked={richText}
+                  onChange={setRichText}
                 />
               </div>
             </section>

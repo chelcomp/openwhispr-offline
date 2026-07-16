@@ -52,7 +52,6 @@ const PersonalNotesView = React.lazy(() => import("./notes/PersonalNotesView"));
 const DictionaryView = React.lazy(() => import("./DictionaryView"));
 const SnippetsView = React.lazy(() => import("./SnippetsView"));
 const UploadAudioView = React.lazy(() => import("./notes/UploadAudioView"));
-const ChatView = React.lazy(() => import("./chat/ChatView"));
 const CommandSearch = React.lazy(() => import("./CommandSearch"));
 const TransformsView = React.lazy(() => import("./transforms/TransformsView"));
 
@@ -769,11 +768,6 @@ export default function ControlPanel({ initialSettingsSection }: ControlPanelPro
                   setShowSettings(true);
                 }}
               />
-            )}
-            {activeView === "chat" && (
-              <Suspense fallback={null}>
-                <ChatView />
-              </Suspense>
             )}
             {activeView === "personal-notes" && (
               <Suspense fallback={null}>

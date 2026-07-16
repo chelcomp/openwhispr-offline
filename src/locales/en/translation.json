@@ -1878,10 +1878,14 @@
       "title": "Language Models",
       "description": "Configure models for cleanup, note formatting, and chat",
       "tabs": {
+        "localModel": "Local Model",
         "dictationCleanup": "Dictation Cleanup",
         "dictationAgent": "Voice Agent",
         "noteFormatting": "Note Formatting",
-        "chatIntelligence": "Chat"
+        "chatIntelligence": "Transforms"
+      },
+      "localModel": {
+        "sharedNotice": "Using shared Local Model configuration — select model and GPU in the Local Model tab"
       }
     },
     "noteFormatting": {

@@ -218,33 +218,38 @@ export default function App() {
 
   // Handle transform execution requests from main process
   useEffect(() => {
-    const unsubscribe = window.electronAPI?.onRunTransform?.(async ({ id, text, systemPrompt }) => {
-      console.log(`[Transform] Received run-transform id=${id} textLength=${text?.length}`);
+    const unsubscribe = window.electronAPI?.onRunTransform?.(async ({ id, text, systemPrompt, activeApp, richText }) => {
+      console.log(`[Transform] Received run-transform id=${id} textLength=${text?.length} activeApp=${activeApp ?? "none"}`);
       setIsTransforming(true);
       playTransformStartCue();
       let succeeded = false;
+      let cfg = null;
+      let effectivePrompt = "";
       try {
         const ReasoningService = (await import("./services/ReasoningService")).default;
-        const cfg = selectResolvedLLMConfig(useSettingsStore.getState(), "dictationAgent");
-        console.log(`[Transform] Calling LLM provider=${cfg.provider} model=${cfg.model}`);
+        const state = useSettingsStore.getState();
+        cfg = selectResolvedLLMConfig(state, "chatIntelligence");
+        const globalPrompt = state.customPrompts?.chatAgent || "";
+        const appContext = activeApp ? `Active application: ${activeApp}` : "";
+        effectivePrompt = [globalPrompt, appContext, systemPrompt].filter(Boolean).join("\n\n");
         const result = await ReasoningService.processText(text, cfg.model, null, {
-          systemPrompt,
+          systemPrompt: effectivePrompt,
           provider: cfg.provider || undefined,
         });
-        console.log(`[Transform] LLM result: ${JSON.stringify(result?.slice(0, 120))}`);
         succeeded = !!result;
         await window.electronAPI?.sendTransformResult?.(
           id,
           result || "",
-          result ? null : `LLM returned empty (provider=${cfg.provider} model=${cfg.model})`
+          result ? null : `LLM returned empty (provider=${cfg.provider} model=${cfg.model})`,
+          { provider: cfg.provider, model: cfg.model, systemPrompt: effectivePrompt, inputText: text, richText }
         );
       } catch (err) {
-        console.error(`[Transform] Error during LLM call: ${err.message}`);
-        const cfg = selectResolvedLLMConfig(useSettingsStore.getState(), "dictationAgent");
+        if (!cfg) cfg = selectResolvedLLMConfig(useSettingsStore.getState(), "chatIntelligence");
         await window.electronAPI?.sendTransformResult?.(
           id,
           "",
-          `${err.message} (provider=${cfg.provider} model=${cfg.model})`
+          `${err.message} (provider=${cfg.provider} model=${cfg.model})`,
+          { provider: cfg.provider, model: cfg.model, systemPrompt: effectivePrompt, inputText: text, richText }
         );
       } finally {
         setIsTransforming(false);

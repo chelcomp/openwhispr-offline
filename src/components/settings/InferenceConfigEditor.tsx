@@ -153,7 +153,14 @@ export default function InferenceConfigEditor({ scope, onModeChange }: Inference
       <InferenceModeSelector modes={modes} activeMode={config.mode} onSelect={handleModeSelect} />
 
       {config.mode === "providers" && renderModelSelector("cloud")}
-      {config.mode === "local" && renderModelSelector("local")}
+      {config.mode === "local" && (
+        <div className="rounded-md border border-border bg-muted/20 px-3 py-2.5 flex items-center gap-2">
+          <Cpu className="w-4 h-4 text-muted-foreground shrink-0" />
+          <p className="text-xs text-muted-foreground">
+            {t("settingsPage.llms.localModel.sharedNotice")}
+          </p>
+        </div>
+      )}
 
       {config.mode === "self-hosted" && (
         <OpenAICompatiblePanel
