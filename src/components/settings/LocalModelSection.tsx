@@ -69,7 +69,7 @@ export default function LocalModelSection() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center gap-3">
+      <div className="space-y-2">
         <GpuModeSelector type="llama" />
         {activeModelInfo ? (
           <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-green-500/10 border border-green-500/20 text-sm">

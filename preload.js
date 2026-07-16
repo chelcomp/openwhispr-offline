@@ -90,6 +90,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
   },
   getSnippets: () => ipcRenderer.invoke("db-get-snippets"),
   setSnippets: (snippets) => ipcRenderer.invoke("db-set-snippets", snippets),
+  snippetsBackup: () => ipcRenderer.invoke("snippets-backup"),
+  snippetsRestore: () => ipcRenderer.invoke("snippets-restore"),
   onSnippetsUpdated: (callback) => {
     const listener = (_event, snippets) => callback?.(snippets);
     ipcRenderer.on("snippets-updated", listener);

@@ -4,6 +4,12 @@ import * as DialogPrimitive from "@radix-ui/react-dialog";
 import { X } from "lucide-react";
 import { SettingsLayoutProvider } from "./useSettingsLayout";
 
+export interface SidebarSubItem {
+  id: string;
+  label: string;
+  anchor: string;
+}
+
 export interface SidebarItem<T extends string> {
   id: T;
   label: string;
@@ -13,6 +19,7 @@ export interface SidebarItem<T extends string> {
   badge?: string;
   badgeVariant?: "default" | "new" | "update" | "dot";
   shortcut?: string;
+  subItems?: SidebarSubItem[];
 }
 
 interface SidebarModalProps<T extends string> {
@@ -42,6 +49,16 @@ export default function SidebarModal<T extends string>({
 
   const [isCompact, setIsCompact] = React.useState(false);
   const observerRef = React.useRef<ResizeObserver | null>(null);
+  const contentRef = React.useRef<HTMLDivElement>(null);
+
+  const scrollToAnchor = React.useCallback((anchor: string) => {
+    const el = document.getElementById(anchor);
+    if (el && contentRef.current) {
+      const container = contentRef.current;
+      const top = el.offsetTop - container.offsetTop - 24;
+      container.scrollTo({ top, behavior: "smooth" });
+    }
+  }, []);
 
   const containerRef = React.useCallback((el: HTMLDivElement | null) => {
     if (observerRef.current) {
@@ -143,51 +160,65 @@ export default function SidebarModal<T extends string>({
                           const isActive = activeSection === item.id;
 
                           return (
-                            <button
-                              key={item.id}
-                              data-section-id={item.id}
-                              onClick={() => onSectionChange(item.id)}
-                              title={isCompact ? item.label : undefined}
-                              className={`group relative w-full flex items-center text-left text-xs rounded-lg transition-colors duration-100 outline-none ${
-                                isCompact ? "justify-center px-0 py-2" : "gap-2.5 px-2.5 py-2"
-                              } ${
-                                isActive
-                                  ? "text-foreground bg-muted dark:bg-surface-raised"
-                                  : "text-muted-foreground dark:text-foreground/75 hover:text-foreground hover:bg-muted/50 dark:hover:bg-surface-2"
-                              }`}
-                            >
-                              <div
-                                className={`flex items-center justify-center h-6 w-6 rounded-md shrink-0 transition-colors duration-100 ${
-                                  isActive ? "bg-primary/10 dark:bg-primary/15" : "bg-transparent"
+                            <React.Fragment key={item.id}>
+                              <button
+                                data-section-id={item.id}
+                                onClick={() => onSectionChange(item.id)}
+                                title={isCompact ? item.label : undefined}
+                                className={`group relative w-full flex items-center text-left text-xs rounded-lg transition-colors duration-100 outline-none ${
+                                  isCompact ? "justify-center px-0 py-2" : "gap-2.5 px-2.5 py-2"
+                                } ${
+                                  isActive
+                                    ? "text-foreground bg-muted dark:bg-surface-raised"
+                                    : "text-muted-foreground dark:text-foreground/75 hover:text-foreground hover:bg-muted/50 dark:hover:bg-surface-2"
                                 }`}
                               >
-                                <Icon
-                                  className={`h-4 w-4 shrink-0 transition-colors duration-100 ${
-                                    isActive
-                                      ? "text-primary"
-                                      : "text-muted-foreground/70 dark:text-foreground/55 group-hover:text-foreground/80"
+                                <div
+                                  className={`flex items-center justify-center h-6 w-6 rounded-md shrink-0 transition-colors duration-100 ${
+                                    isActive ? "bg-primary/10 dark:bg-primary/15" : "bg-transparent"
                                   }`}
-                                />
-                              </div>
-                              {!isCompact && (
-                                <>
-                                  <span
-                                    className={`flex-1 truncate leading-tight ${isActive ? "font-medium" : "font-normal"}`}
-                                  >
-                                    {item.label}
-                                  </span>
-                                  {renderBadge(item)}
-                                  {item.shortcut && !item.badge && (
-                                    <kbd className="ml-auto text-xs text-muted-foreground/25 font-mono shrink-0">
-                                      {item.shortcut}
-                                    </kbd>
-                                  )}
-                                </>
+                                >
+                                  <Icon
+                                    className={`h-4 w-4 shrink-0 transition-colors duration-100 ${
+                                      isActive
+                                        ? "text-primary"
+                                        : "text-muted-foreground/70 dark:text-foreground/55 group-hover:text-foreground/80"
+                                    }`}
+                                  />
+                                </div>
+                                {!isCompact && (
+                                  <>
+                                    <span
+                                      className={`flex-1 truncate leading-tight ${isActive ? "font-medium" : "font-normal"}`}
+                                    >
+                                      {item.label}
+                                    </span>
+                                    {renderBadge(item)}
+                                    {item.shortcut && !item.badge && (
+                                      <kbd className="ml-auto text-xs text-muted-foreground/25 font-mono shrink-0">
+                                        {item.shortcut}
+                                      </kbd>
+                                    )}
+                                  </>
+                                )}
+                                {isCompact && item.badgeVariant === "dot" && (
+                                  <span className="absolute top-1.5 right-1.5 h-1.5 w-1.5 rounded-full bg-primary" />
+                                )}
+                              </button>
+                              {isActive && !isCompact && item.subItems && item.subItems.length > 0 && (
+                                <div className="ml-3 pl-2 border-l border-border/30 space-y-px">
+                                  {item.subItems.map((sub) => (
+                                    <button
+                                      key={sub.id}
+                                      onClick={() => scrollToAnchor(sub.anchor)}
+                                      className="w-full flex items-center text-left text-xs rounded-md px-2 py-1.5 text-muted-foreground/70 hover:text-foreground hover:bg-muted/50 dark:hover:bg-surface-2 transition-colors duration-100 truncate"
+                                    >
+                                      {sub.label}
+                                    </button>
+                                  ))}
+                                </div>
                               )}
-                              {isCompact && item.badgeVariant === "dot" && (
-                                <span className="absolute top-1.5 right-1.5 h-1.5 w-1.5 rounded-full bg-primary" />
-                              )}
-                            </button>
+                            </React.Fragment>
                           );
                         })}
                       </div>
@@ -215,7 +246,7 @@ export default function SidebarModal<T extends string>({
               </div>
 
               {/* Main Content */}
-              <div className="flex-1 overflow-y-auto bg-background dark:bg-surface-1">
+              <div ref={contentRef} className="flex-1 overflow-y-auto bg-background dark:bg-surface-1">
                 <SettingsLayoutProvider value={{ isCompact }}>
                   <div className={isCompact ? "p-4" : "p-6"}>{children}</div>
                 </SettingsLayoutProvider>

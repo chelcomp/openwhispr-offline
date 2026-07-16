@@ -59,6 +59,18 @@ export default function SettingsModal({ open, onOpenChange, initialSection }: Se
         icon: Sliders,
         description: t("settingsModal.sections.general.description"),
         group: t("settingsModal.groups.app"),
+        subItems: [
+          { id: "appearance", label: t("settingsPage.general.appearance.title"), anchor: "general-appearance" },
+          { id: "sound-effects", label: t("settingsPage.general.soundEffects.title"), anchor: "general-sound-effects" },
+          { id: "notifications", label: t("settingsPage.general.notifications.title"), anchor: "general-notifications" },
+          { id: "clipboard", label: t("settingsPage.general.clipboard.title"), anchor: "general-clipboard" },
+          { id: "save-files", label: t("settings.noteFiles.title"), anchor: "general-save-files" },
+          { id: "floating-icon", label: t("settingsPage.general.floatingIcon.title"), anchor: "general-floating-icon" },
+          { id: "language", label: t("settings.language.sectionTitle"), anchor: "general-language" },
+          { id: "startup", label: t("settingsPage.general.startup.title"), anchor: "general-startup" },
+          { id: "microphone", label: t("settingsPage.general.microphone.title"), anchor: "general-microphone" },
+          { id: "auto-learn", label: t("settingsPage.dictionary.autoLearnTitle", { defaultValue: "Auto-learn" }), anchor: "general-auto-learn" },
+        ],
       },
       {
         id: "hotkeys",

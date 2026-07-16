@@ -1072,6 +1072,33 @@ class IPCHandlers {
       return { success: true };
     });
 
+    ipcMain.handle("snippets-backup", async () => {
+      const { dialog } = require("electron");
+      const fs = require("fs");
+      const result = await dialog.showSaveDialog({
+        defaultPath: "snippets-backup.json",
+        filters: [{ name: "JSON", extensions: ["json"] }],
+      });
+      if (result.canceled || !result.filePath) return { canceled: true };
+      const snippets = this.databaseManager.getSnippets();
+      fs.writeFileSync(result.filePath, JSON.stringify(snippets, null, 2), "utf-8");
+      return { success: true };
+    });
+
+    ipcMain.handle("snippets-restore", async () => {
+      const { dialog } = require("electron");
+      const fs = require("fs");
+      const result = await dialog.showOpenDialog({
+        properties: ["openFile"],
+        filters: [{ name: "JSON", extensions: ["json"] }],
+      });
+      if (result.canceled || !result.filePaths.length) return { canceled: true };
+      const raw = fs.readFileSync(result.filePaths[0], "utf-8");
+      const imported = JSON.parse(raw);
+      if (!Array.isArray(imported)) return { error: "Invalid file format" };
+      return { snippets: imported };
+    });
+
     ipcMain.handle("undo-learned-corrections", async (_event, words) => {
       try {
         if (!Array.isArray(words) || words.length === 0) {

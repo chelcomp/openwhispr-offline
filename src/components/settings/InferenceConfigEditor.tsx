@@ -61,6 +61,8 @@ interface InferenceConfigEditorProps {
 export default function InferenceConfigEditor({ scope, onModeChange }: InferenceConfigEditorProps) {
   const { t } = useTranslation();
   const config = useSettingsStore(useShallow((s) => selectResolvedLLMConfig(s, scope)));
+  const localModel = useSettingsStore((s) => s.localModel);
+  const activeLocalModelName = localModel ? (modelRegistry.getModel(localModel)?.model.name ?? localModel) : null;
 
   const prefix = MODE_LABEL_PREFIX[scope];
   const modes: InferenceModeOption[] = [
@@ -156,9 +158,12 @@ export default function InferenceConfigEditor({ scope, onModeChange }: Inference
       {config.mode === "local" && (
         <div className="rounded-md border border-border bg-muted/20 px-3 py-2.5 flex items-center gap-2">
           <Cpu className="w-4 h-4 text-muted-foreground shrink-0" />
-          <p className="text-xs text-muted-foreground">
+          <p className="text-xs text-muted-foreground flex-1">
             {t("settingsPage.llms.localModel.sharedNotice")}
           </p>
+          {activeLocalModelName && (
+            <span className="text-xs font-medium text-foreground shrink-0">{activeLocalModelName}</span>
+          )}
         </div>
       )}
 

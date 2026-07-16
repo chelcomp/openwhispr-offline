@@ -17,7 +17,7 @@ import { AlertDialog } from "./dialog";
 import { useDialogs } from "../../hooks/useDialogs";
 import { useAgentName } from "../../utils/agentName";
 import ReasoningService from "../../services/ReasoningService";
-import { getModelProvider } from "../../models/ModelRegistry";
+import { getModelProvider, modelRegistry } from "../../models/ModelRegistry";
 import logger from "../../utils/logger";
 import { getDefaultPromptText, type PromptKind } from "../../config/prompts";
 import { useSettingsStore } from "../../stores/settingsStore";
@@ -61,6 +61,7 @@ export default function PromptStudio({ className = "", kind = "cleanup" }: Promp
 
   const useCleanupModel = useSettingsStore((s) => s.useCleanupModel);
   const cleanupModel = useSettingsStore((s) => s.cleanupModel);
+  const localModel = useSettingsStore((s) => s.localModel);
 
   const customPrompt = useSettingsStore((s) => s.customPrompts[kind]);
   const setCustomPrompt = useSettingsStore((s) => s.setCustomPrompt);
@@ -308,7 +309,12 @@ export default function PromptStudio({ className = "", kind = "cleanup" }: Promp
               label: cleanupProvider.charAt(0).toUpperCase() + cleanupProvider.slice(1),
             };
 
-            const displayModel = cleanupModel || t("promptStudio.test.none");
+            const effectiveModel = cleanupProvider === "local" ? localModel : cleanupModel;
+            const displayModel = effectiveModel
+              ? (cleanupProvider === "local"
+                  ? (modelRegistry.getModel(effectiveModel)?.model.name ?? effectiveModel)
+                  : effectiveModel)
+              : t("promptStudio.test.none");
             const displayProvider =
               cleanupProvider === "custom"
                 ? t("promptStudio.test.customEndpoint")

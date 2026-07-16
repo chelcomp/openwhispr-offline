@@ -593,6 +593,8 @@ declare global {
       setSnippets?: (
         snippets: Array<{ trigger: string; replacement: string; apps?: string[] }>
       ) => Promise<{ success: boolean }>;
+      snippetsBackup?: () => Promise<{ success?: boolean; canceled?: boolean }>;
+      snippetsRestore?: () => Promise<{ snippets?: Array<{ trigger: string; replacement: string; apps?: string[] }>; canceled?: boolean; error?: string }>;
       onSnippetsUpdated?: (
         callback: (snippets: Array<{ trigger: string; replacement: string; apps?: string[] }>) => void
       ) => () => void;

@@ -76,11 +76,7 @@ export function ModelCard({
   const specHref = model.specUrl ? withUtm(model.specUrl, "model_spec") : undefined;
 
   const handleCardClick = () => {
-    if (isLocalMode) {
-      if (isDownloaded && !isSelected) {
-        onSelect(model.value);
-      }
-    } else {
+    if (!isLocalMode) {
       onSelect(model.value);
     }
   };
@@ -107,7 +103,7 @@ export function ModelCard({
       onClick={handleCardClick}
       className={`relative w-full p-2 rounded-md border text-left transition-colors duration-200 group overflow-hidden ${
         isSelected ? styles.selected : styles.default
-      } ${!isLocalMode || (isDownloaded && !isSelected) ? "cursor-pointer" : ""}`}
+      } ${!isLocalMode ? "cursor-pointer" : ""}`}
     >
       <div className="flex items-center gap-1.5">
         <div
@@ -177,17 +173,32 @@ export function ModelCard({
           {isLocalMode && (
             <>
               {isDownloaded ? (
-                <Button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onDelete?.(model.value);
-                  }}
-                  size="sm"
-                  variant="ghost"
-                  className="h-6 w-6 p-0 text-muted-foreground/40 hover:text-destructive opacity-0 group-hover:opacity-100 transition-[color,opacity,transform] active:scale-95"
-                >
-                  <Trash2 size={12} />
-                </Button>
+                <div className="flex items-center gap-1">
+                  {!isSelected && (
+                    <Button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onSelect(model.value);
+                      }}
+                      size="sm"
+                      variant="default"
+                      className="h-6 px-2.5 text-xs opacity-0 group-hover:opacity-100 transition-[opacity,transform] active:scale-95"
+                    >
+                      {t("common.activate")}
+                    </Button>
+                  )}
+                  <Button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onDelete?.(model.value);
+                    }}
+                    size="sm"
+                    variant="ghost"
+                    className="h-6 w-6 p-0 text-muted-foreground/40 hover:text-destructive opacity-0 group-hover:opacity-100 transition-[color,opacity,transform] active:scale-95"
+                  >
+                    <Trash2 size={12} />
+                  </Button>
+                </div>
               ) : isDownloading ? (
                 <Button
                   onClick={(e) => {

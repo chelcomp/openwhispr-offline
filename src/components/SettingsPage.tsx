@@ -1276,7 +1276,7 @@ export default function SettingsPage({
         return (
           <div className="space-y-6">
             {/* Appearance */}
-            <div>
+            <div id="general-appearance">
               <SectionHeader
                 title={t("settingsPage.general.appearance.title")}
                 description={t("settingsPage.general.appearance.description")}
@@ -1335,7 +1335,7 @@ export default function SettingsPage({
             </div>
 
             {/* Sound Effects */}
-            <div>
+            <div id="general-sound-effects">
               <SectionHeader title={t("settingsPage.general.soundEffects.title")} />
               <SettingsPanel>
                 <SettingsPanelRow>
@@ -1358,7 +1358,7 @@ export default function SettingsPage({
             </div>
 
             {/* Notifications */}
-            <div>
+            <div id="general-notifications">
               <SectionHeader
                 title={t("settingsPage.general.notifications.title")}
                 description={t("settingsPage.general.notifications.description")}
@@ -1393,7 +1393,7 @@ export default function SettingsPage({
             </div>
 
             {/* Clipboard */}
-            <div>
+            <div id="general-clipboard">
               <SectionHeader title={t("settingsPage.general.clipboard.title")} />
               <SettingsPanel>
                 <SettingsPanelRow>
@@ -1419,7 +1419,7 @@ export default function SettingsPage({
             </div>
 
             {/* Save Notes as Files */}
-            <div>
+            <div id="general-save-files">
               <SectionHeader title={t("settings.noteFiles.title")} />
               <SettingsPanel>
                 <SettingsPanelRow>
@@ -1473,7 +1473,7 @@ export default function SettingsPage({
             </div>
 
             {/* Floating Icon */}
-            <div>
+            <div id="general-floating-icon">
               <SectionHeader
                 title={t("settingsPage.general.floatingIcon.title")}
                 description={t("settingsPage.general.floatingIcon.description")}
@@ -1517,7 +1517,7 @@ export default function SettingsPage({
             </div>
 
             {/* Language */}
-            <div>
+            <div id="general-language">
               <SectionHeader
                 title={t("settings.language.sectionTitle")}
                 description={t("settings.language.sectionDescription")}
@@ -1554,7 +1554,7 @@ export default function SettingsPage({
             </div>
 
             {/* Startup */}
-            <div>
+            <div id="general-startup">
               <SectionHeader
                 title={t("settingsPage.general.startup.title")}
                 description={t("settingsPage.general.startup.description")}
@@ -1586,7 +1586,7 @@ export default function SettingsPage({
             </div>
 
             {/* Microphone */}
-            <div>
+            <div id="general-microphone">
               <SectionHeader
                 title={t("settingsPage.general.microphone.title")}
                 description={t("settingsPage.general.microphone.description")}
@@ -1608,7 +1608,7 @@ export default function SettingsPage({
             </div>
 
             {/* Dictionary */}
-            <div>
+            <div id="general-auto-learn">
               <SectionHeader
                 title={t("settingsPage.dictionary.autoLearnTitle", {
                   defaultValue: "Auto-learn from corrections",

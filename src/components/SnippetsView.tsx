@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { KeyboardEvent } from "react";
 import { useTranslation } from "react-i18next";
-import { Mic, Pencil, Plus, X } from "lucide-react";
+import { Download, Mic, Pencil, Plus, Upload, X } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -197,6 +197,21 @@ export default function SnippetsView() {
   const [search, setSearch] = useState("");
   const [editing, setEditing] = useState<Snippet | null>(null);
 
+  const handleBackup = async () => {
+    await window.electronAPI?.snippetsBackup?.();
+  };
+
+  const handleRestore = async () => {
+    const result = await window.electronAPI?.snippetsRestore?.();
+    if (!result || result.canceled || result.error) return;
+    const imported: Snippet[] = result.snippets;
+    const existingTriggers = new Set(snippets.map((s: Snippet) => s.trigger.toLowerCase()));
+    const newSnippets = imported.filter((s) => !existingTriggers.has(s.trigger.toLowerCase()));
+    if (newSnippets.length > 0) {
+      setSnippets([...snippets, ...newSnippets]);
+    }
+  };
+
   const triggerExists = (value: string, except?: string) => {
     const lower = value.toLowerCase();
     const exceptLower = except?.toLowerCase();
@@ -249,6 +264,12 @@ export default function SnippetsView() {
           onChange={(e) => setSearch(e.target.value)}
           className="flex-1 h-8 text-xs placeholder:text-foreground/20"
         />
+        <Button size="sm" variant="outline" onClick={handleRestore} className="h-8 shrink-0 gap-1.5" title={t("dictionary.snippets.restore", { defaultValue: "Restore from file" })}>
+          <Upload size={12} />
+        </Button>
+        <Button size="sm" variant="outline" onClick={handleBackup} className="h-8 shrink-0 gap-1.5" title={t("dictionary.snippets.backup", { defaultValue: "Backup to file" })}>
+          <Download size={12} />
+        </Button>
         <Button size="sm" onClick={openNewDialog} className="h-8 shrink-0 gap-1.5">
           <Plus size={12} />
           {t("dictionary.snippets.new")}
