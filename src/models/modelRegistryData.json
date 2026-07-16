@@ -829,6 +829,18 @@
           "contextLength": 128000,
           "hfRepo": "bartowski/Qwen2.5-7B-Instruct-GGUF",
           "descriptionKey": "models.descriptions.local.qwen_qwen2_5_7b_instruct_q5_k_m"
+        },
+        {
+          "id": "qwq-32b-q4_k_m",
+          "name": "QwQ 32B",
+          "size": "19.8GB",
+          "sizeBytes": 21260251955,
+          "description": "Qwen's dedicated reasoning model, deep thinking on complex tasks",
+          "fileName": "QwQ-32B-Q4_K_M.gguf",
+          "quantization": "q4_k_m",
+          "contextLength": 131072,
+          "hfRepo": "Qwen/QwQ-32B-GGUF",
+          "supportsThinking": true
         }
       ]
     },
@@ -941,6 +953,70 @@
           "recommended": true,
           "supportsThinking": true,
           "descriptionKey": "models.descriptions.local.openai_oss_gpt_oss_20b_mxfp4"
+        }
+      ]
+    },
+    {
+      "id": "phi",
+      "name": "Microsoft Phi",
+      "baseUrl": "https://huggingface.co",
+      "promptTemplate": "<|im_start|>system\n{system}<|im_end|>\n<|im_start|>user\n{user}<|im_end|>\n<|im_start|>assistant\n",
+      "models": [
+        {
+          "id": "phi-4-mini-instruct-q4_k_m",
+          "name": "Phi-4 Mini",
+          "size": "2.4GB",
+          "sizeBytes": 2516582400,
+          "description": "Microsoft's compact 3.8B model, punches above its weight for reasoning",
+          "fileName": "Phi-4-mini-instruct-Q4_K_M.gguf",
+          "quantization": "q4_k_m",
+          "contextLength": 131072,
+          "hfRepo": "bartowski/Phi-4-mini-instruct-GGUF",
+          "recommended": true
+        },
+        {
+          "id": "phi-4-q4_k_m",
+          "name": "Phi-4",
+          "size": "9.1GB",
+          "sizeBytes": 9771147264,
+          "description": "Microsoft's 14.7B flagship small model, strong math and reasoning",
+          "fileName": "Phi-4-Q4_K_M.gguf",
+          "quantization": "q4_k_m",
+          "contextLength": 131072,
+          "hfRepo": "bartowski/Phi-4-GGUF"
+        }
+      ]
+    },
+    {
+      "id": "deepseek",
+      "name": "DeepSeek",
+      "baseUrl": "https://huggingface.co",
+      "promptTemplate": "<|im_start|>system\n{system}<|im_end|>\n<|im_start|>user\n{user}<|im_end|>\n<|im_start|>assistant\n",
+      "models": [
+        {
+          "id": "deepseek-r1-distill-qwen-7b-q4_k_m",
+          "name": "DeepSeek R1 Distill 7B",
+          "size": "4.7GB",
+          "sizeBytes": 5025128960,
+          "description": "DeepSeek R1 reasoning distilled into a 7B Qwen model",
+          "fileName": "DeepSeek-R1-Distill-Qwen-7B-Q4_K_M.gguf",
+          "quantization": "q4_k_m",
+          "contextLength": 131072,
+          "hfRepo": "bartowski/DeepSeek-R1-Distill-Qwen-7B-GGUF",
+          "recommended": true,
+          "supportsThinking": true
+        },
+        {
+          "id": "deepseek-r1-distill-qwen-14b-q4_k_m",
+          "name": "DeepSeek R1 Distill 14B",
+          "size": "8.9GB",
+          "sizeBytes": 9555148800,
+          "description": "DeepSeek R1 reasoning distilled into a 14B Qwen model, stronger than 7B",
+          "fileName": "DeepSeek-R1-Distill-Qwen-14B-Q4_K_M.gguf",
+          "quantization": "q4_k_m",
+          "contextLength": 131072,
+          "hfRepo": "bartowski/DeepSeek-R1-Distill-Qwen-14B-GGUF",
+          "supportsThinking": true
         }
       ]
     },
