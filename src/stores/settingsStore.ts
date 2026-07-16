@@ -897,8 +897,8 @@ function createSecretSetter(
 }
 
 export const useSettingsStore = create<SettingsState>()((set, get) => ({
-  uiLanguage: normalizeUiLanguage(isBrowser ? localStorage.getItem("uiLanguage") : null),
-  useLocalWhisper: readBoolean("useLocalWhisper", false),
+  uiLanguage: normalizeUiLanguage(isBrowser ? localStorage.getItem("uiLanguage") ?? "en" : "en"),
+  useLocalWhisper: readBoolean("useLocalWhisper", true),
   whisperModel: readString("whisperModel", "base"),
   localTranscriptionProvider: (readString("localTranscriptionProvider", "whisper") === "nvidia"
     ? "nvidia"
@@ -993,10 +993,10 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
 
   preferBuiltInMic: readBoolean("preferBuiltInMic", false),
   selectedMicDeviceId: readString("selectedMicDeviceId", ""),
-  micNoiseSuppression: readBoolean("micNoiseSuppression", false),
+  micNoiseSuppression: readBoolean("micNoiseSuppression", true),
   micGain: (() => {
-    const v = parseFloat(isBrowser ? localStorage.getItem("micGain") || "1" : "1");
-    return isNaN(v) ? 1.0 : Math.max(0.5, Math.min(8.0, v));
+    const v = parseFloat(isBrowser ? localStorage.getItem("micGain") || "2.5" : "2.5");
+    return isNaN(v) ? 2.5 : Math.max(0.5, Math.min(8.0, v));
   })(),
 
   theme: (() => {
@@ -1013,14 +1013,14 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
     const parsed = parseInt(stored, 10);
     return isNaN(parsed) ? 0 : parsed;
   })(),
-  dataRetentionEnabled: readBoolean("dataRetentionEnabled", true),
+  dataRetentionEnabled: readBoolean("dataRetentionEnabled", false),
   saveDiscardedTranscriptions: readBoolean("saveDiscardedTranscriptions", false),
   audioCuesEnabled: readBoolean("audioCuesEnabled", true),
-  pauseMediaOnDictation: readBoolean("pauseMediaOnDictation", false),
+  pauseMediaOnDictation: readBoolean("pauseMediaOnDictation", true),
   floatingIconAutoHide: readBoolean("floatingIconAutoHide", false),
-  startMinimized: readBoolean("startMinimized", false),
+  startMinimized: readBoolean("startMinimized", true),
   notificationsEnabled: readBoolean("notificationsEnabled", true),
-  notifyMeetingDetection: readBoolean("notifyMeetingDetection", true),
+  notifyMeetingDetection: readBoolean("notifyMeetingDetection", false),
   notifyCalendarReminders: readBoolean("notifyCalendarReminders", true),
   notifyUpdates: readBoolean("notifyUpdates", true),
   ...(() => {
@@ -1038,7 +1038,7 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
     };
   })(),
   gcalPrimaryOnly: readBoolean("gcalPrimaryOnly", true),
-  meetingProcessDetection: readBoolean("meetingProcessDetection", true),
+  meetingProcessDetection: readBoolean("meetingProcessDetection", false),
   speakerDiarizationEnabled: readBoolean("speakerDiarizationEnabled", true),
   dictationSileroEnabled: readBoolean("dictationSileroEnabled", true),
   noteRecordingSileroEnabled: readBoolean("noteRecordingSileroEnabled", true),
@@ -1069,7 +1069,7 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
     return "bottom-right" as const;
   })(),
   showTranscriptionPreview: readBoolean("showTranscriptionPreview", false),
-  autoPasteEnabled: readBoolean("autoPasteEnabled", true),
+  autoPasteEnabled: readBoolean("autoPasteEnabled", false),
   keepTranscriptionInClipboard: readBoolean("keepTranscriptionInClipboard", false),
   noteFilesEnabled: readBoolean("noteFilesEnabled", false),
   noteFilesPath: readString("noteFilesPath", ""),

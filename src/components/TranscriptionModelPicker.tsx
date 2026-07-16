@@ -98,8 +98,8 @@ function LocalModelCard({
             <div
               className={`w-1.5 h-1.5 rounded-full ${
                 isSelected
-                  ? "bg-primary shadow-[0_0_6px_oklch(0.62_0.22_260/0.6)] animate-[pulse-glow_2s_ease-in-out_infinite]"
-                  : "bg-success shadow-[0_0_4px_rgba(34,197,94,0.5)]"
+                  ? "bg-green-500 shadow-[0_0_6px_rgba(34,197,94,0.7)] animate-[pulse-glow_2s_ease-in-out_infinite]"
+                  : "bg-blue-500 shadow-[0_0_4px_rgba(59,130,246,0.5)]"
               }`}
             />
           ) : isDownloading ? (
@@ -130,10 +130,22 @@ function LocalModelCard({
         <div className="flex items-center gap-1.5 shrink-0">
           {isDownloaded ? (
             <>
-              {isSelected && (
-                <span className="text-xs font-medium text-primary px-2 py-0.5 bg-primary/10 rounded-sm">
+              {isSelected ? (
+                <span className="text-xs font-medium text-green-500 px-2 py-0.5 bg-green-500/10 rounded-sm">
                   {t("common.active")}
                 </span>
+              ) : (
+                <Button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onSelect();
+                  }}
+                  size="sm"
+                  variant="default"
+                  className="h-6 px-2.5 text-xs transition-transform active:scale-95"
+                >
+                  {t("common.activate")}
+                </Button>
               )}
               <Button
                 onClick={(e) => {
@@ -942,6 +954,23 @@ export default function TranscriptionModelPicker({
         </>
       ) : (
         <>
+          {(() => {
+            const modelList = internalLocalProvider === "nvidia" ? parakeetModels : localModels;
+            const modelInfo = internalLocalProvider === "nvidia"
+              ? PARAKEET_MODEL_INFO[selectedLocalModel]
+              : WHISPER_MODEL_INFO[selectedLocalModel];
+            const isActive = selectedLocalModel && modelList.find((m) => m.model === selectedLocalModel)?.downloaded;
+            if (!isActive) return null;
+            return (
+              <div className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md bg-green-500/10 border border-green-500/20">
+                <div className="w-1.5 h-1.5 rounded-full bg-green-500 shadow-[0_0_4px_rgba(34,197,94,0.5)] animate-[pulse-glow_2s_ease-in-out_infinite] shrink-0" />
+                <span className="text-xs font-medium text-foreground truncate">
+                  {modelInfo?.name || selectedLocalModel}
+                </span>
+              </div>
+            );
+          })()}
+
           <ProviderTabs
             providers={LOCAL_PROVIDER_TABS}
             selectedId={internalLocalProvider}

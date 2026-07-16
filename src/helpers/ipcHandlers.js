@@ -397,6 +397,10 @@ class IPCHandlers {
     liveSpeakerIdentifier.setDiarizationManager(this.diarizationManager);
     this._setupTextEditMonitor();
     this._setupAudioCleanup();
+    // Restore hotkeys if the control panel is destroyed while a HotkeyInput had focus.
+    this.windowManager.onControlPanelDestroyed = () => {
+      this._forceExitHotkeyCaptureModeIfActive().catch(() => {});
+    };
     this._logDetectedGpus();
     this.setupHandlers();
 
@@ -434,6 +438,89 @@ class IPCHandlers {
       vadEnabled: resolveContextSileroEnabled(settings, context),
       vadConfig,
     };
+  }
+
+  async _ensureQdrantReady() {
+    const vectorIndex = require("./vectorIndex");
+    if (vectorIndex.isReady()) return true;
+    const qm = global.__qdrantManager;
+    if (!qm || !qm.isAvailable()) return false;
+    try {
+      if (!qm.isReady()) await qm.start();
+      if (!qm.isReady()) return false;
+      vectorIndex.init(qm.getPort());
+      await vectorIndex.ensureCollection();
+      return true;
+    } catch (err) {
+      debugLogger.debug("Qdrant lazy-start failed (non-fatal)", { error: err.message });
+      return false;
+    }
+  }
+
+  async _forceExitHotkeyCaptureModeIfActive() {
+    if (!this._hotkeyCaptureMode) return;
+    debugLogger.info("[IPC] Control panel destroyed in capture mode — force-exiting hotkey capture");
+    this._hotkeyCaptureMode = false;
+    this.windowManager.setHotkeyListeningMode(false);
+    await this._doExitHotkeyCaptureModeAsync();
+  }
+
+  async _doExitHotkeyCaptureModeAsync() {
+    const hotkeyManager = this.windowManager.hotkeyManager;
+    const effectiveHotkey = hotkeyManager.getCurrentHotkey();
+    const {
+      isGlobeLikeHotkey,
+      isModifierOnlyHotkey,
+      isRightSideModifier,
+      isMouseButtonHotkey,
+    } = require("./hotkeyManager");
+    const usesNativeListener = (hotkey) =>
+      !hotkey ||
+      isGlobeLikeHotkey(hotkey) ||
+      isMouseButtonHotkey(hotkey) ||
+      isModifierOnlyHotkey(hotkey) ||
+      isRightSideModifier(hotkey);
+
+    const usesNativePath =
+      hotkeyManager.isUsingKDE() ||
+      hotkeyManager.isUsingGnome() ||
+      hotkeyManager.isUsingHyprland();
+
+    if (!usesNativePath) {
+      const { globalShortcut } = require("electron");
+      for (const hk of hotkeyManager.getSlotHotkeys("dictation")) {
+        if (!hk || usesNativeListener(hk)) continue;
+        const accelerator = hk.startsWith("Fn+") ? hk.slice(3) : hk;
+        if (!globalShortcut.isRegistered(accelerator)) {
+          debugLogger.log(`[IPC] Re-registering globalShortcut "${accelerator}" after capture mode`);
+          const callback = this.windowManager.createHotkeyCallback();
+          const registered = globalShortcut.register(accelerator, () => callback(hk));
+          if (!registered) {
+            debugLogger.warn(`[IPC] Failed to re-register globalShortcut "${accelerator}" after capture mode`);
+          }
+        }
+      }
+    }
+
+    this.windowManager.reconcileNativeKeyListeners();
+
+    if (hotkeyManager.isUsingGnome() && hotkeyManager.gnomeManager && effectiveHotkey) {
+      const gnomeHotkey = GnomeShortcutManager.convertToGnomeFormat(effectiveHotkey);
+      await hotkeyManager.gnomeManager.registerKeybinding(gnomeHotkey).catch(() => {});
+    }
+    if (hotkeyManager.isUsingHyprland() && hotkeyManager.hyprlandManager && effectiveHotkey) {
+      await hotkeyManager.hyprlandManager.registerKeybinding(effectiveHotkey).catch(() => {});
+    }
+    if (hotkeyManager.isUsingKDE() && hotkeyManager.kdeManager && effectiveHotkey) {
+      const callback = this.windowManager.createHotkeyCallback();
+      await hotkeyManager.kdeManager.registerKeybinding(effectiveHotkey, "dictation", callback).catch(() => {});
+    }
+
+    for (const [slot, info] of hotkeyManager.slots) {
+      const hotkeys = info?.hotkeys || [];
+      if (slot === "dictation" || slot === "cancel" || hotkeys.length === 0 || !info?.callback) continue;
+      await hotkeyManager.registerSlot(slot, hotkeys, info.callback).catch(() => {});
+    }
   }
 
   _asyncVectorUpsert(note) {
@@ -653,25 +740,21 @@ class IPCHandlers {
     const DEFAULT_RETENTION_DAYS = 30;
     const SIX_HOURS_MS = 6 * 60 * 60 * 1000;
 
-    // Run initial cleanup with default retention
-    try {
-      this.audioStorageManager.cleanupExpiredAudio(DEFAULT_RETENTION_DAYS, this.databaseManager);
-    } catch (error) {
-      debugLogger.error("Initial audio cleanup failed", { error: error.message }, "audio-storage");
-    }
-
-    // Set up periodic cleanup every 6 hours
-    this._audioCleanupInterval = setInterval(() => {
+    const runCleanup = () => {
       try {
         this.audioStorageManager.cleanupExpiredAudio(DEFAULT_RETENTION_DAYS, this.databaseManager);
       } catch (error) {
-        debugLogger.error(
-          "Periodic audio cleanup failed",
-          { error: error.message },
-          "audio-storage"
-        );
+        debugLogger.error("Audio cleanup failed", { error: error.message }, "audio-storage");
       }
-    }, SIX_HOURS_MS);
+      try {
+        meetingAudioStorage.cleanupExpiredAudio(DEFAULT_RETENTION_DAYS);
+      } catch (error) {
+        debugLogger.error("Meeting audio cleanup failed", { error: error.message }, "audio-storage");
+      }
+    };
+
+    runCleanup();
+    this._audioCleanupInterval = setInterval(runCleanup, SIX_HOURS_MS);
   }
 
   _setupTextEditMonitor() {
@@ -1175,6 +1258,7 @@ class IPCHandlers {
     });
 
     ipcMain.handle("db-semantic-search-notes", async (event, query, limit = 5) => {
+      await this._ensureQdrantReady();
       const vectorIndex = require("./vectorIndex");
       if (!vectorIndex.isReady()) {
         return this.databaseManager.searchNotes(query, limit);
@@ -1411,6 +1495,7 @@ class IPCHandlers {
     });
 
     ipcMain.handle("db-semantic-search-conversations", async (event, query, limit) => {
+      await this._ensureQdrantReady();
       if (this.vectorIndex?.isReady?.()) {
         try {
           const vectorResults = await this.vectorIndex.searchConversations(query, limit);
@@ -2629,24 +2714,6 @@ class IPCHandlers {
       ipcMain.emit("hotkey-listening-mode-changed", null, enabled);
       const hotkeyManager = this.windowManager.hotkeyManager;
 
-      // Restore from slot state only. A freshly captured hotkey is registered by
-      // its own update IPC (invoked before this one); re-binding it here would
-      // overwrite the primary on DE backends or leak untracked registrations.
-      const effectiveHotkey = hotkeyManager.getCurrentHotkey();
-
-      const {
-        isGlobeLikeHotkey,
-        isModifierOnlyHotkey,
-        isRightSideModifier,
-        isMouseButtonHotkey,
-      } = require("./hotkeyManager");
-      const usesNativeListener = (hotkey) =>
-        !hotkey ||
-        isGlobeLikeHotkey(hotkey) ||
-        isMouseButtonHotkey(hotkey) ||
-        isModifierOnlyHotkey(hotkey) ||
-        isRightSideModifier(hotkey);
-
       if (enabled) {
         // Entering capture mode — unregister ALL slots so none intercept keypresses.
         // Dictation is always active; meeting and agent may or may not be set.
@@ -2698,86 +2765,7 @@ class IPCHandlers {
           });
         }
       } else {
-        // Exiting capture mode - re-register globalShortcut if not already registered
-        // Skip for KDE/GNOME/Hyprland — updateHotkey handles re-registration via native path
-        const usesNativePath =
-          hotkeyManager.isUsingKDE() ||
-          hotkeyManager.isUsingGnome() ||
-          hotkeyManager.isUsingHyprland();
-        if (!usesNativePath) {
-          const { globalShortcut } = require("electron");
-          // Re-register every globalShortcut-backed dictation hotkey (the slot
-          // may hold several).
-          for (const hk of hotkeyManager.getSlotHotkeys("dictation")) {
-            if (!hk || usesNativeListener(hk)) continue;
-            const accelerator = hk.startsWith("Fn+") ? hk.slice(3) : hk;
-            if (!globalShortcut.isRegistered(accelerator)) {
-              debugLogger.log(
-                `[IPC] Re-registering globalShortcut "${accelerator}" after capture mode`
-              );
-              const callback = this.windowManager.createHotkeyCallback();
-              const registered = globalShortcut.register(accelerator, () => callback(hk));
-              if (!registered) {
-                debugLogger.warn(
-                  `[IPC] Failed to re-register globalShortcut "${accelerator}" after capture mode`
-                );
-              }
-            }
-          }
-        }
-
-        // Re-sync native key listeners (Windows/Linux) across all hotkey slots now
-        // that capture is done. Idempotent — reads the current slot hotkeys.
-        this.windowManager.reconcileNativeKeyListeners();
-
-        // On GNOME, re-register the keybinding with the effective hotkey
-        if (hotkeyManager.isUsingGnome() && hotkeyManager.gnomeManager && effectiveHotkey) {
-          const gnomeHotkey = GnomeShortcutManager.convertToGnomeFormat(effectiveHotkey);
-          debugLogger.log(
-            `[IPC] Re-registering GNOME keybinding "${gnomeHotkey}" after capture mode`
-          );
-          await hotkeyManager.gnomeManager.registerKeybinding(gnomeHotkey);
-        }
-
-        // On Hyprland Wayland, re-register the keybinding with the effective hotkey
-        if (hotkeyManager.isUsingHyprland() && hotkeyManager.hyprlandManager && effectiveHotkey) {
-          debugLogger.log(
-            `[IPC] Re-registering Hyprland keybinding "${effectiveHotkey}" after capture mode`
-          );
-          await hotkeyManager.hyprlandManager.registerKeybinding(effectiveHotkey);
-        }
-
-        // On KDE (X11 or Wayland), re-register the keybinding with the effective hotkey
-        if (hotkeyManager.isUsingKDE() && hotkeyManager.kdeManager && effectiveHotkey) {
-          debugLogger.log(
-            `[IPC] Re-registering KDE keybinding "${effectiveHotkey}" after capture mode`
-          );
-          const callback = this.windowManager.createHotkeyCallback();
-          const result = await hotkeyManager.kdeManager.registerKeybinding(
-            effectiveHotkey,
-            "dictation",
-            callback
-          );
-          if (result !== true) {
-            debugLogger.warn(
-              `[IPC] Failed to re-register KDE keybinding "${effectiveHotkey}" after capture mode`,
-              { result }
-            );
-          }
-        }
-
-        // Re-register non-dictation slots (meeting, agent) that were unregistered on capture enter
-        for (const [slot, info] of hotkeyManager.slots) {
-          const hotkeys = info?.hotkeys || [];
-          if (slot === "dictation" || slot === "cancel" || hotkeys.length === 0 || !info?.callback)
-            continue;
-          debugLogger.log(
-            `[IPC] Re-registering slot "${slot}" ("${hotkeys.join(", ")}") after capture mode`
-          );
-          await hotkeyManager.registerSlot(slot, hotkeys, info.callback).catch((err) => {
-            debugLogger.warn(`[IPC] Failed to re-register slot "${slot}":`, err.message);
-          });
-        }
+        await this._doExitHotkeyCaptureModeAsync();
       }
 
       return { success: true };

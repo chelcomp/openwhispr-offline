@@ -90,7 +90,7 @@ export function ModelCard({
     if (isDownloaded) {
       return isSelected
         ? "bg-green-500 shadow-[0_0_6px_rgba(34,197,94,0.7)]"
-        : "bg-primary shadow-[0_0_4px_oklch(0.62_0.22_260/0.5)]";
+        : "bg-blue-500 shadow-[0_0_4px_rgba(59,130,246,0.5)]";
     }
     if (isDownloading) {
       return "bg-amber-500 shadow-[0_0_4px_rgba(245,158,11,0.5)]";
@@ -182,7 +182,7 @@ export function ModelCard({
                       }}
                       size="sm"
                       variant="default"
-                      className="h-6 px-2.5 text-xs opacity-0 group-hover:opacity-100 transition-[opacity,transform] active:scale-95"
+                      className="h-6 px-2.5 text-xs transition-transform active:scale-95"
                     >
                       {t("common.activate")}
                     </Button>

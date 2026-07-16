@@ -367,6 +367,11 @@ export default function OnboardingFlow({ onComplete }: OnboardingFlowProps) {
       logger.error("Failed to persist API keys", { error }, "onboarding");
     }
 
+    void window.electronAPI?.setAutoStartEnabled?.(true);
+
+    window.electronAPI?.downloadWhisperModel?.("base")?.catch?.(() => {});
+    window.electronAPI?.modelDownload?.("qwen3.5-2b-q4_k_m")?.catch?.(() => {});
+
     return true;
   }, [
     hotkey,
