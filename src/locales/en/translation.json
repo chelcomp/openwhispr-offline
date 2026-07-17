@@ -171,6 +171,7 @@
     "cancel": "Cancel",
     "recommended": "Recommended",
     "active": "Active",
+    "beta": "Beta",
     "activate": "Activate",
     "freeAccountRequired": "Free account required",
     "cloud": "Cloud",
@@ -1999,6 +2000,8 @@
       },
       "transcriptionPreview": "Live Transcription Preview",
       "transcriptionPreviewDescription": "Show transcription in a floating window before cleanup",
+      "parakeetStreamingBeta": "Real-Time Streaming",
+      "parakeetStreamingBetaDescription": "Paste text progressively as NVIDIA Parakeet transcribes, instead of waiting for the full result. Experimental — may behave unexpectedly.",
       "aec": {
         "toggle": {
           "title": "Echo cancellation for meetings",

@@ -152,6 +152,8 @@ interface TranscriptionSectionProps {
   setRemoteTranscriptionModel: (model: string) => void;
   showTranscriptionPreview: boolean;
   setShowTranscriptionPreview: (value: boolean) => void;
+  parakeetStreamingBeta: boolean;
+  setParakeetStreamingBeta: (value: boolean) => void;
   toast: (opts: {
     title: string;
     description: string;
@@ -188,6 +190,8 @@ function TranscriptionSection({
   setRemoteTranscriptionModel,
   showTranscriptionPreview,
   setShowTranscriptionPreview,
+  parakeetStreamingBeta,
+  setParakeetStreamingBeta,
   toast,
 }: TranscriptionSectionProps) {
   const { t } = useTranslation();
@@ -266,6 +270,20 @@ function TranscriptionSection({
     </SettingsPanel>
   );
 
+  const renderParakeetStreamingToggle = () => (
+    <SettingsPanel>
+      <SettingsPanelRow>
+        <SettingsRow
+          label={t("settingsPage.transcription.parakeetStreamingBeta")}
+          description={t("settingsPage.transcription.parakeetStreamingBetaDescription")}
+          badge={t("common.beta")}
+        >
+          <Toggle checked={parakeetStreamingBeta} onChange={setParakeetStreamingBeta} />
+        </SettingsRow>
+      </SettingsPanelRow>
+    </SettingsPanel>
+  );
+
   const renderTranscriptionPicker = (mode?: "cloud" | "local") => (
     <TranscriptionModelPicker
       selectedCloudProvider={cloudTranscriptionProvider}
@@ -305,6 +323,7 @@ function TranscriptionSection({
       {transcriptionMode === "local" && (
         <>
           {renderTranscriptionPicker("local")}
+          {localTranscriptionProvider === "nvidia" && renderParakeetStreamingToggle()}
           {renderPreviewToggle()}
         </>
       )}
@@ -678,6 +697,8 @@ export default function SettingsPage({
     setPauseMediaOnDictation,
     showTranscriptionPreview,
     setShowTranscriptionPreview,
+    parakeetStreamingBeta,
+    setParakeetStreamingBeta,
     autoPasteEnabled,
     setAutoPasteEnabled,
     keepTranscriptionInClipboard,
@@ -2680,6 +2701,8 @@ EOF`,
                   setRemoteTranscriptionModel={setRemoteTranscriptionModel}
                   showTranscriptionPreview={showTranscriptionPreview}
                   setShowTranscriptionPreview={setShowTranscriptionPreview}
+                  parakeetStreamingBeta={parakeetStreamingBeta}
+                  setParakeetStreamingBeta={setParakeetStreamingBeta}
                   toast={toast}
                 />
                 {transcriptionMode === "local" &&

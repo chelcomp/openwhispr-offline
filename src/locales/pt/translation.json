@@ -150,6 +150,7 @@
     "cancel": "Cancelar",
     "recommended": "Recomendado",
     "active": "Ativo",
+    "beta": "Beta",
     "activate": "Ativar",
     "freeAccountRequired": "Conta gratuita necessária",
     "cloud": "Nuvem",
@@ -1805,6 +1806,8 @@
       },
       "transcriptionPreview": "Pré-visualização ao vivo",
       "transcriptionPreviewDescription": "Mostrar transcrição em janela flutuante antes da limpeza",
+      "parakeetStreamingBeta": "Streaming em Tempo Real",
+      "parakeetStreamingBetaDescription": "Cola o texto progressivamente enquanto o NVIDIA Parakeet transcreve, em vez de esperar o resultado completo. Experimental — pode se comportar de forma inesperada.",
       "aec": {
         "toggle": {
           "title": "Cancelamento de eco para reuniões",
