@@ -1,17 +1,8 @@
 const { BrowserWindow } = require("electron");
 const debugLogger = require("./debugLogger");
 
-const IMMINENT_THRESHOLD_MS = 5 * 60 * 1000;
-
 class MeetingDetectionEngine {
-  constructor(
-    googleCalendarManager,
-    meetingProcessDetector,
-    audioActivityDetector,
-    windowManager,
-    databaseManager
-  ) {
-    this.googleCalendarManager = googleCalendarManager;
+  constructor(meetingProcessDetector, audioActivityDetector, windowManager, databaseManager) {
     this.meetingProcessDetector = meetingProcessDetector;
     this.audioActivityDetector = audioActivityDetector;
     this.windowManager = windowManager;
@@ -67,18 +58,6 @@ class MeetingDetectionEngine {
       return;
     }
 
-    const calendarState = this.googleCalendarManager?.getActiveMeetingState?.();
-    if (calendarState) {
-      if (calendarState.activeMeeting) {
-        debugLogger.info(
-          "Suppressing detection — active calendar meeting recording in progress",
-          { detectionId, activeMeeting: calendarState.activeMeeting?.summary },
-          "meeting"
-        );
-        return;
-      }
-    }
-
     if (this._userRecording || this._postRecordingCooldown) {
       debugLogger.info("Detection queued — user is recording", { detectionId, source }, "meeting");
       this._notificationQueue.push({ source, key, data });
@@ -86,14 +65,7 @@ class MeetingDetectionEngine {
       return;
     }
 
-    let imminentEvent = null;
-    if (calendarState?.upcomingEvents?.length > 0) {
-      const now = Date.now();
-      imminentEvent = calendarState.upcomingEvents.find((evt) => {
-        const start = new Date(evt.start_time).getTime();
-        return start - now <= IMMINENT_THRESHOLD_MS && start > now;
-      });
-    }
+    const imminentEvent = null;
 
     debugLogger.info(
       "Meeting detection triggered",
@@ -354,17 +326,7 @@ class MeetingDetectionEngine {
 
     const detection = this.activeDetections.get(detectionId);
     if (detection && !detection.dismissed) {
-      const calendarState = this.googleCalendarManager?.getActiveMeetingState?.();
-      let imminentEvent = null;
-      if (calendarState?.upcomingEvents?.length > 0) {
-        const now = Date.now();
-        imminentEvent = calendarState.upcomingEvents.find((evt) => {
-          const start = new Date(evt.start_time).getTime();
-          return start - now <= IMMINENT_THRESHOLD_MS && start > now;
-        });
-      }
-
-      this._showPrompt(detectionId, best.source, best.key, best.data, imminentEvent);
+      this._showPrompt(detectionId, best.source, best.key, best.data, null);
     }
 
     this._notificationQueue = [];

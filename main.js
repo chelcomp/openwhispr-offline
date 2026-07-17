@@ -279,7 +279,6 @@ function initializeCoreManagers() {
   diarizationManager = new DiarizationManager();
 
   meetingDetectionEngine = new MeetingDetectionEngine(
-    null,
     new MeetingProcessDetector(),
     new AudioActivityDetector(),
     windowManager,

@@ -3,7 +3,6 @@ import ReactDOM from "react-dom/client";
 import { I18nextProvider } from "react-i18next";
 import AppRouter from "./AppRouter.jsx";
 import ErrorBoundary from "./components/ErrorBoundary.tsx";
-import TinfoilModelSwitchToastListener from "./components/TinfoilModelSwitchToastListener.tsx";
 import { ToastProvider } from "./components/ui/Toast.tsx";
 import { SettingsProvider } from "./hooks/useSettings";
 
@@ -17,7 +16,6 @@ root.render(
       <I18nextProvider i18n={i18n}>
         <SettingsProvider>
           <ToastProvider>
-            <TinfoilModelSwitchToastListener />
             <AppRouter />
           </ToastProvider>
         </SettingsProvider>

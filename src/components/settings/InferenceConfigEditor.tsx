@@ -46,12 +46,7 @@ const MODE_LABEL_PREFIX: Record<InferenceScope, string> = {
   chatIntelligence: "agentMode.settings.modes",
 };
 
-function startCloudOnboarding() {
-  localStorage.setItem("pendingCloudMigration", "true");
-  localStorage.setItem("onboardingCurrentStep", "0");
-  localStorage.removeItem("onboardingCompleted");
-  window.location.reload();
-}
+
 
 interface InferenceConfigEditorProps {
   scope: InferenceScope;

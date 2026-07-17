@@ -29,7 +29,6 @@ import {
   Upload,
   Download,
 } from "lucide-react";
-import { useAuth } from "../hooks/useAuth";
 import { signOut } from "../lib/auth";
 import MicPermissionWarning from "./ui/MicPermissionWarning";
 import MicrophoneSettings from "./ui/MicrophoneSettings";
@@ -125,8 +124,6 @@ const UI_LANGUAGE_OPTIONS: import("./ui/LanguageSelector").LanguageOption[] = [
 const noop = () => {};
 
 interface TranscriptionSectionProps {
-  isSignedIn: boolean;
-  startOnboarding: () => void;
   cloudTranscriptionMode: string;
   setCloudTranscriptionMode: (mode: string) => void;
   useLocalWhisper: boolean;
@@ -163,8 +160,6 @@ interface TranscriptionSectionProps {
 }
 
 function TranscriptionSection({
-  isSignedIn,
-  startOnboarding,
   cloudTranscriptionMode,
   setCloudTranscriptionMode,
   useLocalWhisper,
@@ -1192,14 +1187,6 @@ export default function SettingsPage({
       },
     });
   }, [isRestoringBackup, showConfirmDialog, showAlertDialog, t]);
-
-  const { isSignedIn } = useAuth();
-  const startOnboarding = useCallback(() => {
-    localStorage.setItem("pendingCloudMigration", "true");
-    localStorage.setItem("onboardingCurrentStep", "0");
-    localStorage.removeItem("onboardingCompleted");
-    window.location.reload();
-  }, []);
 
   const renderWhisperVadSettings = () => (
     <div>
@@ -2674,8 +2661,6 @@ EOF`,
             renderDictation={() => (
               <div className="space-y-6">
                 <TranscriptionSection
-                  isSignedIn={isSignedIn ?? false}
-                  startOnboarding={startOnboarding}
                   cloudTranscriptionMode={cloudTranscriptionMode}
                   setCloudTranscriptionMode={setCloudTranscriptionMode}
                   useLocalWhisper={useLocalWhisper}

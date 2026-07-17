@@ -248,35 +248,6 @@
           "descriptionKey": "models.descriptions.transcription.mistral_voxtral_mini_latest"
         }
       ]
-    },
-    {
-      "id": "corti",
-      "name": "Corti",
-      "baseUrl": "https://api.us.corti.app/v2",
-      "models": [
-        {
-          "id": "corti-transcribe",
-          "name": "Corti Transcribe",
-          "description": "Clinical-grade medical transcription",
-          "descriptionKey": "models.descriptions.transcription.corti_transcribe",
-          "streaming": true
-        }
-      ]
-    },
-    {
-      "id": "tinfoil",
-      "name": "Tinfoil",
-      "baseUrl": "https://inference.tinfoil.sh/v1",
-      "batchModel": "voxtral-small-24b",
-      "models": [
-        {
-          "id": "voxtral-mini-4b-realtime",
-          "name": "Voxtral",
-          "description": "Verifiably private transcription",
-          "descriptionKey": "models.descriptions.transcription.tinfoil_voxtral",
-          "streaming": true
-        }
-      ]
     }
   ],
   "cloudProviders": [
@@ -530,86 +501,6 @@
           "name": "Kimi K2 0905",
           "description": "Moonshot AI's 1T MoE, 256K context",
           "descriptionKey": "models.descriptions.cloud.groq_kimi_k2_0905"
-        }
-      ]
-    },
-    {
-      "id": "tinfoil",
-      "name": "Tinfoil",
-      "models": [
-        {
-          "id": "kimi-k2-6",
-          "name": "Kimi K2.6",
-          "description": "Private long-horizon coding and multimodal model, 256K context",
-          "tokenParam": "max_tokens",
-          "supportsTemperature": true,
-          "descriptionKey": "models.descriptions.cloud.tinfoil_kimi_k2_6",
-          "supportsThinking": true
-        },
-        {
-          "id": "glm-5-2",
-          "name": "GLM-5.2",
-          "description": "Private agentic engineering model in secure enclaves, 384K context",
-          "tokenParam": "max_tokens",
-          "supportsTemperature": true,
-          "descriptionKey": "models.descriptions.cloud.tinfoil_glm_5_2",
-          "supportsThinking": true
-        },
-        {
-          "id": "gpt-oss-120b",
-          "name": "GPT-OSS 120B",
-          "description": "Private open-weight reasoning model with tool use, 131K context",
-          "tokenParam": "max_tokens",
-          "supportsTemperature": true,
-          "descriptionKey": "models.descriptions.cloud.tinfoil_gpt_oss_120b",
-          "supportsThinking": true
-        },
-        {
-          "id": "gemma4-31b",
-          "name": "Gemma 4 31B",
-          "description": "Private multilingual reasoning model with tool calling, 256K context",
-          "tokenParam": "max_tokens",
-          "supportsTemperature": true,
-          "descriptionKey": "models.descriptions.cloud.tinfoil_gemma4_31b",
-          "supportsThinking": true
-        }
-      ]
-    },
-    {
-      "id": "corti",
-      "name": "Corti",
-      "models": [
-        {
-          "id": "corti-s1-instant",
-          "name": "Corti S1 Instant",
-          "description": "Fast healthcare model, no reasoning trace",
-          "descriptionKey": "models.descriptions.cloud.corti_corti_s1_instant",
-          "tokenParam": "max_tokens",
-          "supportsTemperature": true
-        },
-        {
-          "id": "corti-s1",
-          "name": "Corti S1",
-          "description": "Most capable clinical model with reasoning",
-          "descriptionKey": "models.descriptions.cloud.corti_corti_s1",
-          "tokenParam": "max_tokens",
-          "supportsTemperature": true
-        },
-        {
-          "id": "corti-s1-mini-instant",
-          "name": "Corti S1 Mini Instant",
-          "description": "Compact healthcare model, fastest and lowest cost",
-          "descriptionKey": "models.descriptions.cloud.corti_corti_s1_mini_instant",
-          "tokenParam": "max_tokens",
-          "supportsTemperature": true
-        },
-        {
-          "id": "corti-s1-mini",
-          "name": "Corti S1 Mini",
-          "description": "Compact clinical model with reasoning at half the price",
-          "descriptionKey": "models.descriptions.cloud.corti_corti_s1_mini",
-          "tokenParam": "max_tokens",
-          "supportsTemperature": true
         }
       ]
     }

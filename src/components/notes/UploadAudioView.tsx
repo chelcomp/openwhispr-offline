@@ -19,7 +19,6 @@ import { findDefaultFolder, MEETINGS_FOLDER_NAME } from "./shared";
 
 import { useUsage } from "../../hooks/useUsage";
 import { useSettings } from "../../hooks/useSettings";
-import { useStartOnboarding } from "../../hooks/useStartOnboarding";
 import { withSessionRefresh } from "../../lib/auth";
 import { getAllReasoningModels, getBatchTranscriptionModel } from "../../models/ModelRegistry";
 import {
@@ -36,8 +35,6 @@ type UploadState = "idle" | "selected" | "transcribing" | "complete" | "error";
 const SUPPORTED_EXTENSIONS = ["mp3", "wav", "m4a", "webm", "ogg", "oga", "flac", "aac"];
 
 const BYOK_MAX_FILE_SIZE = 25 * 1024 * 1024; // 25 MB — hard limit for bring-your-own-key
-const CLOUD_FREE_MAX_FILE_SIZE = 25 * 1024 * 1024; // 25 MB — free plan cloud limit
-const CLOUD_PRO_MAX_FILE_SIZE = 500 * 1024 * 1024; // 500 MB — pro plan cloud limit
 
 function formatFileSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
@@ -89,7 +86,6 @@ export default function UploadAudioView({ onNoteCreated, onOpenSettings }: Uploa
     groqApiKey,
     xaiApiKey,
     mistralApiKey,
-    tinfoilApiKey,
     customTranscriptionApiKey,
   } = useSettings();
 
@@ -110,10 +106,6 @@ export default function UploadAudioView({ onNoteCreated, onOpenSettings }: Uploa
   );
   const setUploadUseLocalWhisper = useSettingsStore((s) => s.setUploadUseLocalWhisper);
 
-  const cortiClientId = useSettingsStore((s) => s.cortiClientId);
-  const cortiClientSecret = useSettingsStore((s) => s.cortiClientSecret);
-  const cortiEnvironment = useSettingsStore((s) => s.cortiEnvironment);
-  const cortiTenant = useSettingsStore((s) => s.cortiTenant);
   const preferredLanguage = useSettingsStore((s) => s.preferredLanguage);
   const customDictionary = useSettingsStore((s) => s.customDictionary);
   const isCloudCleanup = useSettingsStore(selectIsCloudCleanupMode);
@@ -122,35 +114,13 @@ export default function UploadAudioView({ onNoteCreated, onOpenSettings }: Uploa
   );
   const useCleanupModel = useSettingsStore((s) => s.useCleanupModel);
 
-  const isEktosWhisprCloud = false;
-
-  // Mode detection
-  const isByok = !useLocalWhisper && !isEktosWhisprCloud;
-
   // Mode-aware file size validation
   // Local: no limits at all
   // BYOK: 25 MB hard max regardless of plan
-  // Cloud free: 25 MB max (upgrade to Pro for more)
-  // Cloud pro: 500 MB max
-  let fileTooLarge = false;
-  let requiresUpgrade = false;
-  let requiresAccount = false;
   let byokTooLarge = false;
-  let isLargeFile = false;
 
-  if (file) {
-    if (useLocalWhisper) {
-      // Local transcription: no file size restrictions
-    } else if (cloudTranscriptionProvider === "custom") {
-      // Custom endpoints (e.g. local whisper.cpp): no file size restrictions
-    } else if (isByok) {
-      byokTooLarge = file.sizeBytes > BYOK_MAX_FILE_SIZE;
-    } else {
-      // Cloud (EktosWhispr) — user is always signed in here
-      fileTooLarge = file.sizeBytes > CLOUD_PRO_MAX_FILE_SIZE;
-      requiresUpgrade = !isProUser && file.sizeBytes > CLOUD_FREE_MAX_FILE_SIZE;
-      isLargeFile = file.sizeBytes > CLOUD_FREE_MAX_FILE_SIZE;
-    }
+  if (file && !useLocalWhisper && cloudTranscriptionProvider !== "custom") {
+    byokTooLarge = file.sizeBytes > BYOK_MAX_FILE_SIZE;
   }
 
   useEffect(() => {
@@ -170,16 +140,10 @@ export default function UploadAudioView({ onNoteCreated, onOpenSettings }: Uploa
   useEffect(() => {
     let cancelled = false;
     const checkProviderReady = async () => {
-      if (isEktosWhisprCloud) {
-        setProviderReady(true);
-        return;
-      }
       if (!useLocalWhisper) {
         if (cloudTranscriptionProvider === "custom") {
           // Custom providers only need a base URL; API key is truly optional
           if (!cancelled) setProviderReady(!!cloudTranscriptionBaseUrl?.trim());
-        } else if (cloudTranscriptionProvider === "corti") {
-          if (!cancelled) setProviderReady(!!(cortiClientId && cortiClientSecret));
         } else {
           const key =
             cloudTranscriptionProvider === "openai"
@@ -190,9 +154,7 @@ export default function UploadAudioView({ onNoteCreated, onOpenSettings }: Uploa
                   ? xaiApiKey
                   : cloudTranscriptionProvider === "mistral"
                     ? mistralApiKey
-                    : cloudTranscriptionProvider === "tinfoil"
-                      ? tinfoilApiKey
-                      : customTranscriptionApiKey;
+                    : customTranscriptionApiKey;
           if (!cancelled) setProviderReady(!!key);
         }
         return;
@@ -216,7 +178,6 @@ export default function UploadAudioView({ onNoteCreated, onOpenSettings }: Uploa
       cancelled = true;
     };
   }, [
-    isEktosWhisprCloud,
     useLocalWhisper,
     localTranscriptionProvider,
     cloudTranscriptionProvider,
@@ -225,14 +186,10 @@ export default function UploadAudioView({ onNoteCreated, onOpenSettings }: Uploa
     groqApiKey,
     xaiApiKey,
     mistralApiKey,
-    tinfoilApiKey,
     customTranscriptionApiKey,
-    cortiClientId,
-    cortiClientSecret,
   ]);
 
   const getActiveModelLabel = (): string => {
-    if (isEktosWhisprCloud) return t("notes.upload.ektoswhisprCloud");
     if (useLocalWhisper) {
       if (localTranscriptionProvider === "nvidia")
         return `Parakeet · ${parakeetModel || "default"}`;
@@ -256,8 +213,6 @@ export default function UploadAudioView({ onNoteCreated, onOpenSettings }: Uploa
         return xaiApiKey;
       case "mistral":
         return mistralApiKey;
-      case "tinfoil":
-        return tinfoilApiKey;
       case "custom":
         return customTranscriptionApiKey || "";
       default:
@@ -366,8 +321,6 @@ export default function UploadAudioView({ onNoteCreated, onOpenSettings }: Uploa
           model: cloudTranscriptionModel,
           provider: cloudTranscriptionProvider,
           language: getBaseLanguageCode(preferredLanguage) || "en",
-          environment: cortiEnvironment,
-          tenant: cortiTenant,
         });
       }
 
@@ -449,8 +402,6 @@ export default function UploadAudioView({ onNoteCreated, onOpenSettings }: Uploa
     }
   };
 
-  const handleCreateAccount = useStartOnboarding();
-
   const switchToCloud = () => {
     setUploadTranscriptionMode("providers");
     setUploadCloudTranscriptionMode("byok");
@@ -458,7 +409,6 @@ export default function UploadAudioView({ onNoteCreated, onOpenSettings }: Uploa
   };
 
   const getTranscribingLabel = (): string => {
-    if (isEktosWhisprCloud) return t("notes.upload.transcribingCloud");
     if (useLocalWhisper) return t("notes.upload.transcribingLocal");
     return t("notes.upload.transcribingProvider", { provider: cloudTranscriptionProvider });
   };
@@ -492,15 +442,9 @@ export default function UploadAudioView({ onNoteCreated, onOpenSettings }: Uploa
               getActiveModelLabel={getActiveModelLabel}
               reset={reset}
               handleTranscribe={handleTranscribe}
-              requiresUpgrade={!!requiresUpgrade}
-              fileTooLarge={fileTooLarge}
-              isLargeFile={isLargeFile}
-              isEktosWhisprCloud={isEktosWhisprCloud}
               byokTooLarge={byokTooLarge}
-              requiresAccount={requiresAccount}
               isProUser={!!isProUser}
               onUpgrade={() => usage?.openCheckout()}
-              onCreateAccount={handleCreateAccount}
               onSwitchToCloud={switchToCloud}
             />
           )}
@@ -734,15 +678,9 @@ interface SelectedViewProps {
   getActiveModelLabel: () => string;
   reset: () => void;
   handleTranscribe: () => void;
-  requiresUpgrade: boolean;
-  fileTooLarge: boolean;
-  isLargeFile: boolean;
-  isEktosWhisprCloud: boolean;
   byokTooLarge: boolean;
-  requiresAccount: boolean;
   isProUser: boolean;
   onUpgrade: () => void;
-  onCreateAccount: () => void;
   onSwitchToCloud: () => void;
 }
 
@@ -752,18 +690,12 @@ function SelectedView({
   getActiveModelLabel,
   reset,
   handleTranscribe,
-  requiresUpgrade,
-  fileTooLarge,
-  isLargeFile,
-  isEktosWhisprCloud,
   byokTooLarge,
-  requiresAccount,
   isProUser,
   onUpgrade,
-  onCreateAccount,
   onSwitchToCloud,
 }: SelectedViewProps) {
-  const canTranscribe = !fileTooLarge && !requiresUpgrade && !byokTooLarge;
+  const canTranscribe = !byokTooLarge;
 
   return (
     <div style={{ animation: "float-up 0.3s ease-out" }}>
@@ -786,15 +718,6 @@ function SelectedView({
         </div>
       </div>
 
-      {/* Cloud absolute limit (500 MB) */}
-      {fileTooLarge && (
-        <div className="rounded-lg border border-destructive/12 dark:border-destructive/15 bg-destructive/[0.03] px-3 py-2.5 mb-3">
-          <p className="text-xs text-destructive/60 leading-relaxed">
-            {t("notes.upload.fileTooLarge")}
-          </p>
-        </div>
-      )}
-
       {/* BYOK file too large — shared explanation */}
       {byokTooLarge && (
         <div className="rounded-lg border border-primary/12 dark:border-primary/15 bg-primary/[0.03] px-3 py-2.5 mb-3">
@@ -805,46 +728,16 @@ function SelectedView({
             {t("notes.upload.byokTooLargeDetail")}
           </p>
           <p className="text-xs text-foreground/50 leading-relaxed mt-1.5 font-medium">
-            {requiresAccount
-              ? t("notes.upload.byokTooLargeNeedsAccount")
-              : isProUser
-                ? t("notes.upload.switchToCloudForLargeFiles")
-                : t("notes.upload.byokTooLargeNeedsUpgrade")}
+            {isProUser
+              ? t("notes.upload.switchToCloudForLargeFiles")
+              : t("notes.upload.byokTooLargeNeedsUpgrade")}
           </p>
         </div>
-      )}
-
-      {/* Cloud free user, file > 25 MB → needs paid plan */}
-      {requiresUpgrade && !fileTooLarge && (
-        <div className="rounded-lg border border-primary/12 dark:border-primary/15 bg-primary/[0.03] px-3 py-2.5 mb-3">
-          <p className="text-xs text-foreground/50 leading-relaxed">
-            {t("notes.upload.paidPlanRequired")}
-          </p>
-        </div>
-      )}
-
-      {/* Cloud large file info (Pro user, will be chunked) */}
-      {isLargeFile && !requiresUpgrade && !fileTooLarge && isEktosWhisprCloud && (
-        <p className="text-xs text-foreground/20 text-center mb-3">
-          {t("notes.upload.largeFileNote")}
-        </p>
       )}
 
       <div className="flex items-center gap-2 justify-center flex-wrap">
-        {/* BYOK too large — not signed in: Create Account */}
-        {byokTooLarge && requiresAccount && (
-          <Button
-            variant="default"
-            size="sm"
-            onClick={onCreateAccount}
-            className="h-8 text-xs px-5"
-          >
-            {t("notes.upload.createAccount")}
-          </Button>
-        )}
-
-        {/* BYOK too large — signed in, Pro: Switch to Cloud */}
-        {byokTooLarge && !requiresAccount && isProUser && (
+        {/* BYOK too large — Pro: Switch to Cloud */}
+        {byokTooLarge && isProUser && (
           <Button
             variant="default"
             size="sm"
@@ -855,15 +748,8 @@ function SelectedView({
           </Button>
         )}
 
-        {/* BYOK too large — signed in, Free: Upgrade */}
-        {byokTooLarge && !requiresAccount && !isProUser && (
-          <Button variant="default" size="sm" onClick={onUpgrade} className="h-8 text-xs px-5">
-            {t("notes.upload.upgrade")}
-          </Button>
-        )}
-
-        {/* Cloud requires upgrade */}
-        {!byokTooLarge && requiresUpgrade && (
+        {/* BYOK too large — Free: Upgrade */}
+        {byokTooLarge && !isProUser && (
           <Button variant="default" size="sm" onClick={onUpgrade} className="h-8 text-xs px-5">
             {t("notes.upload.upgrade")}
           </Button>

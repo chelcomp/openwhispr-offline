@@ -12,9 +12,6 @@ const { i18nMain, changeLanguage } = require("./i18nMain");
 const AudioStorageManager = require("./audioStorage");
 const OpenAIRealtimeStreaming = require("./openaiRealtimeStreaming");
 const micMuteManager = require("./micMuteManager");
-
-// Tinfoil's only realtime STT model — fallback when the renderer omits one.
-const TINFOIL_REALTIME_MODEL = "voxtral-mini-4b-realtime";
 const liveSpeakerIdentifier = require("./liveSpeakerIdentifier");
 const MeetingEchoLeakDetector = require("./meetingEchoLeakDetector");
 const { partitionPendingMicFinals, isWithinRetractWindow } = require("./meetingMicHoldback");
@@ -599,12 +596,7 @@ class IPCHandlers {
       return [];
     }
     if (!Array.isArray(participants) || participants.length === 0) return [];
-    const googleEmails = new Set(
-      this.databaseManager.getGoogleAccounts().map((a) => a.email.toLowerCase())
-    );
-    return participants.filter(
-      (p) => p && p.self !== true && !googleEmails.has((p.email || "").toLowerCase())
-    );
+    return participants.filter((p) => p && p.self !== true);
   }
 
   _getNoteNonSelfParticipants(noteId) {

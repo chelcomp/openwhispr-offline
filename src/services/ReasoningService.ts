@@ -19,7 +19,6 @@ import { createEnterpriseChatModel } from "./ai/enterpriseChatModel";
 import { PROVIDER_REGISTRY, type ProviderContext } from "./ai/inferenceProviders";
 import { getConfiguredOpenAIBase } from "./ai/openaiBase";
 import { applyThinkingSuppression } from "./ai/thinkingSuppression";
-import { clearTinfoilClientCache } from "./ai/tinfoilClient";
 
 export type AgentStreamChunk =
   | { type: "content"; text: string }
@@ -68,7 +67,7 @@ class ReasoningService extends BaseReasoningService {
 
   private async getApiKey(
     provider:
-      "openai" | "anthropic" | "gemini" | "groq" | "tinfoil" | "custom" | "openrouter" | "corti"
+      "openai" | "anthropic" | "gemini" | "groq" | "custom" | "openrouter"
   ): Promise<string> {
     if (provider === "custom") {
       let customKey = "";
@@ -380,10 +379,8 @@ class ReasoningService extends BaseReasoningService {
       "groq",
       "gemini",
       "anthropic",
-      "tinfoil",
       "custom",
       "openrouter",
-      "corti",
     ];
     const isLocalProvider = !cloudProviders.includes(provider);
 
@@ -406,7 +403,7 @@ class ReasoningService extends BaseReasoningService {
       endpoint = `http://127.0.0.1:${serverResult.port}/v1/chat/completions`;
     } else {
       const providerKey = provider as
-        "openai" | "groq" | "gemini" | "anthropic" | "tinfoil" | "custom" | "openrouter" | "corti";
+        "openai" | "groq" | "gemini" | "anthropic" | "custom" | "openrouter";
       const overrideKey = providerKey === "custom" ? config.customApiKey?.trim() : "";
       apiKey = overrideKey || (await this.getApiKey(providerKey));
 
@@ -414,17 +411,12 @@ class ReasoningService extends BaseReasoningService {
         case "groq":
           endpoint = buildApiUrl(API_ENDPOINTS.GROQ_BASE, "/chat/completions");
           break;
-        case "corti":
-          endpoint = buildApiUrl(API_ENDPOINTS.CORTI_MODELS_BASE, "/chat/completions");
-          break;
         case "gemini":
           endpoint = buildApiUrl(API_ENDPOINTS.GEMINI, "/openai/chat/completions");
           break;
         case "openrouter":
           endpoint = buildApiUrl(API_ENDPOINTS.OPENROUTER_BASE, "/chat/completions");
           break;
-        case "tinfoil":
-          throw new Error("Tinfoil streaming must use the verified SDK transport");
         case "openai":
         case "custom":
           endpoint = buildApiUrl(
@@ -599,10 +591,8 @@ class ReasoningService extends BaseReasoningService {
       "groq",
       "gemini",
       "anthropic",
-      "tinfoil",
       "custom",
       "openrouter",
-      "corti",
     ];
     const isLocalProvider = !isEnterprise && !cloudProviders.includes(provider);
 
@@ -635,7 +625,7 @@ class ReasoningService extends BaseReasoningService {
       baseURL = `http://127.0.0.1:${serverResult.port}/v1`;
     } else {
       const providerKey = provider as
-        "openai" | "groq" | "gemini" | "anthropic" | "tinfoil" | "custom" | "openrouter" | "corti";
+        "openai" | "groq" | "gemini" | "anthropic" | "custom" | "openrouter";
       const overrideKey = providerKey === "custom" ? config.customApiKey?.trim() : "";
       apiKey = overrideKey || (await this.getApiKey(providerKey));
       baseURL =
@@ -649,7 +639,6 @@ class ReasoningService extends BaseReasoningService {
     // OpenRouter ids are never in the local registry, so the supportsThinking
     // exemption below can't apply — honor the toggle directly.
     const openrouterDisableThinking = provider === "openrouter" && config.disableThinking === true;
-    // Resolving a Tinfoil model refreshes the registry, so read model config after it.
     const aiModel = isEnterprise
       ? createEnterpriseChatModel(provider as EnterpriseProvider, model)
       : await getAIModel(aiProvider, model, apiKey, baseURL, {
@@ -928,22 +917,16 @@ class ReasoningService extends BaseReasoningService {
       | "gemini"
       | "groq"
       | "mistral"
-      | "tinfoil"
       | "custom"
       | "openrouter"
-      | "corti"
   ): void {
     if (provider) {
       if (provider !== "custom") {
         this.apiKeyCache.delete(provider);
       }
-      if (provider === "tinfoil") {
-        clearTinfoilClientCache();
-      }
       logger.logReasoning("API_KEY_CACHE_CLEARED", { provider });
     } else {
       this.apiKeyCache.clear();
-      clearTinfoilClientCache();
       logger.logReasoning("API_KEY_CACHE_CLEARED", { provider: "all" });
     }
   }

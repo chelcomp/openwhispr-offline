@@ -3,8 +3,6 @@ import { createGroq } from "@ai-sdk/groq";
 import { createAnthropic } from "@ai-sdk/anthropic";
 import { createGoogleGenerativeAI } from "@ai-sdk/google";
 import type { LanguageModel } from "ai";
-import { getTinfoilLanguageModel } from "./tinfoilClient";
-import { API_ENDPOINTS } from "../../config/constants";
 
 // Renderer-side AI SDK factory. Cloud + local only — enterprise providers
 // (bedrock/azure/vertex) run in the main process via the
@@ -41,11 +39,6 @@ export async function getAIModel(
       return createAnthropic({ apiKey })(model);
     case "gemini":
       return createGoogleGenerativeAI({ apiKey })(model);
-    case "tinfoil":
-      return getTinfoilLanguageModel(apiKey, model);
-    case "corti":
-      // Corti's gateway is Chat Completions-compatible, not the OpenAI Responses API.
-      return createOpenAI({ apiKey, baseURL: API_ENDPOINTS.CORTI_MODELS_BASE }).chat(model);
     case "custom":
       return createOpenAI({ apiKey, baseURL })(model);
     case "openrouter":

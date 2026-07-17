@@ -11,8 +11,6 @@ const SECRET_KEYS = [
   ...BYOK_API_KEYS.map((k) => k.env),
   "ASSEMBLYAI_API_KEY",
   "DEEPGRAM_API_KEY",
-  "CORTI_CLIENT_ID",
-  "CORTI_CLIENT_SECRET",
   "CUSTOM_TRANSCRIPTION_API_KEY",
   "CUSTOM_CLEANUP_API_KEY",
   "BEDROCK_ACCESS_KEY_ID",
@@ -278,22 +276,6 @@ class EnvironmentManager {
 
   saveDeepgramKey(key) {
     return this._saveKey("DEEPGRAM_API_KEY", key);
-  }
-
-  getCortiClientId() {
-    return this._getKey("CORTI_CLIENT_ID");
-  }
-
-  saveCortiClientId(key) {
-    return this._saveKey("CORTI_CLIENT_ID", key);
-  }
-
-  getCortiClientSecret() {
-    return this._getKey("CORTI_CLIENT_SECRET");
-  }
-
-  saveCortiClientSecret(key) {
-    return this._saveKey("CORTI_CLIENT_SECRET", key);
   }
 
   getCustomTranscriptionKey() {

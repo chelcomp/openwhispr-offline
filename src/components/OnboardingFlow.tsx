@@ -104,7 +104,6 @@ export default function OnboardingFlow({ onComplete }: OnboardingFlowProps) {
     groqApiKey,
     xaiApiKey,
     mistralApiKey,
-    tinfoilApiKey,
     dictationKey,
     meetingKey,
     setMeetingKey,
@@ -124,8 +123,6 @@ export default function OnboardingFlow({ onComplete }: OnboardingFlowProps) {
     setOnboardingUseCaseNote,
   } = useSettings();
 
-  const cortiClientId = useSettingsStore((s) => s.cortiClientId);
-  const cortiClientSecret = useSettingsStore((s) => s.cortiClientSecret);
   const cleanupMode = useSettingsStore((s) => s.cleanupMode);
   const showLocalModelStep = cleanupMode === "local";
 
@@ -812,10 +809,6 @@ export default function OnboardingFlow({ onComplete }: OnboardingFlowProps) {
             return xaiApiKey.trim().length > 0;
           } else if (cloudTranscriptionProvider === "mistral") {
             return mistralApiKey.trim().length > 0;
-          } else if (cloudTranscriptionProvider === "corti") {
-            return cortiClientId.trim().length > 0 && cortiClientSecret.trim().length > 0;
-          } else if (cloudTranscriptionProvider === "tinfoil") {
-            return tinfoilApiKey.trim().length > 0;
           } else if (cloudTranscriptionProvider === "custom") {
             // Custom can work without API key for local endpoints
             return true;

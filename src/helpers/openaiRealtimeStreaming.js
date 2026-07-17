@@ -96,7 +96,7 @@ class OpenAIRealtimeStreaming {
     const url = "wss://api.openai.com/v1/realtime?intent=transcription";
     debugLogger.debug("OpenAI Realtime connecting", { model: this.model });
 
-    // Attested providers (Tinfoil) supply their socket via an async factory.
+    // An attested provider can supply its own socket via an async factory.
     let ws;
     try {
       ws = createSocket
