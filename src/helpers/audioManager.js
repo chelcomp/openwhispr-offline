@@ -1056,7 +1056,12 @@ registerProcessor("pcm-collector-processor", PCMCollectorProcessor);
           }
         } else {
           activeModel = whisperModel;
-          result = await this.processWithLocalWhisper(audioBlob, whisperModel, metadata);
+          const streamingText = await this._resolveStreamingWhisperText(settings, metadata);
+          if (streamingText) {
+            result = await this._buildStreamingWhisperResult(streamingText);
+          } else {
+            result = await this.processWithLocalWhisper(audioBlob, whisperModel, metadata);
+          }
         }
       } else {
         activeModel = this.getTranscriptionModel();
@@ -1262,6 +1267,48 @@ registerProcessor("pcm-collector-processor", PCMCollectorProcessor);
       text: text || rawText,
       rawText,
       source: "local-parakeet-live",
+      timings,
+    };
+  }
+
+  // When the whisper VAD streaming preview is active, the utterances committed
+  // during capture already form the full transcript. Reuse it as the paste result
+  // instead of re-transcribing the whole clip offline. Returns "" when unavailable
+  // (preview off, no stop result, or the session did not finalize cleanly — the
+  // main process returns "" for streamingText in that case), so the caller falls
+  // back to the authoritative offline pass.
+  async _resolveStreamingWhisperText(settings, metadata) {
+    if (!settings.showTranscriptionPreview || !metadata?.stopPreviewResult) {
+      return "";
+    }
+    try {
+      const res = await metadata.stopPreviewResult;
+      const text = res?.streamingText;
+      return typeof text === "string" ? text.trim() : "";
+    } catch {
+      return "";
+    }
+  }
+
+  // Wraps the finalized streaming transcript in the same result shape the offline
+  // whisper path produces, running cleanup/agent routing (a no-op when disabled)
+  // so both paths behave identically downstream.
+  async _buildStreamingWhisperResult(rawText) {
+    if (this.isDictionaryEcho(rawText)) {
+      throw new Error("No audio detected");
+    }
+    const timings = { transcriptionProcessingDurationMs: 0 };
+    const reasoningStart = performance.now();
+    const text = await this.processTranscription(rawText, "local-whisper-live");
+    timings.reasoningProcessingDurationMs = Math.round(performance.now() - reasoningStart);
+    if (text === null || text === undefined) {
+      throw new Error("No text transcribed");
+    }
+    return {
+      success: true,
+      text: text || rawText,
+      rawText,
+      source: "local-whisper-live",
       timings,
     };
   }

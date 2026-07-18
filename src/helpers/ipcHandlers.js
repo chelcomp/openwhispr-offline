@@ -41,6 +41,7 @@ const {
   sanitizeWhisperVadConfig,
   resolveContextSileroEnabled,
 } = require("./whisperVadConfig");
+const { createWhisperVadStreamingSession } = require("./whisperStreamingSession");
 
 /**
  * Plain-JS snippet expansion for use in the main process.
@@ -6266,6 +6267,10 @@ class IPCHandlers {
     // the same server right when the user stops talking. Keep it under 15s so preview
     // cycles stay cheap and don't delay the real transcription.
     const MAX_PARAKEET_PREVIEW_ACCUM_BYTES = 14 * 16000 * 2; // 14s × 16 kHz × 2 bytes (Int16)
+    // Whisper streaming fast-path: if more than this fraction of committed audio
+    // stayed low confidence, discard the streamed transcript and re-transcribe the
+    // whole clip offline with full context instead.
+    const MAX_STREAM_LOW_QUALITY_RATIO = 0.5;
 
     let dictationPreviewMode = false;
     let dictationPreviewBuffer = [];     // Nvidia startup temp buffer only
@@ -6281,6 +6286,12 @@ class IPCHandlers {
     let dictationPreviewInitialPrompt = null;
     let dictationPreviewSessionActive = false;
     let dictationPreviewChunkCount = 0;
+    // Whisper VAD endpoint-commit streaming (option 2). Replaces the fixed-timer
+    // "re-transcribe the whole clip" preview: commits stable text per utterance
+    // and re-transcribes only the open utterance for volatile partials.
+    let dictationPreviewWhisperSession = null;
+    let dictationPreviewCommitted = "";
+    let dictationPreviewPartial = "";
 
     const resetDictationPreviewState = ({ preserveSession = false } = {}) => {
       dictationPreviewGen++;
@@ -6292,6 +6303,12 @@ class IPCHandlers {
         dictationPreviewStream.abort();
         dictationPreviewStream = null;
       }
+      if (dictationPreviewWhisperSession) {
+        dictationPreviewWhisperSession.abort();
+        dictationPreviewWhisperSession = null;
+      }
+      dictationPreviewCommitted = "";
+      dictationPreviewPartial = "";
       dictationPreviewMode = false;
       if (!preserveSession) dictationPreviewSessionActive = false;
       dictationPreviewBuffer = [];
@@ -6367,6 +6384,98 @@ class IPCHandlers {
       }
     };;
 
+    // Aggregate whisper's per-segment confidence proxies into one quality view.
+    // Fields degrade gracefully — whatever this whisper-server build doesn't
+    // populate (avg_logprob / compression_ratio) is left null and simply ignored
+    // by the low-quality predicate below.
+    const summarizeWhisperQuality = (segments) => {
+      let durSum = 0;
+      let logprobWeighted = 0;
+      let maxComp = 0;
+      let maxNoSpeech = 0;
+      let haveLogprob = false;
+      let haveComp = false;
+      for (const s of segments) {
+        const dur = Math.max(0, (Number(s.end) || 0) - (Number(s.start) || 0)) || 1;
+        if (Number.isFinite(s.avg_logprob)) {
+          logprobWeighted += s.avg_logprob * dur;
+          durSum += dur;
+          haveLogprob = true;
+        }
+        if (Number.isFinite(s.compression_ratio)) {
+          maxComp = Math.max(maxComp, s.compression_ratio);
+          haveComp = true;
+        }
+        if (Number.isFinite(s.no_speech_prob)) maxNoSpeech = Math.max(maxNoSpeech, s.no_speech_prob);
+      }
+      return {
+        avgLogprob: haveLogprob && durSum > 0 ? logprobWeighted / durSum : null,
+        compressionRatio: haveComp ? maxComp : null,
+        noSpeechProb: maxNoSpeech,
+      };
+    };
+
+    // Classic Whisper decode-failure thresholds (logprob_threshold=-1.0,
+    // compression_ratio_threshold=2.4). An empty result gets one merge chance.
+    const WHISPER_LOGPROB_FLOOR = -1.0;
+    const WHISPER_COMPRESSION_CEIL = 2.4;
+    const isWhisperSegmentLowQuality = (quality, ctx) => {
+      if (!ctx?.text) return true;
+      if (!quality) return false;
+      if (Number.isFinite(quality.avgLogprob) && quality.avgLogprob < WHISPER_LOGPROB_FLOOR) {
+        return true;
+      }
+      if (
+        Number.isFinite(quality.compressionRatio) &&
+        quality.compressionRatio > WHISPER_COMPRESSION_CEIL
+      ) {
+        return true;
+      }
+      return false;
+    };
+
+    // Transcribe one already-endpointed utterance (VAD closed it). No
+    // whisper-server VAD here — the segment is already isolated speech, so a
+    // second VAD pass would only add cost. Returns { text, quality }; a
+    // hallucinated/empty result collapses to text "" so the session can defer it.
+    const transcribeWhisperPreviewSegment = async (pcmBuffer) => {
+      const wav = pcm16ToWav(pcmBuffer);
+      const result = await this.whisperManager.transcribeLocalWhisper(wav, {
+        model: dictationPreviewModel,
+        language: dictationPreviewLanguage || undefined,
+        initialPrompt: dictationPreviewInitialPrompt || undefined,
+        verboseJson: true,
+      });
+      if (!result?.success) return { text: "", quality: null };
+      const NO_SPEECH_THRESHOLD = 0.6;
+      const allSegments = Array.isArray(result.segments) ? result.segments : [];
+      let text = "";
+      let quality = null;
+      if (allSegments.length > 0) {
+        const kept = allSegments.filter((s) => (s.no_speech_prob ?? 0) < NO_SPEECH_THRESHOLD);
+        text = kept
+          .map((s) => s.text)
+          .join(" ")
+          .trim();
+        quality = summarizeWhisperQuality(kept.length ? kept : allSegments);
+      } else {
+        text = result.text?.trim() || "";
+      }
+      if (!text || this.whisperManager.isHallucinatedText(text, dictationPreviewLanguage)) {
+        return { text: "", quality };
+      }
+      return { text, quality };
+    };
+
+    const renderWhisperPreview = (gen) => {
+      if (gen !== dictationPreviewGen) return;
+      const merged = [dictationPreviewCommitted, dictationPreviewPartial]
+        .filter(Boolean)
+        .join(" ")
+        .trim();
+      this.windowManager.showTranscriptionPreview(merged);
+    };
+
     ipcMain.handle("start-dictation-preview", async (_event, { provider, model, language, initialPrompt, streamingBeta }) => {
       resetDictationPreviewState();
       dictationPreviewMode = true;
@@ -6405,6 +6514,47 @@ class IPCHandlers {
         }
       }
       if (gen !== dictationPreviewGen) return { success: true };
+
+      if (provider !== "nvidia") {
+        // Whisper: VAD endpoint-commit streaming. Each closed utterance is
+        // transcribed once and appended; the open utterance is re-transcribed on
+        // a timer as a volatile partial so continuous speech still shows text
+        // before the first pause. Cost is bounded to one utterance, never the
+        // whole accumulated clip.
+        dictationPreviewWhisperSession = createWhisperVadStreamingSession({
+          vadConfig: this._resolveWhisperVadOptions("dictation")?.vadConfig,
+          transcribe: transcribeWhisperPreviewSegment,
+          // A silence boundary is only a hint: if an utterance transcribes with
+          // low confidence, hold its audio and re-transcribe it merged with the
+          // next one (bounded by maxMerges) for more acoustic context.
+          isLowQuality: isWhisperSegmentLowQuality,
+          onCommit: (text) => {
+            if (gen !== dictationPreviewGen) return;
+            dictationPreviewCommitted = [dictationPreviewCommitted, text]
+              .filter(Boolean)
+              .join(" ")
+              .trim();
+            dictationPreviewPartial = "";
+            renderWhisperPreview(gen);
+          },
+          onPartial: (text) => {
+            if (gen !== dictationPreviewGen) return;
+            dictationPreviewPartial = text;
+            renderWhisperPreview(gen);
+          },
+          onError: (error) => {
+            debugLogger.debug("Whisper streaming preview segment failed", {
+              error: error.message,
+            });
+          },
+        });
+        dictationPreviewTimer = setInterval(() => {
+          dictationPreviewWhisperSession?.requestPartial();
+        }, 1500);
+        return { success: true };
+      }
+
+      // Nvidia (offline, non-streaming): fixed-timer full re-transcription.
       dictationPreviewTimer = setInterval(() => transcribeDictationPreviewChunk(), 3000);
       return { success: true };
     });
@@ -6415,6 +6565,10 @@ class IPCHandlers {
       const pcm = Buffer.isBuffer(audioBuffer) ? audioBuffer : Buffer.from(audioBuffer);
       if (dictationPreviewStream) {
         dictationPreviewStream.sendPcm16(pcm);
+        return;
+      }
+      if (dictationPreviewWhisperSession) {
+        dictationPreviewWhisperSession.pushPcm16(pcm);
         return;
       }
       dictationPreviewBuffer.push(pcm);
@@ -6504,10 +6658,40 @@ class IPCHandlers {
         // dirty close/timeout (finalized=false) the renderer falls back to the
         // authoritative offline transcription instead.
         streamingText = finalized ? filtered : "";
-      } else if (dictationPreviewProvider !== "nvidia") {
-        // One last full retranscription for the most accurate preview right
-        // before the real result replaces it.
-        await transcribeDictationPreviewChunk();
+      } else if (dictationPreviewWhisperSession) {
+        // Whisper VAD session: let the renderer worklet's final flushed chunk
+        // land, then close the open utterance and drain the last inference so the
+        // committed transcript is complete.
+        await new Promise((resolve) => setTimeout(resolve, 120));
+        const session = dictationPreviewWhisperSession;
+        dictationPreviewWhisperSession = null;
+        const { text, finalized, quality } = await session.finish().catch((error) => {
+          debugLogger.debug("Whisper streaming preview finalize failed", {
+            error: error.message,
+          });
+          return { text: "", finalized: false, quality: { lowQualityRatio: 1 } };
+        });
+        // dictationPreviewCommitted is the shown text (assembled via onCommit);
+        // fall back to the session's own join if they somehow diverge.
+        const finalText = (dictationPreviewCommitted || text || "").trim();
+        if (finalText && dictationPreviewSessionActive) {
+          this.windowManager.showTranscriptionPreview(finalText);
+        }
+        // Hand the streamed transcript back for direct paste ONLY when the session
+        // finalized cleanly (every utterance transcribed, no error/abort) AND the
+        // stream isn't globally low quality. If too much committed audio stayed low
+        // confidence, "" — the renderer re-transcribes the whole clip offline with
+        // full context (the authoritative fallback).
+        const lowQualityRatio = quality?.lowQualityRatio ?? 0;
+        const qualityTooLow = lowQualityRatio > MAX_STREAM_LOW_QUALITY_RATIO;
+        streamingText = finalized && !qualityTooLow ? finalText : "";
+        debugLogger.debug("Whisper streaming finalize", {
+          finalized,
+          textLength: finalText.length,
+          lowQualityRatio: Number(lowQualityRatio.toFixed(2)),
+          qualityTooLow,
+          fastPath: finalized && !qualityTooLow && finalText.length > 0,
+        });
       }
       // Parakeet (offline, non-streaming): skip that extra pass — it shares a single
       // sherpa-onnx server with the real end-of-dictation transcription, so re-running
