@@ -213,7 +213,6 @@ let audioTapManager = null;
 let linuxPortalAudioManager = null;
 let windowsLoopbackAudioManager = null;
 let meetingAecManager = null;
-let qdrantManager = null;
 let transformManager = null;
 let ipcHandlers = null;
 let cliBridge = null;
@@ -397,6 +396,12 @@ async function startApp() {
   initializeCoreManagers();
   await environmentManager.init();
   registerSidecars();
+
+  // One-time, best-effort cleanup of local data left behind by the removed
+  // Qdrant sidecar / MiniLM embedding subsystem (docs/specs/remove-qdrant-dependency.md).
+  require("./src/helpers/qdrantDataCleanup")
+    .cleanupOrphanedQdrantData(debugLogger)
+    .catch(() => {});
 
   windowManager.setActivationModeCache(environmentManager.getActivationMode());
   windowManager.setFloatingIconAutoHide(environmentManager.getFloatingIconAutoHide());
@@ -599,14 +604,6 @@ async function startApp() {
       });
     });
   }
-
-  // Qdrant starts lazily on first semantic search (ensureQdrantReady in ipcHandlers.js).
-  const QdrantManager = require("./src/helpers/qdrantManager");
-  qdrantManager = new QdrantManager();
-  sidecarRegistry.register("qdrant", () => qdrantManager.stop());
-
-  // Make the instance accessible to ipcHandlers for lazy init.
-  global.__qdrantManager = qdrantManager;
 
   if (process.platform === "win32") {
     const nircmdStatus = clipboardManager.getNircmdStatus();
