@@ -36,9 +36,9 @@ local GGUF reasoning model). Not required otherwise.
 
 | Host                                                    | Protocol | Port | Purpose                                                                     |
 | ------------------------------------------------------- | -------- | ---- | --------------------------------------------------------------------------- |
-| `huggingface.co`                                        | HTTPS    | 443  | Whisper GGML, Parakeet, GGUF, and embedding model downloads.                |
+| `huggingface.co`                                        | HTTPS    | 443  | Whisper GGML, Parakeet, and GGUF model downloads.                           |
 | `cdn-lfs.huggingface.co`, `cdn-lfs-us-1.huggingface.co` | HTTPS    | 443  | HuggingFace large-file CDN (LFS-backed model files).                        |
-| `github.com`, `objects.githubusercontent.com`           | HTTPS    | 443  | sherpa-onnx, llama.cpp, whisper.cpp, and Qdrant binaries (GitHub releases). |
+| `github.com`, `objects.githubusercontent.com`           | HTTPS    | 443  | sherpa-onnx, llama.cpp, and whisper.cpp binaries (GitHub releases).         |
 
 ## BYOK provider hosts (only if configured)
 

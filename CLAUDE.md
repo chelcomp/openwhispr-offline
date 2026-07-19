@@ -168,9 +168,6 @@ EktosWhispr starts with Windows and runs continuously in the background, so idle
 - **whisper.js**: Local whisper.cpp integration and model management
 - **parakeet.js**: NVIDIA Parakeet model management via sherpa-onnx
 - **parakeetServer.js**: sherpa-onnx CLI wrapper for transcription
-- **qdrantManager.js**: Qdrant vector DB sidecar process lifecycle (spawn, health check, shutdown)
-- **localEmbeddings.js**: Local text embedding via ONNX Runtime + all-MiniLM-L6-v2 (384-dim vectors)
-- **vectorIndex.js**: Qdrant collection management — upsert, delete, search, batch reindex
 - **windowConfig.js**: Centralized window configuration
 - **windowManager.js**: Window creation and lifecycle management
 - **cliBridge.js**: Loopback HTTP server on ports 8200–8219, bearer-token auth (token at `~/.ektoswhispr/cli-bridge.json`), 127.0.0.1-only. Used by the unified CLI to talk to a running desktop app.
@@ -234,34 +231,11 @@ EktosWhispr starts with Windows and runs continuously in the background, so idle
 
 - **Download URLs**: Models from sherpa-onnx ASR models release on GitHub
 
-### Local Semantic Search (Qdrant + MiniLM)
-
-Offline semantic search that finds notes by meaning, not just keywords. Used by the AI agent's `search_notes` tool. The `QdrantManager` instance is created at boot (and registered for shutdown), but the Qdrant **process** is only actually spawned lazily, on the first semantic-search call (`_ensureQdrantReady()`) — not on app launch. The embedding model is **not** downloaded at runtime; it's fetched by an npm script before Electron even starts (see Dev setup below).
-
-**Architecture**:
-
-- **Qdrant sidecar**: Rust binary spawned as child process (`qdrantManager.js`), port 6333–6350, lazily on first use
-- **Embedding model**: `all-MiniLM-L6-v2` via ONNX Runtime (`localEmbeddings.js`), 384-dim vectors
-- **Vector index**: Qdrant collection management (`vectorIndex.js`), cosine distance
-- **Hybrid search**: FTS5 + Qdrant in parallel → Reciprocal Rank Fusion (K=60) with 0.3 cosine score threshold
-
-**Pipeline**:
-
-1. App launches → `QdrantManager` instance created (not yet running). First `db-semantic-search-notes` call → `_ensureQdrantReady()` spawns the Qdrant binary and ensures the collection exists.
-2. Note create/update/delete → SQLite write → background vector upsert/delete via `_asyncVectorUpsert()`/`_asyncVectorDelete()`
-3. Agent searches → `db-semantic-search-notes` IPC → parallel FTS5 + vector search → RRF merge → ranked results
-
-**Search fallback chain** (in `searchNotesTool.ts`): local semantic (RRF) → FTS5 keyword. There is no "cloud search" step — the `useCloudSearch` parameter is accepted but unused (this offline fork has no cloud backend).
-
-**Storage**:
-
-- Qdrant data: `~/.cache/ektoswhispr/qdrant-data/`
-- Qdrant binary: `resources/bin/qdrant-{platform}-{arch}` (bundled — downloaded during `prebuild` / `predev`)
-- Embedding model: `~/.cache/ektoswhispr/embedding-models/all-MiniLM-L6-v2/` (downloaded by an npm script before runtime — see below)
-
-**Dependencies**: `@qdrant/js-client-rest`, `onnxruntime-node`
-
-**Dev setup**: Both the Qdrant binary and the embedding model download via `predev`/`prestart`/`prebuild` → `scripts/download-minilm.js`, which runs **before** Electron starts (dev) or is bundled into the installer (packaged build) — `localEmbeddings.downloadModel()` exists in source but is never called at runtime. To manually download: `npm run download:qdrant` and `npm run download:embedding-model`.
+Note: `search_notes` (the AI agent's note-search tool) is FTS5 keyword search only; there is no
+local or cloud semantic search in this fork. A local Qdrant vector-DB sidecar + MiniLM embedding
+pipeline previously backed a hybrid semantic search here but was removed — see
+`docs/specs/remove-qdrant-dependency.md` for the removal rationale and
+`docs/RECREATION_SPEC.md` §0/§4 for historical details.
 
 ### Build Scripts (scripts/)
 
@@ -271,8 +245,6 @@ Offline semantic search that finds notes by meaning, not just keywords. Used by 
 - **download-windows-key-listener.js**: Downloads prebuilt Windows key listener binary
 - **download-windows-mic-listener.js**: Downloads prebuilt Windows mic listener binary
 - **download-sherpa-onnx.js**: Downloads sherpa-onnx binaries for Parakeet support
-- **download-qdrant.js**: Downloads Qdrant vector DB binary for local semantic search
-- **download-minilm.js**: Downloads all-MiniLM-L6-v2 ONNX model + tokenizer for local embeddings
 - **build-globe-listener.js**: Compiles macOS Globe key listener from Swift source
 - **build-macos-mic-listener.js**: Compiles macOS mic listener from Swift source
 - **build-windows-key-listener.js**: Compiles Windows key listener (for local development)
@@ -761,9 +733,7 @@ const { t } = useTranslation();
 - [ ] Verify meeting detection works with event-driven mode (check debug logs for "event-driven")
 - [ ] Test meeting notification suppression during recording
 - [ ] Test post-recording cooldown (notifications shouldn't flash immediately)
-- [ ] Create a note about "quarterly revenue projections", search via agent for "financial forecast" — should match semantically
-- [ ] Verify Qdrant starts lazily on first semantic search, not on app launch (check debug logs for "qdrant started successfully" appearing only after the first `search_notes` call)
-- [ ] Kill Qdrant process manually — verify FTS5 keyword search still works as fallback
+- [ ] Create a note about "quarterly revenue projections", search via agent for "revenue" — should match by keyword (FTS5 only; a semantically-related but keyword-different query like "financial forecast" is expected to NOT match)
 
 ### Common Issues and Solutions
 
@@ -808,13 +778,10 @@ const { t } = useTranslation();
    - Linux: Verify `pactl` is installed (`pulseaudio-utils` or `pipewire-pulse` package)
    - If event-driven binary is missing, detection falls back to polling automatically
 
-7. **Local Semantic Search Not Working**:
-   - Qdrant binary should be in `resources/bin/qdrant-{platform}-{arch}` (auto-downloaded during `predev`/`prebuild`)
-   - Embedding model should be in `~/.cache/ektoswhispr/embedding-models/all-MiniLM-L6-v2/model.onnx` (downloaded by `predev`/`prestart`/`prebuild` before Electron starts — not at runtime)
-   - Run `npm run download:qdrant` and `npm run download:embedding-model` manually if missing
-   - Check debug logs for "qdrant" entries (port, health check, errors)
-   - If Qdrant fails to start, search still works via FTS5 keyword fallback
-   - Semantic search is only available through the AI agent's `search_notes` tool, not the manual search UI
+7. **`search_notes` not finding a note by meaning**: this is expected — local/cloud semantic
+   search was removed (see `docs/specs/remove-qdrant-dependency.md`); the AI agent's `search_notes`
+   tool and the agent conversation search are FTS5 keyword matchers only, with no understanding of
+   synonyms or paraphrasing.
 
 ### Platform-Specific Notes
 

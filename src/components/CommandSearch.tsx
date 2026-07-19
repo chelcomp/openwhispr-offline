@@ -138,7 +138,7 @@ export default function CommandSearch({
       }
       searchTimerRef.current = setTimeout(async () => {
         try {
-          const r = await window.electronAPI?.semanticSearchConversations?.(query, 20);
+          const r = await window.electronAPI?.searchAgentConversations?.(query, 20);
           if (searchVersionRef.current === version && r) {
             setConversations(
               r.map((c) => ({

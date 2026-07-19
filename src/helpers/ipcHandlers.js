@@ -441,23 +441,6 @@ class IPCHandlers {
     };
   }
 
-  async _ensureQdrantReady() {
-    const vectorIndex = require("./vectorIndex");
-    if (vectorIndex.isReady()) return true;
-    const qm = global.__qdrantManager;
-    if (!qm || !qm.isAvailable()) return false;
-    try {
-      if (!qm.isReady()) await qm.start();
-      if (!qm.isReady()) return false;
-      vectorIndex.init(qm.getPort());
-      await vectorIndex.ensureCollection();
-      return true;
-    } catch (err) {
-      debugLogger.debug("Qdrant lazy-start failed (non-fatal)", { error: err.message });
-      return false;
-    }
-  }
-
   async _forceExitHotkeyCaptureModeIfActive() {
     if (!this._hotkeyCaptureMode) return;
     debugLogger.info("[IPC] Control panel destroyed in capture mode — force-exiting hotkey capture");
@@ -522,24 +505,6 @@ class IPCHandlers {
       if (slot === "dictation" || slot === "cancel" || hotkeys.length === 0 || !info?.callback) continue;
       await hotkeyManager.registerSlot(slot, hotkeys, info.callback).catch(() => {});
     }
-  }
-
-  _asyncVectorUpsert(note) {
-    setImmediate(() => {
-      const vectorIndex = require("./vectorIndex");
-      if (!vectorIndex.isReady()) return;
-      const { LocalEmbeddings } = require("./localEmbeddings");
-      const text = LocalEmbeddings.noteEmbedText(note.title, note.content, note.enhanced_content);
-      vectorIndex.upsertNote(note.id, text).catch(() => {});
-    });
-  }
-
-  _asyncVectorDelete(noteId) {
-    setImmediate(() => {
-      const vectorIndex = require("./vectorIndex");
-      if (!vectorIndex.isReady()) return;
-      vectorIndex.deleteNote(noteId).catch(() => {});
-    });
   }
 
   _asyncMirrorWrite(note) {
@@ -1373,7 +1338,6 @@ class IPCHandlers {
           if (saveResult?.success) {
             imported++;
             existingKeys.add(key);
-            if (saveResult.note) this._asyncVectorUpsert(saveResult.note);
           }
         }
 
@@ -1425,7 +1389,6 @@ class IPCHandlers {
         );
         if (result?.success && result?.note) {
           setImmediate(() => this.broadcastToWindows("note-added", result.note));
-          this._asyncVectorUpsert(result.note);
           this._asyncMirrorWrite(result.note);
         }
         return result;
@@ -1444,7 +1407,6 @@ class IPCHandlers {
       const result = this.databaseManager.updateNote(id, updates);
       if (result?.success && result?.note) {
         setImmediate(() => this.broadcastToWindows("note-updated", result.note));
-        this._asyncVectorUpsert(result.note);
         this._asyncMirrorWrite(result.note);
         if (updates.participants) this._tryAutoLabelOneOnOne(id);
       }
@@ -1457,65 +1419,6 @@ class IPCHandlers {
 
     ipcMain.handle("db-search-notes", async (event, query, limit) => {
       return this.databaseManager.searchNotes(query, limit);
-    });
-
-    ipcMain.handle("db-semantic-search-notes", async (event, query, limit = 5) => {
-      await this._ensureQdrantReady();
-      const vectorIndex = require("./vectorIndex");
-      if (!vectorIndex.isReady()) {
-        return this.databaseManager.searchNotes(query, limit);
-      }
-
-      try {
-        const [ftsResults, vectorResults] = await Promise.all([
-          this.databaseManager.searchNotes(query, limit * 2),
-          vectorIndex.search(query, limit * 2),
-        ]);
-
-        // Filter low-confidence semantic matches before RRF
-        const filteredVectorResults = vectorResults.filter(({ score }) => score > 0.3);
-
-        // Reciprocal Rank Fusion (K=60, matching cloud implementation)
-        const scores = new Map();
-        ftsResults.forEach((note, i) => {
-          scores.set(note.id, (scores.get(note.id) || 0) + 1 / (60 + i));
-        });
-        filteredVectorResults.forEach(({ noteId }, i) => {
-          scores.set(noteId, (scores.get(noteId) || 0) + 1 / (60 + i));
-        });
-
-        const rankedIds = [...scores.entries()]
-          .sort((a, b) => b[1] - a[1])
-          .slice(0, limit)
-          .map(([id]) => id);
-
-        const noteMap = new Map();
-        ftsResults.forEach((n) => noteMap.set(n.id, n));
-        for (const id of rankedIds) {
-          if (!noteMap.has(id)) {
-            const note = this.databaseManager.getNote(id);
-            if (note) noteMap.set(id, note);
-          }
-        }
-
-        return rankedIds.map((id) => noteMap.get(id)).filter(Boolean);
-      } catch (error) {
-        debugLogger.error("Semantic search failed, falling back to FTS5", { error: error.message });
-        return this.databaseManager.searchNotes(query, limit);
-      }
-    });
-
-    ipcMain.handle("db-semantic-reindex-all", async () => {
-      const vectorIndex = require("./vectorIndex");
-      if (!vectorIndex.isReady()) return { success: false, error: "Vector index not ready" };
-
-      const notes = this.databaseManager.getNotes(null, 100000);
-      let done = 0;
-      await vectorIndex.reindexAll(notes, (completed, total) => {
-        done = completed;
-        this.broadcastToWindows("semantic-reindex-progress", { done: completed, total });
-      });
-      return { success: true, indexed: done };
     });
 
     ipcMain.handle("db-update-note-cloud-id", async (event, id, cloudId) => {
@@ -1544,9 +1447,6 @@ class IPCHandlers {
       const folderName = this._noteFilesEnabled ? this._getFolderName(id) : null;
       const result = this.databaseManager.deleteFolder(id);
       if (result?.success) {
-        for (const noteId of result.noteIds ?? []) {
-          this._asyncVectorDelete(noteId);
-        }
         setImmediate(() => {
           this.broadcastToWindows("folder-deleted", { id });
           if (this._noteFilesEnabled && folderName) {
@@ -1633,11 +1533,7 @@ class IPCHandlers {
     });
 
     ipcMain.handle("db-delete-agent-conversation", async (event, id) => {
-      const result = this.databaseManager.deleteAgentConversation(id);
-      if (this.vectorIndex?.isReady?.()) {
-        this.vectorIndex.deleteConversationChunks(id).catch(() => {});
-      }
-      return result;
+      return this.databaseManager.deleteAgentConversation(id);
     });
 
     ipcMain.handle("db-update-agent-conversation-title", async (event, id, title) => {
@@ -1647,21 +1543,7 @@ class IPCHandlers {
     ipcMain.handle(
       "db-add-agent-message",
       async (event, conversationId, role, content, metadata) => {
-        const result = this.databaseManager.addAgentMessage(
-          conversationId,
-          role,
-          content,
-          metadata
-        );
-        if (this.vectorIndex?.isReady?.()) {
-          const conv = this.databaseManager.getAgentConversation(conversationId);
-          if (conv && conv.messages?.length % 3 === 0) {
-            this.vectorIndex
-              .upsertConversationChunks(conversationId, conv.title, conv.messages)
-              .catch(() => {});
-          }
-        }
-        return result;
+        return this.databaseManager.addAgentMessage(conversationId, role, content, metadata);
       }
     );
 
@@ -1696,30 +1578,6 @@ class IPCHandlers {
       return this.databaseManager.updateAgentConversationCloudId(id, cloudId);
     });
 
-    ipcMain.handle("db-semantic-search-conversations", async (event, query, limit) => {
-      await this._ensureQdrantReady();
-      if (this.vectorIndex?.isReady?.()) {
-        try {
-          const vectorResults = await this.vectorIndex.searchConversations(query, limit);
-          if (vectorResults?.length > 0) {
-            const ids = vectorResults.map((r) => r.conversationId);
-            const previews = ids
-              .map((id) => this.databaseManager.getAgentConversation(id))
-              .filter(Boolean)
-              .map((c) => ({
-                ...c,
-                message_count: c.messages?.length ?? 0,
-                last_message: c.messages?.[c.messages.length - 1]?.content,
-              }));
-            if (previews.length > 0) return previews;
-          }
-        } catch {
-          // fall through to keyword search
-        }
-      }
-      return this.databaseManager.searchAgentConversations(query, limit);
-    });
-
     // Notes sync
     ipcMain.handle("db-get-pending-notes", () => this.databaseManager.getPendingNotes());
     ipcMain.handle("db-get-pending-note-deletes", () =>
@@ -1740,7 +1598,6 @@ class IPCHandlers {
     ipcMain.handle("db-hard-delete-note", (_, id) => {
       const result = this.databaseManager.hardDeleteNote(id);
       if (result?.success) {
-        this._asyncVectorDelete(id);
         this._asyncMirrorDelete(id);
         setImmediate(() => this.broadcastToWindows("note-deleted", { id }));
       }
@@ -1768,9 +1625,6 @@ class IPCHandlers {
     ipcMain.handle("db-hard-delete-folder", (_, id) => {
       const result = this.databaseManager.hardDeleteFolder(id);
       if (result?.success) {
-        for (const noteId of result.noteIds ?? []) {
-          this._asyncVectorDelete(noteId);
-        }
         setImmediate(() => {
           this.broadcastToWindows("folder-deleted", { id });
           if (this._noteFilesEnabled && result.name) {
@@ -7339,7 +7193,6 @@ class IPCHandlers {
     const result = this.databaseManager.deleteNote(id);
     if (result?.success) {
       setImmediate(() => this.broadcastToWindows("note-deleted", { id }));
-      this._asyncVectorDelete(id);
       this._asyncMirrorDelete(id);
     }
     return result;

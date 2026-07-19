@@ -14,7 +14,7 @@
 1. [Main Process, IPC e Infraestrutura](#1-main-process-ipc-e-infraestrutura)
 2. [Pipeline de Áudio e Transcrição](#2-pipeline-de-áudio-e-transcrição)
 3. [Hotkeys, Plataforma e Detecção de Reuniões](#3-hotkeys-plataforma-e-detecção-de-reuniões)
-4. [Banco de Dados, Notas e Busca Semântica](#4-banco-de-dados-notas-e-busca-semântica)
+4. [Banco de Dados, Notas e Busca](#4-banco-de-dados-notas-e-busca)
 5. [IA / Reasoning / Agente](#5-ia--reasoning--agente)
 6. [Interface React (UI)](#6-interface-react-ui)
 7. [Build, Empacotamento e Recursos Nativos](#7-build-empacotamento-e-recursos-nativos)
@@ -25,19 +25,17 @@
 
 Estas são as discrepâncias mais relevantes encontradas entre a documentação de referência do projeto (`CLAUDE.md`) e o comportamento real do código, descobertas durante a pesquisa. Uma reconstrução fiel deve seguir o **código real**, não a descrição abaixo do que o CLAUDE.md afirma.
 
-> **Status (revisão de documentação pós-remoção do cloud dead code):** os 11 itens abaixo foram corrigidos no `CLAUDE.md` — o texto do CLAUDE.md agora reflete o código real descrito aqui. Os itens permanecem documentados por completo (evidência + arquivos envolvidos) para referência histórica e para o caso de regressão futura; se o CLAUDE.md voltar a divergir de algum destes pontos, é um bug de documentação.
+> **Status (revisão de documentação pós-remoção do cloud dead code):** os itens abaixo foram corrigidos no `CLAUDE.md` — o texto do CLAUDE.md agora reflete o código real descrito aqui. Os itens permanecem documentados por completo (evidência + arquivos envolvidos) para referência histórica e para o caso de regressão futura; se o CLAUDE.md voltar a divergir de algum destes pontos, é um bug de documentação.
 
-1. ✅ **Corrigido.** Qdrant NÃO inicia automaticamente no boot do app. O CLAUDE.md afirmava "Qdrant starts automatically on app launch". Na realidade, apenas a *instância* `QdrantManager` é criada no boot (registrada para shutdown); o processo só é de fato spawnado (`qm.start()`) na primeira chamada de busca semântica (`db-semantic-search-notes`), via `_ensureQdrantReady()`. Ver §4.
-2. ✅ **Corrigido.** O modelo de embeddings NÃO baixa automaticamente em runtime. O download acontece via scripts npm (`predev`/`prestart`/`prebuild` → `scripts/download-minilm.js`), executados **antes** do Electron subir (dev) ou embutido no instalador (build empacotado). `localEmbeddings.downloadModel()` existe mas nunca é chamado em runtime. Ver §4.
-3. ✅ **Corrigido.** `searchNotesTool.ts` não tem uma etapa de "cloud search". A cadeia real é: busca semântica local (RRF) → FTS5 puro. O parâmetro `useCloudSearch` é recebido mas não usado. Ver §4.
-4. ✅ **Corrigido.** Não existe um provider de IA chamado "ektoswhispr". O conceito de "EktosWhispr Cloud" (backend próprio hospedado) está desativado/em remoção (a branch atual chama-se `chore/remove-dead-cloud-code`). Todos os seletores `selectIsCloud*Mode` retornam `false` hardcoded, e `streamFromIPC` lança erro `"Cloud agent streaming is not available in this version"`. Os providers reais são 7: `openai`/`custom`/`openrouter` (1 handler), `anthropic`, `gemini`, `groq`, `local`, `bedrock`/`azure`/`vertex` (1 handler "enterprise"), `lan`. Ver §5. (Ver também a remoção de `agent-skills/ektoswhispr-api/` e a limpeza de `docs/network-allowlist.md`, que documentavam esse mesmo backend cloud inexistente.)
-5. ✅ **Corrigido.** Não existe `src/config/aiProvidersConfig.ts`. A derivação de "AI_MODES" mencionada no CLAUDE.md é, na verdade, `buildReasoningProviders()` em `src/models/ModelRegistry.ts`. Ver §5.
-6. ✅ **Corrigido.** Google Calendar foi removido do código atual. `src/helpers/googleCalendarManager.js`/`googleCalendarOAuth.js` não existem mais nesta branch. Em `meetingDetectionEngine.js`, `imminentEvent` é hardcoded para `null`. A seção do CLAUDE.md sobre "Calendar Sync Resilience" descrevia uma arquitetura histórica já removida. Ver §3. **Atualização**: os remanescentes dessa remoção (`joinCalendarMeeting()`/`getActiveEvents()`/`getCalendarEventById()` em `meetingDetectionEngine.js`/`database.js`, os 20 métodos mortos de `database.js` relacionados a Google Calendar, as tabelas `google_calendar_tokens`/`google_calendars`/`calendar_events`, e as strings órfãs `get_calendar_events`/`integrations.*` em prompts/ícones/locales) foram removidos por completo (`docs/specs/remove-dead-google-calendar-code.md`). Não há mais nenhum código, schema, ou string relacionado a Google Calendar no repositório.
-7. ✅ **Corrigido.** Onboarding não tem 8 passos fixos nem passo de "agent naming". O wizard atual é dinâmico (passo `localModel` é condicional; passo `meeting` existe no código mas está desativado via flag hardcoded `showMeetingStep = false`). Não há passo dedicado para nomear o agente — isso só existe em Settings hoje, com default `"EktosWhispr"`. Ver §6.
-8. ✅ **Corrigido.** Chaves de `localStorage` divergiam do CLAUDE.md: a chave real do hotkey é `dictationKey` (não `hotkey`); a flag de onboarding concluído é `onboardingCompleted` (não `hasCompletedOnboarding`); idioma de UI e idioma de transcrição são chaves **separadas** (`uiLanguage` e `preferredLanguage`), não uma única chave `language`. Ver §6 para a tabela completa.
-9. ✅ **Corrigido.** `SECRET_KEYS` em `environment.js` tem 16 chaves, não 12. Além das 7 BYOK + 5 enterprise citadas no CLAUDE.md, há mais 4: `ASSEMBLYAI_API_KEY`, `DEEPGRAM_API_KEY`, `CUSTOM_TRANSCRIPTION_API_KEY`, `CUSTOM_CLEANUP_API_KEY`. Ver §1 e §7.
-10. ✅ **Corrigido.** Node pinado é 26, não 24. `.nvmrc`/`package.json` (`engines.node >= 26`) apontam para Node 26; o CLAUDE.md mencionava Node 24 (desatualizado). Ver §7.
-11. ✅ **Corrigido.** Parakeet/NVIDIA sempre tenta CUDA quando há GPU, sem toggle manual — diferente do Whisper, que respeita o botão CPU/GPU do usuário (`WHISPER_GPU_MODE`). Não há variável equivalente para forçar CPU no Parakeet; é uma decisão de design explícita no código-fonte. Ver §2.
+1. 🗑️ **Removido.** Itens 1–3 originalmente documentavam divergências do subsistema de busca semântica local (sidecar Qdrant, embeddings MiniLM via ONNX, fluxo híbrido FTS5+vetor com RRF). Esse subsistema inteiro foi **removido** do código (ver `docs/specs/remove-qdrant-dependency.md`): não há mais sidecar Qdrant, não há mais embeddings locais/`localEmbeddings.js`/`vectorIndex.js`, e `search_notes`/busca de conversas do agente agora usam **apenas FTS5** (keyword puro, sem RRF nem fallback semântico). Mantido aqui como referência histórica de que essa arquitetura existiu; ver §4 para o estado atual.
+2. ✅ **Corrigido.** Não existe um provider de IA chamado "ektoswhispr". O conceito de "EktosWhispr Cloud" (backend próprio hospedado) está desativado/em remoção (a branch atual chama-se `chore/remove-dead-cloud-code`). Todos os seletores `selectIsCloud*Mode` retornam `false` hardcoded, e `streamFromIPC` lança erro `"Cloud agent streaming is not available in this version"`. Os providers reais são 7: `openai`/`custom`/`openrouter` (1 handler), `anthropic`, `gemini`, `groq`, `local`, `bedrock`/`azure`/`vertex` (1 handler "enterprise"), `lan`. Ver §5. (Ver também a remoção de `agent-skills/ektoswhispr-api/` e a limpeza de `docs/network-allowlist.md`, que documentavam esse mesmo backend cloud inexistente.)
+3. ✅ **Corrigido.** Não existe `src/config/aiProvidersConfig.ts`. A derivação de "AI_MODES" mencionada no CLAUDE.md é, na verdade, `buildReasoningProviders()` em `src/models/ModelRegistry.ts`. Ver §5.
+4. ✅ **Corrigido.** Google Calendar foi removido do código atual. `src/helpers/googleCalendarManager.js`/`googleCalendarOAuth.js` não existem mais nesta branch. Em `meetingDetectionEngine.js`, `imminentEvent` é hardcoded para `null`. A seção do CLAUDE.md sobre "Calendar Sync Resilience" descrevia uma arquitetura histórica já removida. Ver §3. **Atualização**: os remanescentes dessa remoção (`joinCalendarMeeting()`/`getActiveEvents()`/`getCalendarEventById()` em `meetingDetectionEngine.js`/`database.js`, os 20 métodos mortos de `database.js` relacionados a Google Calendar, as tabelas `google_calendar_tokens`/`google_calendars`/`calendar_events`, e as strings órfãs `get_calendar_events`/`integrations.*` em prompts/ícones/locales) foram removidos por completo (`docs/specs/remove-dead-google-calendar-code.md`). Não há mais nenhum código, schema, ou string relacionado a Google Calendar no repositório.
+5. ✅ **Corrigido.** Onboarding não tem 8 passos fixos nem passo de "agent naming". O wizard atual é dinâmico (passo `localModel` é condicional; passo `meeting` existe no código mas está desativado via flag hardcoded `showMeetingStep = false`). Não há passo dedicado para nomear o agente — isso só existe em Settings hoje, com default `"EktosWhispr"`. Ver §6.
+6. ✅ **Corrigido.** Chaves de `localStorage` divergiam do CLAUDE.md: a chave real do hotkey é `dictationKey` (não `hotkey`); a flag de onboarding concluído é `onboardingCompleted` (não `hasCompletedOnboarding`); idioma de UI e idioma de transcrição são chaves **separadas** (`uiLanguage` e `preferredLanguage`), não uma única chave `language`. Ver §6 para a tabela completa.
+7. ✅ **Corrigido.** `SECRET_KEYS` em `environment.js` tem 16 chaves, não 12. Além das 7 BYOK + 5 enterprise citadas no CLAUDE.md, há mais 4: `ASSEMBLYAI_API_KEY`, `DEEPGRAM_API_KEY`, `CUSTOM_TRANSCRIPTION_API_KEY`, `CUSTOM_CLEANUP_API_KEY`. Ver §1 e §7.
+8. ✅ **Corrigido.** Node pinado é 26, não 24. `.nvmrc`/`package.json` (`engines.node >= 26`) apontam para Node 26; o CLAUDE.md mencionava Node 24 (desatualizado). Ver §7.
+9. ✅ **Corrigido.** Parakeet/NVIDIA sempre tenta CUDA quando há GPU, sem toggle manual — diferente do Whisper, que respeita o botão CPU/GPU do usuário (`WHISPER_GPU_MODE`). Não há variável equivalente para forçar CPU no Parakeet; é uma decisão de design explícita no código-fonte. Ver §2.
 
 ---
 
@@ -45,7 +43,7 @@ Estas são as discrepâncias mais relevantes encontradas entre a documentação 
 
 ### 1.1 Visão Geral
 
-O processo principal do EktosWhispr é responsável por: bootstrap da aplicação, criação/gestão de janelas, registro de todos os canais IPC, gestão de segredos/variáveis de ambiente, hotkeys globais, tray/menu, arrasto de janela, ponte HTTP para o CLI, detecção de migração de bundle, e ciclo de vida de processos "sidecar" (Qdrant, llama-server, whisper-server, parakeet-server, diarização).
+O processo principal do EktosWhispr é responsável por: bootstrap da aplicação, criação/gestão de janelas, registro de todos os canais IPC, gestão de segredos/variáveis de ambiente, hotkeys globais, tray/menu, arrasto de janela, ponte HTTP para o CLI, detecção de migração de bundle, e ciclo de vida de processos "sidecar" (llama-server, whisper-server, parakeet-server, diarização).
 
 Arquivos cobertos nesta seção: `main.js` (raiz), `preload.js` (raiz), `src/helpers/ipcHandlers.js`, `src/helpers/windowManager.js`, `src/helpers/windowConfig.js`, `src/helpers/environment.js`, `src/helpers/tray.js`, `src/helpers/menuManager.js`, `src/helpers/dragManager.js`, `src/helpers/cliBridge.js`, `src/helpers/postMigrationDetector.js`, `src/helpers/sidecarRegistry.js`, `src/helpers/sidecarPidFile.js`, `src/helpers/sidecarReaper.js`, `src/helpers/devServerManager.js`.
 
@@ -139,7 +137,7 @@ registerSidecars()                // registra stop-functions no sidecarRegistry
     - Se `CLEANUP_PROVIDER === "local"`: `modelManagerBridge.prewarmServer(cleanupLocalModel)`.
     - Se `DICTATION_AGENT_PROVIDER === "local"` e o modelo do agente for **diferente** do de cleanup: pré-aquece também.
     - Diarização: baixa modelos em background se ausentes.
-15. **Qdrant**: `qdrantManager = new QdrantManager()`; registrado no `sidecarRegistry`; **não é iniciado aqui** — inicia lazy no primeiro uso de busca semântica.
+15. **Limpeza única de dados órfãos do Qdrant/embeddings** (`src/helpers/qdrantDataCleanup.js`, adicionada na remoção do subsistema — ver `docs/specs/remove-qdrant-dependency.md`): best-effort, não bloqueante, apaga `~/.cache/ektoswhispr/qdrant-data/` e `~/.cache/ektoswhispr/embedding-models/` uma única vez (sentinela `.qdrant-removed` em `userData`) para quem atualiza de uma versão que tinha o Qdrant instalado.
 16–21. Tray, Update, handlers macOS de Globe key (push-to-talk, right-modifier, mouse buttons, accessibility check), handlers Windows/Linux de tecla nativa compartilhados entre slots.
 
 #### 1.2.8 Eventos de aplicação (nível `app`)
@@ -181,8 +179,6 @@ Categorias expostas (~55 grupos): ditado/janela, DB transcrições, áudio de tr
 - `this.setupHandlers()` registra ~250 canais.
 
 Métodos utilitários notáveis:
-- **`_ensureQdrantReady()`** — inicialização lazy do Qdrant (ver §0.1, §4).
-- **`_asyncVectorUpsert(note)`/`_asyncVectorDelete(noteId)`** — via `setImmediate`, atualizam Qdrant fora do caminho crítico.
 - **`_asyncMirrorWrite(note)`/`_asyncMirrorDelete(noteId)`** — espelham notas para Markdown em disco.
 - **`broadcastToWindows(channel, payload)`** — envia para todas as janelas não destruídas.
 - **`deleteNoteInternal(id)`/`deleteTranscriptionInternal(id)`** — lógica compartilhada entre IPC e `CliBridge`.
@@ -204,13 +200,13 @@ Métodos utilitários notáveis:
 
 **Snippets**: mesmo padrão de sync do dicionário + `snippets-backup/restore`, `dictionary-restore`, `transforms-backup/restore`, `notes-backup/restore`.
 
-**Notas**: `db-save-note` (broadcast `note-added`, upsert vetorial + mirror assíncronos), `db-get-note(s)`, `db-update-note` (broadcast `note-updated`, auto-rotula reunião 1:1 se `participants` mudou), `db-delete-note`, `db-search-notes` (FTS5 puro), `db-semantic-search-notes` (pipeline híbrido RRF, ver §4), `db-semantic-reindex-all` (progresso via push `semantic-reindex-progress`), `db-update-note-cloud-id`.
+**Notas**: `db-save-note` (broadcast `note-added`, mirror assíncrono), `db-get-note(s)`, `db-update-note` (broadcast `note-updated`, auto-rotula reunião 1:1 se `participants` mudou), `db-delete-note`, `db-search-notes` (FTS5 puro — único caminho de busca, ver §4), `db-update-note-cloud-id`.
 
 **Pastas**: `db-get-folders`, `db-create-folder` (broadcast `folder-created`), `db-delete-folder`, `db-rename-folder`, `db-get-folder-note-counts`.
 
 **Ações**: `db-get-actions/action`, `db-create/update/delete-action` (broadcasts correspondentes).
 
-**Conversas do agente**: `db-create-agent-conversation`, `db-get-conversations-for-note`, `db-get-agent-conversation(s)`, `db-delete-agent-conversation` (remove chunks vetoriais), `db-update-agent-conversation-title`, `db-add-agent-message` (reindexa vetorial a cada 3 mensagens), `db-get-agent-messages`, `db-get-agent-conversations-with-preview`, `db-search-agent-conversations`, `db-archive/unarchive-agent-conversation`, `db-semantic-search-conversations`.
+**Conversas do agente**: `db-create-agent-conversation`, `db-get-conversations-for-note`, `db-get-agent-conversation(s)`, `db-delete-agent-conversation`, `db-update-agent-conversation-title`, `db-add-agent-message`, `db-get-agent-messages`, `db-get-agent-conversations-with-preview`, `db-search-agent-conversations` (FTS5 puro — único caminho de busca, ver §4), `db-archive/unarchive-agent-conversation`.
 
 **Sincronização com nuvem** (padrão repetido para note/folder/conversation/transcription): `db-get-pending-*`, `db-get-pending-*-deletes`, `db-get-*-by-client-id`, `db-upsert-*-from-cloud`, `db-mark-*-synced`, `db-hard-delete-*`.
 
@@ -336,7 +332,9 @@ Detecta usuários voltando do bundle ID antigo (pré-"Gizmo"), exclusivo macOS. 
 - PID files em `userData/sidecar-pids/<name>.pid`; convenção: `write()` logo após spawn, `clear()` no `close`.
 
 #### 1.9.3 `sidecarReaper.js`
-`EXPECTED_BINARY_FRAGMENTS`: `parakeet: ["sherpa-onnx-ws-", "sherpa-onnx-online-ws-"]`, `whisper: ["whisper-server"]`, `llama: ["llama-server"]`, `qdrant: ["qdrant"]`, `diarization: ["sherpa-onnx-diarize"]`. `reapStaleSidecars()` (início de `startApp()`) verifica PIDs órfãos vivos, confirma que o comando real bate com os fragmentos esperados, e só então mata (evita matar um PID reciclado pelo SO).
+`EXPECTED_BINARY_FRAGMENTS`: `parakeet: ["sherpa-onnx-ws-", "sherpa-onnx-online-ws-"]`, `whisper: ["whisper-server"]`, `llama: ["llama-server"]`, `diarization: ["sherpa-onnx-diarize"]`. `reapStaleSidecars()` (início de `startApp()`) verifica PIDs órfãos vivos, confirma que o comando real bate com os fragmentos esperados, e só então mata (evita matar um PID reciclado pelo SO).
+
+**Nota histórica**: havia uma entrada `qdrant: ["qdrant"]` até a remoção do subsistema Qdrant (`docs/specs/remove-qdrant-dependency.md`). A decisão foi removê-la junto com o resto, aceitando o risco residual de um processo Qdrant genuinamente órfão (de uma instalação pré-remoção) não ser reaproveitado pelo `reapStaleSidecars()` — julgado aceitável dado o estágio alpha do produto e a ausência de base instalada relevante. Ver a spec para o raciocínio completo.
 
 ### 1.10 `devServerManager.js`
 
@@ -748,7 +746,7 @@ Binário nativo `linux-fast-paste` (XTest) tentado primeiro, exceto Konsole em X
 
 ---
 
-## 4. Banco de Dados, Notas e Busca Semântica
+## 4. Banco de Dados, Notas e Busca
 
 ### 4.1 SQLite (`src/helpers/database.js`)
 
@@ -796,109 +794,49 @@ CRUD completo por entidade (`saveTranscription`, `setDictionary` com diff comple
 
 `cleanup()`: fecha conexão e apaga o arquivo `.db` do disco.
 
-### 4.2 Qdrant Sidecar (`src/helpers/qdrantManager.js`)
+### 4.2 Busca semântica local — removida
 
-Porta **6333–6350**, `STARTUP_TIMEOUT_MS=30000`, health check a cada 5s (`GET /healthz`, timeout 2s). `STORAGE_DIR = ~/.cache/ektoswhispr/qdrant-data/`.
+Até a remoção documentada em `docs/specs/remove-qdrant-dependency.md`, o app rodava um sidecar
+Qdrant (Rust, porta 6333–6350, `~/.cache/ektoswhispr/qdrant-data/`), embeddings de texto locais
+via ONNX (`all-MiniLM-L6-v2`, 384-dim, `src/helpers/localEmbeddings.js`), um índice vetorial
+(`src/helpers/vectorIndex.js`, duas collections: `notes` e `conversation_chunks`) e um fluxo
+híbrido FTS5 + busca vetorial combinado por Reciprocal Rank Fusion (K=60) no handler IPC
+`db-semantic-search-notes`. Havia também um caminho de busca semântica de conversas
+(`db-semantic-search-conversations`) que, por um bug de longa data (`this.vectorIndex` nunca era
+atribuído em `ipcHandlers.js`), **nunca esteve realmente ativo** — sempre caiu silenciosamente para
+`searchAgentConversations()` (FTS5) em todo build já lançado.
 
-**Fluxo de start**: resolve binário (`resourcesPath/bin` ou `resources/bin`) → `findAvailablePort` (bind em `0.0.0.0`/`::`/`127.0.0.1`) → cria `config.yaml` dinâmico → spawn com `sidecarPidFile.write("qdrant", pid)`.
+Todo esse subsistema foi removido: `qdrantManager.js`, `localEmbeddings.js`, `vectorIndex.js`,
+`conversationChunker.js`, os scripts `download-qdrant.js`/`download-minilm.js`, a dependência
+`@qdrant/js-client-rest`, e os handlers IPC `db-semantic-search-notes`,
+`db-semantic-reindex-all`, `db-semantic-search-conversations`. `search_notes` (ferramenta do
+agente) e a busca de conversas do agente agora usam **apenas** `databaseManager.searchNotes()` /
+`searchAgentConversations()` (FTS5/BM25 nativo do SQLite) — busca por palavra-chave, sem
+compreensão semântica de sinônimos ou paráfrases. Uma limpeza única e best-effort
+(`src/helpers/qdrantDataCleanup.js`, sentinela `.qdrant-removed` em `userData`) apaga
+`~/.cache/ektoswhispr/qdrant-data/` e `~/.cache/ektoswhispr/embedding-models/` para quem atualiza
+de uma versão anterior. Ver a spec para o raciocínio completo, incluindo a decisão de também
+remover a entrada `qdrant` de `EXPECTED_BINARY_FRAGMENTS` em `sidecarReaper.js` (§1.9.3).
 
-**⚠️ Divergência confirmada com CLAUDE.md**: Qdrant **NÃO** inicia no boot. Em `main.js`: `// Qdrant starts lazily on first semantic search (ensureQdrantReady in ipcHandlers.js)`. Apenas a instância é criada e registrada para shutdown. O start real acontece em `_ensureQdrantReady()`, chamado pela primeira vez que `db-semantic-search-notes` é invocado.
-
-```js
-async _ensureQdrantReady() {
-  if (vectorIndex.isReady()) return true;
-  const qm = global.__qdrantManager;
-  if (!qm || !qm.isAvailable()) return false;
-  try {
-    if (!qm.isReady()) await qm.start();
-    if (!qm.isReady()) return false;
-    vectorIndex.init(qm.getPort());
-    await vectorIndex.ensureCollection();
-    return true;
-  } catch (err) { return false; }  // non-fatal, cai para FTS5
-}
-```
-
-Se o binário não existir, se falhar ao iniciar, ou se falhar durante o uso: sempre cai para `databaseManager.searchNotes()` (FTS5 puro), nunca lança erro ao chamador.
-
-### 4.3 Embeddings Locais ONNX (`src/helpers/localEmbeddings.js` + Worker)
-
-Modelo: `all-MiniLM-L6-v2`, 384 dimensões, via `onnxruntime-node`.
-
-**Resolução do diretório**: `resourcesPath/bin/all-MiniLM-L6-v2/` (bundled) → `resources/bin/all-MiniLM-L6-v2/` (dev) → `~/.cache/ektoswhispr/embedding-models/all-MiniLM-L6-v2/` (fallback).
-
-**⚠️ Divergência confirmada com CLAUDE.md**: "auto-downloads on first run" é **falso para runtime**. `localEmbeddings.downloadModel()` existe mas nunca é chamado em runtime. O download real acontece via scripts npm (`predev`/`prestart`/`prebuild` → `scripts/download-minilm.js`), executados **antes** do Electron subir (dev) ou embutido no instalador (`--for-build`, produção). Para o usuário final de um build empacotado, o modelo já vem no instalador.
-
-#### 4.3.1 Worker ONNX dedicado (`src/workers/onnxWorker.js` + `onnxWorkerClient.js`)
-Toda inferência ONNX roda em **utility process** separado (isola crashes nativos do processo principal).
+#### 4.2.1 Worker ONNX dedicado (`src/workers/onnxWorker.js` + `onnxWorkerClient.js`)
+Toda inferência ONNX roda em **utility process** separado (isola crashes nativos do processo
+principal) — infraestrutura compartilhada, preservada pela remoção acima porque também hospeda os
+embeddings de locutor (diarização), que continuam em uso.
 
 - `onnxWorkerClient.js`: `utilityProcess.fork` + `MessageChannelMain`. `REQUEST_TIMEOUT_MS=30000`. `MAX_PENDING_REQUESTS=1000` (descarta a mais antiga). **Crash/respawn com backoff**: `RESPAWN_BACKOFF_MS=[1000,2000,4000,8000,16000,30000]`; após `MAX_RESPAWN_ATTEMPTS=5`, desiste (`gaveUp=true`).
-- `onnxWorker.js`: handlers `speaker.load/extract` (fbank Mel manual, FFT radix-2, até 8s de áudio) e `text.load/embed` (tokenizador WordPiece simplificado, `TEXT_EMBED_MAX_TOKENS=256`, mean pooling + normalização L2, dimensão 384).
-- `LocalEmbeddings.noteEmbedText(title, content, enhancedContent)` = `${title}\n${enhanced||content}`.slice(0,1500) — texto canônico embedado.
+- `onnxWorker.js`: handler `speaker.load/extract` (fbank Mel manual, FFT radix-2, até 8s de áudio) — usado por `src/helpers/speakerEmbeddings.js` para diarização/mapeamento de falantes. Os handlers `text.load`/`text.embed` (tokenizador WordPiece, mean pooling + normalização L2) existiam apenas para os embeddings de notas do Qdrant e foram removidos junto com o resto do subsistema.
 
-### 4.4 Índice Vetorial (`src/helpers/vectorIndex.js`)
+### 4.3 `searchNotesTool.ts` — Ferramenta de Busca do Agente
 
-Singleton, encapsula `@qdrant/js-client-rest`. Duas collections: `notes` (384-dim, distância Cosine) e `conversation_chunks`.
-
-- `ensureCollection()`: padrão get-or-create.
-- `upsertNote(noteId, text)`: embeda + upsert com `id=noteId`, `payload={}` (dados reais vêm do SQLite).
-- `search(queryText, limit)`: embeda query, `client.search`, retorna `[{noteId, score}]`.
-- `reindexAll(notes, onProgress)`: lotes de `BATCH_SIZE=50`.
-- **Conversation chunks**: `src/helpers/conversationChunker.js` — `CHUNK_SIZE=5` mensagens, `CHUNK_OVERLAP=2`, janela deslizante. `id = conversationId*1000 + chunkIndex`. `searchConversations`: busca `limit*3`, filtra `score>=0.3`, agrupa por conversa mantendo melhor score.
-
-Todas as operações de escrita/leitura vetorial são envoltas em `try/catch` que nunca propaga erro — reforça que busca semântica é sempre um extra opcional.
-
-### 4.5 Fluxo Híbrido FTS5 + Qdrant → Reciprocal Rank Fusion (RRF)
-
-Implementação em `ipcHandlers.js`, handler `db-semantic-search-notes`:
-
-```js
-ipcMain.handle("db-semantic-search-notes", async (event, query, limit=5) => {
-  await this._ensureQdrantReady();
-  if (!vectorIndex.isReady()) return this.databaseManager.searchNotes(query, limit);  // fallback FTS5
-  try {
-    const [ftsResults, vectorResults] = await Promise.all([
-      this.databaseManager.searchNotes(query, limit*2),
-      vectorIndex.search(query, limit*2),
-    ]);
-    const filteredVectorResults = vectorResults.filter(({score}) => score > 0.3);
-    const scores = new Map();
-    ftsResults.forEach((note,i) => scores.set(note.id, (scores.get(note.id)||0) + 1/(60+i)));
-    filteredVectorResults.forEach(({noteId},i) => scores.set(noteId, (scores.get(noteId)||0) + 1/(60+i)));
-    const rankedIds = [...scores.entries()].sort((a,b)=>b[1]-a[1]).slice(0,limit).map(([id])=>id);
-    // hidrata resultados a partir de ftsResults + getNote() para os que só vieram do vetor
-    return rankedIds.map(id => noteMap.get(id)).filter(Boolean);
-  } catch (error) {
-    return this.databaseManager.searchNotes(query, limit);  // fallback em qualquer erro
-  }
-});
-```
-
-**Passo a passo**: (1) garante Qdrant pronto (lazy-start) — sem sucesso, fallback FTS5 puro; (2) busca paralela FTS5 + vetorial, cada uma pedindo `limit*2`; (3) filtra candidatos vetoriais com `score <= 0.3` (ruído); (4) **RRF com K=60**: `score += 1/(60+rank)` para cada sistema em que o doc aparece — mesma constante do backend de nuvem (comentário no código: "matching cloud implementation"); (5) ranking final, top `limit`; (6) hidrata notas completas; (7) qualquer erro cai para FTS5 puro.
-
-**FTS5 puro** (`searchNotes`): sanitiza query (remove tudo exceto `\w`/espaço), adiciona `*` (busca por prefixo), `ORDER BY notes_fts.rank` (BM25 nativo).
-
-**Reindex em massa** (`db-semantic-reindex-all`): até 100.000 notas, lotes de 50, progresso via broadcast `semantic-reindex-progress`.
-
-**Upsert/delete incremental**: `_asyncVectorUpsert`/`_asyncVectorDelete` via `setImmediate`, fire-and-forget. **Regra crítica**: se Qdrant nunca foi iniciado nesta sessão (`vectorIndex.isReady()===false`), o upsert é pulado silenciosamente — notas criadas antes do primeiro uso da busca semântica não ficam indexadas até reindex manual.
-
-### 4.6 `searchNotesTool.ts` — Ferramenta de Busca do Agente
-
-**⚠️ Divergência confirmada com CLAUDE.md**: a cadeia real tem **apenas 2 estratégias** (não 3): busca semântica local (RRF) → FTS5 puro. O parâmetro `useCloudSearch` é recebido mas nunca usado para adicionar uma etapa de nuvem — órfão no código atual.
-
-```ts
-strategies.push(() => executeLocalSearch(query, limit, true));   // semântico local
-strategies.push(() => executeLocalSearch(query, limit, false));  // FTS5 puro
-```
-`executeLocalSearch` trunca conteúdo em `MAX_CONTENT_LENGTH=500` chars, prioriza `enhanced_content`.
+Uma única estratégia: `executeLocalSearch(query, limit)` chama `window.electronAPI.searchNotes(query, limit)` (FTS5 puro) diretamente, sem fallback chain nem RRF. `MAX_CONTENT_LENGTH=500` chars, prioriza `enhanced_content`. O parâmetro `useCloudSearch`/`SearchToolOptions` continua recebido mas não usado — órfão pré-existente, não relacionado à remoção do Qdrant (esse fork não tem backend de busca em nuvem).
 
 Outras tools de notas: `list_folders`, `get_note`, `create_note` (resolve/cria pasta se necessário, dispara `syncService.debouncedPush`), `update_note` (exige `id`, não busca por título).
 
-### 4.7 IPC de Notas e Semântica
+### 4.4 IPC de Notas e Conversas
 
-Ver tabela consolidada em §1.4.1. Toda escrita em `notes` replica automaticamente para Qdrant (se disponível) e para o "espelho Markdown" (se habilitado) — dois mecanismos paralelos, independentes, best-effort.
+Ver tabela consolidada em §1.4.1. Toda escrita em `notes` replica para o "espelho Markdown" (se habilitado) — best-effort, assíncrono.
 
-### 4.8 Componentes de Notas (UI)
+### 4.5 Componentes de Notas (UI)
 
 - **`PersonalNotesView.tsx`**: `handleNewNote()` cria nota vazia na pasta ativa; diálogo permite escolher pasta de destino (com criação inline).
 - **`UploadAudioView.tsx`**: máquina de estados `idle→selected→transcribing→complete/error`. Título gerado por IA (se habilitado) ou primeiras 6 palavras/nome do arquivo. Limite de 25MB só para provedores BYOK cloud não-"custom"; local/custom sem limite. Diarização só se Parakeet local + modelos já baixados.
@@ -1062,7 +1000,7 @@ Ver fórmula completa em §3.5. `resolveDictationAgentReachability`: `false` se 
 
 `ToolRegistry.ts`: `{name, description, parameters (JSONSchema), readOnly, execute}`. `toAISDKFormat()` adapta para `ai` (Vercel AI SDK), captura exceções (nunca rejeita a Promise).
 
-6 tools reais: `search_notes` (§4.6), `get_note`, `create_note` (resolve pasta, `syncService.debouncedPush`), `update_note`, `list_folders` (chamar antes de create/update quando pasta envolvida), `copy_to_clipboard`, `web_search` (via IPC `agentWebSearch`, implementação main não coberta).
+6 tools reais: `search_notes` (§4.3), `get_note`, `create_note` (resolve pasta, `syncService.debouncedPush`), `update_note`, `list_folders` (chamar antes de create/update quando pasta envolvida), `copy_to_clipboard`, `web_search` (via IPC `agentWebSearch`, implementação main não coberta).
 
 **Controle de disponibilidade**: `LOCAL_TOOL_MIN_PARAMS_B=4` — modelos locais com &lt;4B parâmetros não recebem tools (`estimateModelSizeB` via regex no id do modelo).
 
@@ -1070,7 +1008,7 @@ Ver fórmula completa em §3.5. `resolveDictationAgentReachability`: `false` se 
 
 `agent/*` são wrappers finos sobre `chat/*`. `AgentState`: `idle|listening|transcribing|thinking|streaming|tool-executing`. `ChatInput.tsx` renderiza indicadores por estado (waveform, recording pulsante). `ChatMessage.tsx`: bolhas com `ToolCallStep` expansível, `extractNoteCards` (cards clicáveis de notas criadas/atualizadas/lidas).
 
-`useChatStreaming.ts`: **RAG automático** — `buildRAGContext` chama `semanticSearchNotes` antes de cada envio, injeta blocos `<note id="..." title="...">` no system prompt (RAG passivo complementar ao tool-calling ativo). Contexto limitado às últimas 20 mensagens.
+`useChatStreaming.ts`: **RAG automático** — `buildRAGContext` chama `searchNotes` (FTS5 keyword — pós-remoção do Qdrant, ver §4.2) antes de cada envio, injeta blocos `<note id="..." title="...">` no system prompt (RAG passivo complementar ao tool-calling ativo). Contexto limitado às últimas 20 mensagens.
 
 ### 5.11 Modelos Locais GGUF e llama.cpp
 
@@ -1205,15 +1143,15 @@ Nome npm `ektos-whispr`, appId `com.gizmolabs.ektoswhispr`, productName `EktosWh
 
 **Dev**: `electron@^43`, `electron-builder@^26`, `@electron/notarize`, `vite@^8`, Tailwind v4, TypeScript, ESLint/Prettier, `concurrently`, `cross-env`.
 
-**Runtime**: `electron-updater`, `better-sqlite3` (DB local), `ffmpeg-static` (precisa `asarUnpack`), `onnxruntime-node` (utility process separado), `@qdrant/js-client-rest`, `ps-list` (traz executável vendor Windows), `ws`, `@homebridge/dbus-native` (D-Bus puro JS), `@napi-rs/keyring` (keychain/DPAPI/libsecret, `asarUnpack`), React 19, Zustand, Kysely, Zod, Tiptap (editor rich-text), SDKs de IA (`@ai-sdk/*`, `ai`, `@aws-sdk/client-bedrock`).
+**Runtime**: `electron-updater`, `better-sqlite3` (DB local), `ffmpeg-static` (precisa `asarUnpack`), `onnxruntime-node` (utility process separado — usado hoje só para embeddings de locutor/diarização, ver §4.2.1), `ps-list` (traz executável vendor Windows), `ws`, `@homebridge/dbus-native` (D-Bus puro JS), `@napi-rs/keyring` (keychain/DPAPI/libsecret, `asarUnpack`), React 19, Zustand, Kysely, Zod, Tiptap (editor rich-text), SDKs de IA (`@ai-sdk/*`, `ai`, `@aws-sdk/client-bedrock`). `@qdrant/js-client-rest` foi removida (ver `docs/specs/remove-qdrant-dependency.md`).
 
 ### 7.3 Scripts npm — Ordem de Execução
 
 **Compilação nativa**: `compile:native` = `compile:globe && compile:fast-paste && compile:winkeys && compile:linuxkeys && compile:winpaste && compile:linux-paste && compile:linux-system-audio && compile:text-monitor && compile:media-remote && compile:mic-listener && compile:audio-tap` — cada sub-script é no-op nas plataformas onde não se aplica.
 
-**Dev**: `predev` = `compile:native && download:meeting-aec-helper && download:qdrant && download:embedding-model`. `dev` = `concurrently -k -r "npm:dev:renderer" "npm:dev:main"`. `dev:main` usa `scripts/run-electron.js --dev` (wrapper que remove `ELECTRON_RUN_AS_NODE` e injeta `--ozone-platform=x11` em Wayland+KDE/GNOME).
+**Dev**: `predev` = `compile:native && download:meeting-aec-helper`. `dev` = `concurrently -k -r "npm:dev:renderer" "npm:dev:main"`. `dev:main` usa `scripts/run-electron.js --dev` (wrapper que remove `ELECTRON_RUN_AS_NODE` e injeta `--ozone-platform=x11` em Wayland+KDE/GNOME).
 
-**Build**: `prebuild`/`prebuild:mac`/`prebuild:win`/`prebuild:linux`/`prepack`/`predist` (hooks automáticos) baixam whisper-cpp, llama-server, sherpa-onnx, qdrant, meeting-aec-helper, whisper-vad-model, embedding-model (`--for-build`), diarization-models — cada variante de plataforma adiciona binários exclusivos (Windows: nircmd, fast-paste, key-listener, mic-listener, system-audio-helper; macOS: `compile:mac-icon`).
+**Build**: `prebuild`/`prebuild:mac`/`prebuild:win`/`prebuild:linux`/`prepack`/`predist` (hooks automáticos) baixam whisper-cpp, llama-server, sherpa-onnx, meeting-aec-helper, whisper-vad-model, diarization-models — cada variante de plataforma adiciona binários exclusivos (Windows: nircmd, fast-paste, key-listener, mic-listener, system-audio-helper; macOS: `compile:mac-icon`). (Os passos `download:qdrant`/`download:embedding-model` existiam aqui até a remoção do Qdrant — ver `docs/specs/remove-qdrant-dependency.md`.)
 
 `build:mac/win/linux` = `build:renderer && electron-builder --<plataforma>`. `pack` = build de diretório não assinado (`CSC_IDENTITY_AUTO_DISCOVERY=false`). `postinstall` = `electron-builder install-app-deps` (recompila módulos nativos, automático pós-`npm install`).
 
@@ -1228,14 +1166,14 @@ Biblioteca compartilhada `scripts/lib/download-utils.js`: `fetchLatestRelease` (
 | `download-whisper-cpp.js` | `OpenWhispr/whisper.cpp` (latest) | `resources/bin/whisper-server-{platform}-{arch}` |
 | `download-llama-server.js` | `ggml-org/llama.cpp` (tag fixa `b9763`) | `resources/bin/llama-server-{platform}-{arch}` (só CPU) |
 | `download-sherpa-onnx.js` | `k2-fsa/sherpa-onnx` (fixo `1.13.4`) | `sherpa-onnx-{ws,online-ws,diarize}-{platformArch}` (+`-cuda`) |
-| `download-qdrant.js` | `qdrant/qdrant` (latest) | `resources/bin/qdrant-{platformArch}` |
-| `download-minilm.js` | HuggingFace `sentence-transformers/all-MiniLM-L6-v2` | `--for-build`→bundled; senão→`~/.cache/ektoswhispr/embedding-models/` |
 | `download-whisper-vad-model.js` | HuggingFace `ggml-org/whisper-vad` | `ggml-silero-v5.1.2.bin` |
 | `download-diarization-models.js` | `k2-fsa/sherpa-onnx` (tags especiais) | modelos de segmentação/embedding/VAD |
 | `download-nircmd.js` | nirsoft.net direto (não GitHub) | `nircmd.exe` (fallback PowerShell sem bypass TLS — usa validação de certificado padrão do SO/.NET) |
 | `download-windows-{key,mic}-listener.js`, `-fast-paste.js`, `-system-audio-helper.js` | `OpenWhispr/openwhispr` (tags `{componente}-v{versão}`) | binários Windows nativos |
 | `download-meeting-aec-helper.js` | idem | `meeting-aec-helper-{platform}-{arch}` (4 alvos) |
 | `download-text-monitor.js` | idem | linux/windows text monitor |
+
+(`download-qdrant.js` e `download-minilm.js` existiam aqui — baixavam o binário Qdrant e o modelo `all-MiniLM-L6-v2`, respectivamente — e foram removidos junto com o subsistema de busca semântica; ver `docs/specs/remove-qdrant-dependency.md`.)
 
 ### 7.5 Scripts de Compilação (`build-*.js`)
 
@@ -1251,7 +1189,7 @@ Biblioteca compartilhada `scripts/lib/download-utils.js`: `fetchLatestRelease` (
 
 - `afterPack`: `scripts/afterPack.js`.
 - **`asarUnpack`**: `ffmpeg-static`, `ps-list`, `better-sqlite3`, `onnxruntime-node`, `@napi-rs/keyring`, `src/workers/**/*` — binários nativos não podem rodar de dentro do ASAR. `afterPack.js` **falha o build** se algum estiver ausente.
-- **`extraResources`**: `.env`, `src/assets/**/*`, todo `resources/bin/**` (whisper/llama/sherpa/qdrant, binários nativos por plataforma, modelos de embedding/diarização/VAD, bibliotecas compartilhadas).
+- **`extraResources`**: `.env`, `src/assets/**/*`, todo `resources/bin/**` (whisper/llama/sherpa, binários nativos por plataforma, modelos de diarização/VAD, bibliotecas compartilhadas). O filtro `qdrant-*` (e o modelo `all-MiniLM-L6-v2/**/*`) foi removido junto com o subsistema Qdrant.
 
 #### 7.6.1 `afterPack.js` — 5 responsabilidades
 1. `stripOnnxruntimeBinaries` — remove plataformas/arch não-alvo (economiza 150-180MB).

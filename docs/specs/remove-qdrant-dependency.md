@@ -1,9 +1,17 @@
 # Remove Qdrant Vector-Database Dependency
 
 ## Status
-Approved
+Implemented
 
 Approved directly by the project owner in conversation ("faça a remoção do qdrant", alpha-stage context confirmed) — not inferred by any subagent.
+
+Implemented by `spec-executor`: all Requirements (R1–R16) and Design sections (§1–§8) applied;
+`npm test`, `npm run lint`, `npm run typecheck`, `npm run build:renderer`, and `npm run predev` all
+pass (see PR/commit for full validation notes). Manual validation steps 2–4 and 6 from the
+Validation Plan (launching the packaged/dev app, exercising the AI agent chat, Command Search, and
+`npm run pack` binary contents) were not exercised by `spec-executor` in this non-interactive
+environment and still need a human pass before release; step 1 (`npm run predev`) and step 5's
+logic (one-time cleanup sentinel) were verified directly.
 
 ## Problem / Goal
 

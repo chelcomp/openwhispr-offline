@@ -139,7 +139,7 @@ npm run dev
 
 Requires Node.js 26. If you have `nvm`: `nvm use` picks the pinned version from `.nvmrc`.
 
-On first run, whisper.cpp and NVIDIA Parakeet binaries are downloaded automatically for your platform. Local models (whisper, llama.cpp, Qdrant, MiniLM) are downloaded on demand from the app's Settings screen.
+On first run, whisper.cpp and NVIDIA Parakeet binaries are downloaded automatically for your platform. Local models (whisper, llama.cpp) are downloaded on demand from the app's Settings screen.
 
 ---
 

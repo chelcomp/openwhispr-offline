@@ -36,7 +36,7 @@ appimageTools.wrapType2 {
     libnotify # Electron desktop notifications
     libpulseaudio # Chromium mic capture via PulseAudio/PipeWire
     pipewire # Native Linux system audio helper links libpipewire-0.3
-    stdenv.cc.cc.lib # libstdc++/libgomp for bundled whisper/llama/sherpa/qdrant
+    stdenv.cc.cc.lib # libstdc++/libgomp for bundled whisper/llama/sherpa
   ];
 
   extraInstallCommands = ''

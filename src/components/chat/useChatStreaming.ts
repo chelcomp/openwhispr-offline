@@ -19,9 +19,9 @@ function estimateModelSizeB(modelId: string): number {
 }
 
 async function buildRAGContext(userText: string): Promise<string> {
-  if (!window.electronAPI?.semanticSearchNotes) return "";
+  if (!window.electronAPI?.searchNotes) return "";
   try {
-    const results = await window.electronAPI.semanticSearchNotes(userText, RAG_NOTE_LIMIT);
+    const results = await window.electronAPI.searchNotes(userText, RAG_NOTE_LIMIT);
     if (!results || results.length === 0) return "";
 
     const snippets = await Promise.all(

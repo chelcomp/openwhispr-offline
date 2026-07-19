@@ -668,11 +668,6 @@ declare global {
       ) => Promise<{ success: boolean; error?: string }>;
       exportDictionary: (words: string[]) => Promise<{ success: boolean; error?: string }>;
       searchNotes: (query: string, limit?: number) => Promise<NoteItem[]>;
-      semanticSearchNotes: (query: string, limit?: number) => Promise<NoteItem[]>;
-      semanticReindexAll: () => Promise<{ success: boolean; indexed?: number; error?: string }>;
-      onSemanticReindexProgress: (
-        callback: (data: { done: number; total: number }) => void
-      ) => () => void;
       // Folder operations
       getFolders: () => Promise<FolderItem[]>;
       createFolder: (
@@ -1299,10 +1294,6 @@ declare global {
       searchAgentConversations?: (query: string, limit?: number) => Promise<ConversationPreview[]>;
       archiveAgentConversation?: (id: number) => Promise<{ success: boolean }>;
       unarchiveAgentConversation?: (id: number) => Promise<{ success: boolean }>;
-      semanticSearchConversations?: (
-        query: string,
-        limit?: number
-      ) => Promise<ConversationPreview[]>;
 
       // Agent overlay
       resizeAgentWindow?: (width: number, height: number) => Promise<void>;
