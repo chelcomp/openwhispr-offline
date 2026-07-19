@@ -117,3 +117,21 @@ jobs:
           AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
           AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
           AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+
+      - name: Auto-generate release notes
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          if [ -z "$TAG" ] || [ "$GITHUB_REF_TYPE" != "tag" ]; then
+            TAG="v${{ github.event.inputs.version }}"
+          fi
+          gh api \
+            -X POST \
+            repos/${{ github.repository }}/releases/generate-notes \
+            -f tag_name="$TAG" \
+            --jq .body > /tmp/release-notes.md
+          gh release edit "$TAG" \
+            --repo ${{ github.repository }} \
+            --notes-file /tmp/release-notes.md
