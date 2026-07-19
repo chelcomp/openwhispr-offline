@@ -10,13 +10,13 @@ This fork evolves independently — no upstream merges are planned.
 
 - Bugs and feature requests: open an issue in **this repository**.
 - For transcription or audio problems, attaching debug logs is a huge help — see
-  [`DEBUG.md`](../DEBUG.md) for how to enable debug logging and where the log files
-  live, and [`TROUBLESHOOTING.md`](../TROUBLESHOOTING.md) for common fixes to try first.
+  [`docs/guides/DEBUG.md`](../docs/guides/DEBUG.md) for how to enable debug logging and where the log files
+  live, and [`docs/guides/TROUBLESHOOTING.md`](../docs/guides/TROUBLESHOOTING.md) for common fixes to try first.
 
 ## Reporting security issues
 
 **Please do not open public issues for security vulnerabilities.**
-Follow the process in [`SECURITY.md`](../SECURITY.md).
+Follow the process in [`docs/SECURITY.md`](../docs/SECURITY.md).
 
 ## Contributing code
 
@@ -32,7 +32,7 @@ The short version:
 
 | Requirement | Notes                                                                             |
 | ----------- | --------------------------------------------------------------------------------- |
-| Node.js     | Version pinned in [`.nvmrc`](../.nvmrc) (currently `24`). Use `nvm use` to match. |
+| Node.js     | Version pinned in [`.nvmrc`](../.nvmrc) (currently `26`). Use `nvm use` to match. |
 | Install     | `npm install`                                                                     |
 | Run dev     | `npm run dev`                                                                     |
 | Lint        | `npm run lint`                                                                    |
@@ -40,7 +40,9 @@ The short version:
 | Build       | `npm run build` (or `build:mac` / `build:win` / `build:linux`)                    |
 
 Platform-specific setup, model downloads, and packaging details are in
-[`README.md`](../README.md) and [`LOCAL_WHISPER_SETUP.md`](../LOCAL_WHISPER_SETUP.md).
+[`README.md`](../README.md) and [`docs/guides/LOCAL_WHISPER_SETUP.md`](../docs/guides/LOCAL_WHISPER_SETUP.md).
+
+See [`docs/README.md`](../docs/README.md) for a full index of this repo's documentation.
 
 ## Thanks
 

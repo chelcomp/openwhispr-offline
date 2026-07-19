@@ -137,7 +137,7 @@ npm install
 npm run dev
 ```
 
-Requires Node.js 24. If you have `nvm`: `nvm use` picks the pinned version from `.nvmrc`.
+Requires Node.js 26. If you have `nvm`: `nvm use` picks the pinned version from `.nvmrc`.
 
 On first run, whisper.cpp and NVIDIA Parakeet binaries are downloaded automatically for your platform. Local models (whisper, llama.cpp, Qdrant, MiniLM) are downloaded on demand from the app's Settings screen.
 
@@ -146,6 +146,12 @@ On first run, whisper.cpp and NVIDIA Parakeet binaries are downloaded automatica
 ## Tech stack
 
 React 19 · TypeScript · Tailwind CSS v4 · Electron 41 · better-sqlite3 · whisper.cpp · sherpa-onnx (NVIDIA Parakeet) · shadcn/ui · FFmpeg
+
+---
+
+## Documentation
+
+Full index at [`docs/README.md`](docs/README.md) — troubleshooting, debug logging, local Whisper setup, network allowlist, security policy, and the technical architecture reference ([`CLAUDE.md`](CLAUDE.md)).
 
 ---
 
