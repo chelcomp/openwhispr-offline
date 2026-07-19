@@ -1,7 +1,7 @@
 # Text Monitor: Final-Pasted-Text Auto-Learn Correctness
 
 ## Status
-Draft
+Implemented
 
 ## Problem / Goal
 
@@ -298,6 +298,18 @@ edit-distance heuristic blind to history.
    final-pasted-text requirement. This spec only adds tests around them (see
    Validation Plan) plus the provenance/oscillation work above.
 
+**Implementation note**: `ipcHandlers.js`'s `_processCorrections()` body (steps
+2–3 above) was extracted into a new, Electron-free module
+(`src/helpers/autoLearnDictionary.js`, `processAutoLearnCorrections()`) so the
+oscillation guard and dictionary-persistence logic is unit-testable without
+instantiating the full `IPCHandlers` class (whose constructor does unrelated,
+heavy app-startup work — GPU detection, audio-cleanup timers, hundreds of other
+IPC registrations). `_processCorrections()` itself is now a thin wrapper that
+calls this function and handles the Electron-specific broadcasting
+(`dictionary-updated`/`corrections-learned`/`showDictationPanel`). Behavior is
+unchanged; this is purely a testability-driven refactor, consistent with the
+Validation Plan's "smallest exercisable unit" framing.
+
 ### Edge cases
 
 - **Continued typing vs. correction** (Requirement 5): already handled by
@@ -375,6 +387,32 @@ edit-distance heuristic blind to history.
     cleanup.
 - Run the full suite (`npm test`) to confirm no regressions in the 11 currently
   passing `correctionLearner.test.js` cases or `textEditMonitorPrecedingChar.test.js`.
+
+**Implementation note (reviewed exception for the `AudioManager.processTranscription()`
+part of (b))**: this repo's automated test harness is `node --test` only (no
+bundler/TS-loader, no Vitest/jsdom — confirmed via `package.json`'s `test`
+script). `audioManager.js` is a renderer-only ES module that transitively
+imports extensionless `.ts` files (e.g. `../stores/settingsStore`) and uses
+browser globals (`window`); neither plain `require()` nor Node's native
+dynamic `import()` can resolve it without a bundler, so it cannot be directly
+unit-tested today (verified by spike — `import()` fails on the `.ts` imports).
+Its internal `resolveReasoningRoute()`'s routing-*kind* decision (cleanup vs.
+agent vs. skip, including the voice-agent-never-falls-back-to-cleanup rule)
+already delegates to `resolveDictationRouteKind()`/
+`resolveDictationAgentReachability()` in `src/helpers/dictationRouting.js`,
+which is fully covered by the pre-existing `test/helpers/dictationRouting.test.js`
+(unchanged by this spec). Combined with the new
+`test/helpers/pasteTextMonitorInvariant.test.js` (which exercises the real,
+registered `paste-text` IPC handler and proves it never diverges the pasted
+text from the monitor's baseline, regardless of what produced that text
+upstream), this constitutes the automated coverage that's actually
+obtainable for requirement (b) without introducing a new test-bundling
+toolchain (out of scope for this spec). The remaining gap — that
+`processTranscription()` itself returns the cleanup-model's output vs. the
+raw transcript under the three `useCleanupModel`/`skipReasoning` conditions —
+is covered by the Manual steps 1–2 below (debug-log inspection of
+`originalText` against Text Cleanup on/off), per this repo's documented
+"reviewed exception" allowance for genuinely non-automatable cases.
 
 ### Manual
 

@@ -838,31 +838,32 @@ class IPCHandlers {
     this._autoLearnLatestData = null;
 
     try {
-      const { extractCorrections } = require("../utils/correctionLearner");
-      const currentDict = this._getDictionarySafe();
-      const corrections = extractCorrections(originalText, newFieldValue, currentDict);
-      debugLogger.debug("[AutoLearn] Corrections result", {
-        corrections,
-        dictSize: currentDict.length,
+      const { processAutoLearnCorrections } = require("./autoLearnDictionary");
+      const result = processAutoLearnCorrections({
+        originalText,
+        newFieldValue,
+        databaseManager: this.databaseManager,
       });
 
-      if (corrections.length > 0) {
-        const updatedDict = [...currentDict, ...corrections];
-        const saveResult = this.databaseManager.setDictionary(updatedDict, "learned");
+      debugLogger.debug("[AutoLearn] Corrections result", {
+        learned: result.learned,
+        skippedOscillations: result.skippedOscillations,
+      });
 
-        if (saveResult?.success === false) {
-          debugLogger.debug("[AutoLearn] Failed to save dictionary", { error: saveResult.error });
-          return;
-        }
+      if (result.error) {
+        debugLogger.debug("[AutoLearn] Failed to save dictionary", { error: result.error });
+        return;
+      }
 
+      if (result.learned.length > 0) {
         // Broadcast the post-save normalized list, not the raw input (which
         // still has case-variant dupes), so renderers don't flash ghost rows.
         this.broadcastToWindows("dictionary-updated", this.databaseManager.getDictionary());
 
         // Show the overlay so the toast is visible (it may have been hidden after dictation)
         this.windowManager.showDictationPanel();
-        this.broadcastToWindows("corrections-learned", corrections);
-        debugLogger.debug("[AutoLearn] Saved corrections", { corrections });
+        this.broadcastToWindows("corrections-learned", result.learned);
+        debugLogger.debug("[AutoLearn] Saved corrections", { corrections: result.learned });
       }
     } catch (error) {
       debugLogger.debug("[AutoLearn] Error processing corrections", { error: error.message });

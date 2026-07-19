@@ -132,7 +132,11 @@ function findSubstitutions(origWords, editedWords) {
  * @param {string} originalText - The text that was originally pasted (from transcription)
  * @param {string} fieldValue - The current value of the text field (after user edits)
  * @param {string[]} existingDictionary - Words already in the custom dictionary
- * @returns {string[]} Array of corrected words to add to the dictionary
+ * @returns {Array<{from: string, to: string}>} Surviving correction pairs — `from` is
+ *   the original (mis-transcribed) word as it appeared in the pasted text, `to` is the
+ *   corrected word as it appears in the edited field. Only `to` is ever added to the
+ *   dictionary's operative hint-word list; `from` is provenance for the caller (used by
+ *   the anti-oscillation guard) and is never applied as a find/replace rule.
  */
 function extractCorrections(originalText, fieldValue, existingDictionary) {
   if (!originalText || !fieldValue) return [];
@@ -169,7 +173,7 @@ function extractCorrections(originalText, fieldValue, existingDictionary) {
     const maxLen = Math.max(origWord.length, correctedWord.length);
     if (dist / maxLen > 0.65) continue;
 
-    results.push(correctedWord);
+    results.push({ from: origWord, to: correctedWord });
     seenCorrections.add(normalizedCorrected);
   }
 

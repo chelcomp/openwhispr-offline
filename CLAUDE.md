@@ -107,6 +107,7 @@ EktosWhispr starts with Windows and runs continuously in the background, so idle
 ### Helper Modules (src/helpers/)
 
 - **audioManager.js**: Handles audio device management
+- **autoLearnDictionary.js**: Core auto-learn logic — given the originally-pasted text and the text-monitor's post-edit field value, extracts `{from, to}` correction pairs via `correctionLearner.js`, applies the anti-oscillation guard (see Custom Dictionary §13 below), and persists survivors via `databaseManager.setDictionary()`. Deliberately Electron/IPC-free (only touches the `databaseManager` it's given) so it's unit-testable in isolation — see `test/helpers/autoLearnDictionary.test.js`. Called from `ipcHandlers.js`'s `_processCorrections()`.
 - **clipboard.js**: Cross-platform clipboard operations
   - macOS: AppleScript-based paste with accessibility permission check
   - Windows: PowerShell SendKeys with nircmd.exe fallback
@@ -174,6 +175,7 @@ EktosWhispr starts with Windows and runs continuously in the background, so idle
 - **windowManager.js**: Window creation and lifecycle management
 - **cliBridge.js**: Loopback HTTP server on ports 8200–8219, bearer-token auth (token at `~/.ektoswhispr/cli-bridge.json`), 127.0.0.1-only. Used by the unified CLI to talk to a running desktop app.
 - **postMigrationDetector.js**: Detects users returning from the pre-Gizmo bundle ID via a `.bundle-migrated` sentinel in userData; consumed by `ipcHandlers.js` to drive the `PostMigrationOnboarding` modal
+- **textEditMonitor.js**: Platform-native text-monitor for the auto-learn feature (see Custom Dictionary §13) — watches the destination field's real, focused value after a paste (AT-SPI2 on Linux, UI Automation on Windows, AXObserver/osascript-polling fallback on macOS). Instantiated once in `main.js`, shared with `windowManager`/`ipcHandlers`. Emits `text-edited` on any change; graceful fallback per platform if the native binary is unavailable.
 
 ### React Components (src/components/)
 
@@ -533,6 +535,15 @@ Improve transcription accuracy for specific words, names, or technical terms:
 - Whisper uses the prompt as context/hints for transcription
 - Words in the prompt are more likely to be recognized correctly
 - Useful for: uncommon names, technical jargon, brand names, domain-specific terms
+
+**Auto-learn pipeline (learning corrections from the destination field)**:
+
+The custom dictionary also grows automatically by watching what the user *fixes* after a paste — this is strictly spelling-correction learning (teaching correct spelling of a word/name the user habitually mis-dictates), not a substitution/replacement engine. Actual find/replace is a separate, existing feature (Snippets: `trigger` → `replacement`, app-filtered); building substitution into the dictionary here would be duplicate scope.
+
+- **Final-pasted-text invariant**: `TextEditMonitor.startMonitoring(text, 30000, {targetPid})` is started (500ms after paste, gated on Settings → Auto-Learn) from the `paste-text` IPC handler in `ipcHandlers.js`, using the *exact same* `text` argument the handler received — never `textToPaste` (which has snippets applied + a trailing smart-spacing space). Since `text` is always `AudioManager.processTranscription()`'s return value, this baseline is already the post-cleanup text whenever Text Cleanup is active (never the pre-cleanup raw transcript), and the raw transcript unchanged whenever cleanup is off/unreachable or bypassed (dictation-agent/voice-agent route, §17). Regression-locked in `test/helpers/pasteTextMonitorInvariant.test.js`.
+- **Detecting a correction**: the monitor emits `text-edited` (`{originalText, newFieldValue}`) on any OS-reported change to the focused field. `ipcHandlers.js`'s `_setupTextEditMonitor()` debounces 1500ms (`AUTO_LEARN_DEBOUNCE_MS`) then calls `_processCorrections()`, which delegates to `src/helpers/autoLearnDictionary.js`'s `processAutoLearnCorrections()`. That in turn calls `src/utils/correctionLearner.js`'s `extractCorrections(originalText, fieldValue, existingDictionary)`, which isolates the edited region (exact substring or a ≥30%-overlap sliding word-window — so text typed *after* the pasted content is never mistaken for a correction), word-aligns via LCS, bails out on rewrites (>50% of words changed), and filters candidates (already in dictionary, duplicate, case-identical, <3 chars, or Levenshtein edit-distance ratio >0.65). Returns `Array<{from, to}>` — `from` is the original mis-transcribed word, `to` is the correction; only `to` is ever added to the dictionary's Whisper-prompt hint list.
+- **Anti-oscillation guard**: before persisting a new `{from, to}` pair, checks whether an existing `source = 'learned'` dictionary row already has `word = from` and `learned_from = to` (case-insensitive) — the exact reverse of a previously-learned correction. If so, the pair is skipped (not persisted) and logged at debug level only (`[AutoLearn] Skipped likely oscillation`) — this is a heuristic against simple A↔B flip-flopping, not a guarantee against longer cycles (A→B→C→A); the existing `undo-learned-corrections` IPC and manual dictionary editing remain the escape hatch.
+- **`learned_from` column**: nullable `TEXT` column on `custom_dictionary`, populated only when a brand-new `source = 'learned'` row is inserted (via an optional provenance `Map` argument to `DatabaseManager.setDictionary(words, sourceForNewWords, learnedFromByLowerWord)`). Cleared to `NULL` when a `learned` row is promoted to `manual` (user re-types/endorses it). Deliberately excluded from `getPendingDictionary()`'s cloud-sync push payload — it's local-only provenance for this device's oscillation guard and is never applied as a find/replace rule anywhere.
 
 ### 14. GNOME Wayland Global Hotkeys
 

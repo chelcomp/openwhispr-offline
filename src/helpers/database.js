@@ -593,6 +593,14 @@ class DatabaseManager {
       } catch (err) {
         if (!err.message.includes("duplicate column")) throw err;
       }
+      // learned_from: nullable provenance for source='learned' rows — records the
+      // mis-transcribed word this entry replaced, used only by the auto-learn
+      // anti-oscillation guard (never applied as a find/replace rule).
+      try {
+        this.db.exec("ALTER TABLE custom_dictionary ADD COLUMN learned_from TEXT");
+      } catch (err) {
+        if (!err.message.includes("duplicate column")) throw err;
+      }
 
       // Backfill client IDs for existing rows
       const syncTables = [
@@ -825,9 +833,36 @@ class DatabaseManager {
     }
   }
 
+  // Same active rows as getDictionary(), but with source/learned_from provenance —
+  // consumed only within the main process (auto-learn's anti-oscillation guard),
+  // not exposed over IPC.
+  getDictionaryWithProvenance() {
+    try {
+      if (!this.db) {
+        throw new Error("Database not initialized");
+      }
+      return this.db
+        .prepare(
+          "SELECT word, source, learned_from FROM custom_dictionary WHERE deleted_at IS NULL ORDER BY id ASC"
+        )
+        .all();
+    } catch (error) {
+      debugLogger.error(
+        "Error getting dictionary with provenance",
+        { error: error.message },
+        "database"
+      );
+      throw error;
+    }
+  }
+
   // Diff-based update so unchanged rows keep their source/created_at/cloud_id.
   // `sourceForNewWords` tags additions ('manual' for user-typed, 'learned' for auto-learn).
-  setDictionary(words, sourceForNewWords = "manual") {
+  // `learnedFromByLowerWord` (optional) is a Map<lowercased 'to' word, original 'from' word>
+  // consulted only when inserting a brand-new 'learned' row this call, so newly-learned
+  // corrections carry provenance for the anti-oscillation guard. Existing/updated rows and
+  // manual/bulk-restore paths that don't supply it leave learned_from untouched/NULL.
+  setDictionary(words, sourceForNewWords = "manual", learnedFromByLowerWord = null) {
     try {
       if (!this.db) {
         throw new Error("Database not initialized");
@@ -859,8 +894,10 @@ class DatabaseManager {
       const restore = this.db.prepare(
         "UPDATE custom_dictionary SET deleted_at = NULL, source = CASE WHEN source = 'learned' AND ? = 'manual' THEN 'manual' ELSE source END, word = ?, updated_at = datetime('now'), sync_status = 'pending' WHERE id = ?"
       );
+      // Once a human explicitly re-types/re-saves a previously auto-learned word, its
+      // auto-learn provenance is no longer meaningful — clear it alongside the promotion.
       const promoteSource = this.db.prepare(
-        "UPDATE custom_dictionary SET word = ?, source = 'manual', updated_at = datetime('now'), sync_status = 'pending' WHERE id = ? AND source = 'learned'"
+        "UPDATE custom_dictionary SET word = ?, source = 'manual', learned_from = NULL, updated_at = datetime('now'), sync_status = 'pending' WHERE id = ? AND source = 'learned'"
       );
       // Updates word casing on an active row (guarded on word != ? so an
       // unchanged row stays untouched and keeps its sync_status).
@@ -870,7 +907,7 @@ class DatabaseManager {
       // INSERT OR IGNORE in case a legacy case-variant row collides on the
       // case-sensitive UNIQUE(word) that existingByLower didn't catch.
       const insert = this.db.prepare(
-        "INSERT OR IGNORE INTO custom_dictionary (word, source, client_dict_id, sync_status, updated_at) VALUES (?, ?, ?, 'pending', datetime('now'))"
+        "INSERT OR IGNORE INTO custom_dictionary (word, source, client_dict_id, sync_status, updated_at, learned_from) VALUES (?, ?, ?, 'pending', datetime('now'), ?)"
       );
 
       this.db.transaction(() => {
@@ -894,7 +931,11 @@ class DatabaseManager {
             }
             continue;
           }
-          insert.run(word, sourceForNewWords, randomUUID());
+          const learnedFrom =
+            sourceForNewWords === "learned" && learnedFromByLowerWord
+              ? learnedFromByLowerWord.get(word.toLowerCase()) || null
+              : null;
+          insert.run(word, sourceForNewWords, randomUUID(), learnedFrom);
         }
       })();
 
@@ -905,12 +946,18 @@ class DatabaseManager {
     }
   }
 
+  // learned_from is intentionally excluded from this push payload — it's local-only
+  // provenance for this device's auto-learn anti-oscillation guard, never synced to
+  // the cloud (see docs/specs/text-monitor-final-text-only.md Non-goals).
   getPendingDictionary() {
     try {
       if (!this.db) throw new Error("Database not initialized");
       return this.db
         .prepare(
-          "SELECT * FROM custom_dictionary WHERE sync_status = 'pending' AND deleted_at IS NULL"
+          `SELECT id, word, source, client_dict_id, cloud_id, sync_status, deleted_at,
+                  created_at, updated_at
+           FROM custom_dictionary
+           WHERE sync_status = 'pending' AND deleted_at IS NULL`
         )
         .all();
     } catch (error) {
