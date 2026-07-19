@@ -150,36 +150,36 @@ function getStorageUsage() {
 }
 
 /**
- * Delete meeting audio files older than retentionDays. Returns { deleted, kept }.
- * @param {number} retentionDays
+ * Delete every meeting audio (.webm) file, unconditionally, regardless of
+ * age. Does NOT touch the database — clearing the `audio_path` bookkeeping
+ * column for affected notes is the caller's responsibility (see the
+ * `delete-all-meeting-audio` IPC handler in ipcHandlers.js). This is a
+ * manual, user-initiated bulk delete — meeting audio has no automatic
+ * age/retention-based expiry per CLAUDE.md's Non-Negotiable Product
+ * Premises §7 (Data retention).
+ *
+ * @returns {{ deleted: number }}
  */
-function cleanupExpiredAudio(retentionDays) {
+function deleteAllMeetingAudio() {
   try {
     const dir = getStorageDir();
-    const cutoffMs = Date.now() - retentionDays * 86400000;
     const files = fs.readdirSync(dir).filter((f) => f.endsWith(".webm"));
-    let deleted = 0;
-    let kept = 0;
     for (const file of files) {
-      const filePath = path.join(dir, file);
       try {
-        const { mtimeMs } = fs.statSync(filePath);
-        if (mtimeMs < cutoffMs) {
-          fs.unlinkSync(filePath);
-          deleted++;
-        } else {
-          kept++;
-        }
+        fs.unlinkSync(path.join(dir, file));
       } catch (err) {
-        debugLogger.warn("[MeetingAudio] cleanup: could not process file", { file, error: err.message });
+        debugLogger.warn("[MeetingAudio] Failed to delete audio file", {
+          file,
+          error: err.message,
+        });
       }
     }
-    debugLogger.info("[MeetingAudio] cleanup complete", { deleted, kept, retentionDays });
-    return { deleted, kept };
+    debugLogger.info("[MeetingAudio] All audio deleted", { count: files.length });
+    return { deleted: files.length };
   } catch (err) {
-    debugLogger.error("[MeetingAudio] cleanup failed", { error: err.message });
-    return { deleted: 0, kept: 0 };
+    debugLogger.error("[MeetingAudio] Failed to delete all audio", { error: err.message });
+    return { deleted: 0 };
   }
 }
 
-module.exports = { saveAudio, getAudioPath, deleteAudio, getStorageUsage, cleanupExpiredAudio };
+module.exports = { saveAudio, getAudioPath, deleteAudio, deleteAllMeetingAudio, getStorageUsage };

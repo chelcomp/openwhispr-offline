@@ -11,6 +11,7 @@ const GnomeShortcutManager = require("./gnomeShortcut");
 const HyprlandShortcutManager = require("./hyprlandShortcut");
 const { i18nMain, changeLanguage } = require("./i18nMain");
 const AudioStorageManager = require("./audioStorage");
+const { decideAudioCleanup, shouldRunImmediateCleanup } = require("./audioCleanupPolicy");
 const OpenAIRealtimeStreaming = require("./openaiRealtimeStreaming");
 const micMuteManager = require("./micMuteManager");
 const liveSpeakerIdentifier = require("./liveSpeakerIdentifier");
@@ -732,23 +733,61 @@ class IPCHandlers {
   }
 
   _setupAudioCleanup() {
-    const DEFAULT_RETENTION_DAYS = 30;
     const SIX_HOURS_MS = 6 * 60 * 60 * 1000;
 
+    // Reads the user's currently configured retention value fresh on every
+    // invocation (not a value captured once at startup) since the user can
+    // change the setting without restarting the app. A configured value of 0
+    // deliberately deletes ALL existing dictation audio, regardless of age —
+    // see audioCleanupPolicy.js and the Problem section of
+    // docs/specs/audio-retention-cleanup-fix.md for the confirmed semantics.
+    // This applies to DICTATION audio only. Meeting audio is permanently
+    // exempt from any automatic expiry per CLAUDE.md's Non-Negotiable Product
+    // Premises §7 (Data retention) — it is operational data, deleted only via
+    // user-initiated actions (deleting a note, or the "Clear All Meeting
+    // Audio" button), never by this cleanup job.
     const runCleanup = () => {
+      const retentionDays = this.environmentManager.getAudioRetentionDays();
+      const decision = decideAudioCleanup(retentionDays);
+      if (!decision.shouldRun) {
+        debugLogger.warn(
+          "Audio cleanup skipped — invalid retention value",
+          { retentionDays },
+          "audio-storage"
+        );
+        return;
+      }
       try {
-        this.audioStorageManager.cleanupExpiredAudio(DEFAULT_RETENTION_DAYS, this.databaseManager);
+        this.audioStorageManager.cleanupExpiredAudio(decision.retentionDays, this.databaseManager);
       } catch (error) {
         debugLogger.error("Audio cleanup failed", { error: error.message }, "audio-storage");
       }
-      try {
-        meetingAudioStorage.cleanupExpiredAudio(DEFAULT_RETENTION_DAYS);
-      } catch (error) {
-        debugLogger.error("Meeting audio cleanup failed", { error: error.message }, "audio-storage");
-      }
     };
 
-    runCleanup();
+    // Startup-ordering safeguard: if AUDIO_RETENTION_DAYS has never been
+    // persisted at all (fresh install, headless/CLI-bridge session, or an
+    // existing user's first launch after upgrading to this fix), skip the
+    // very first immediate cleanup pass so the renderer's startup sync (see
+    // src/helpers/audioRetentionSync.js, driven from settingsStore.ts) has a
+    // chance to establish the real, authoritative value — which may be an
+    // existing user's genuine non-zero preference from before this fix ever
+    // shipped — before any audio file is ever touched. This constructor runs
+    // before any window exists (main.js creates the main window afterwards),
+    // so main must NOT self-persist the fallback here: doing so would mark
+    // the key "set" with a bogus 0 before the renderer's real value ever had
+    // a chance to sync, silently clobbering it (see docs/specs/audio-
+    // retention-cleanup-fix.md). Persisting the resolved value is entirely
+    // the renderer startup sync's job.
+    if (shouldRunImmediateCleanup(this.environmentManager.hasAudioRetentionDaysBeenSet())) {
+      runCleanup();
+    } else {
+      debugLogger.info(
+        "Skipping first audio cleanup pass — AUDIO_RETENTION_DAYS never synced yet",
+        {},
+        "audio-storage"
+      );
+    }
+
     this._audioCleanupInterval = setInterval(runCleanup, SIX_HOURS_MS);
   }
 
@@ -1025,6 +1064,33 @@ class IPCHandlers {
       } catch (error) {
         debugLogger.error(
           "Failed to clear audio flags after delete-all",
+          { error: error.message },
+          "audio-storage"
+        );
+      }
+      return result;
+    });
+
+    ipcMain.handle("get-meeting-audio-storage-usage", async () => {
+      return meetingAudioStorage.getStorageUsage();
+    });
+
+    // Bulk-deletes all meeting audio files (deliberate, user-initiated —
+    // per CLAUDE.md §7, meeting audio is never auto-purged, only manually
+    // cleared). Clears each affected note's audio_path pointer but never
+    // touches title/content/transcript/enhanced_content or the note itself.
+    ipcMain.handle("delete-all-meeting-audio", async () => {
+      const result = meetingAudioStorage.deleteAllMeetingAudio();
+      try {
+        const rows = this.databaseManager.db
+          .prepare("SELECT id FROM notes WHERE audio_path IS NOT NULL")
+          .all();
+        for (const row of rows) {
+          this.databaseManager.updateNote(row.id, { audio_path: null });
+        }
+      } catch (error) {
+        debugLogger.error(
+          "Failed to clear audio_path after meeting delete-all",
           { error: error.message },
           "audio-storage"
         );
@@ -3604,6 +3670,26 @@ class IPCHandlers {
 
     ipcMain.handle("save-ui-language", async (event, language) => {
       return this.environmentManager.saveUiLanguage(language);
+    });
+
+    ipcMain.handle("get-audio-retention-days", async () => {
+      return this.environmentManager.getAudioRetentionDays();
+    });
+
+    ipcMain.handle("save-audio-retention-days", async (event, days) => {
+      return this.environmentManager.saveAudioRetentionDays(days);
+    });
+
+    // Exposes both the value AND whether it has ever actually been
+    // persisted, so the renderer's startup sync can tell "main has a real,
+    // previously-synced value" (pull) apart from "main has never seen a
+    // value at all" (push the renderer's own pre-existing value up to main
+    // instead) — see src/helpers/audioRetentionSync.js.
+    ipcMain.handle("get-audio-retention-sync-state", async () => {
+      return {
+        hasBeenSet: this.environmentManager.hasAudioRetentionDaysBeenSet(),
+        days: this.environmentManager.getAudioRetentionDays(),
+      };
     });
 
     ipcMain.handle("set-ui-language", async (event, language) => {

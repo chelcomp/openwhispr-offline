@@ -8,6 +8,7 @@ import whisperVadConstants from "../constants/whisperVad.json";
 import type { LocalTranscriptionProvider, InferenceMode, SelfHostedType } from "../types/electron";
 import { PROMPT_KIND_LIST, type PromptKind } from "../config/prompts/registry";
 import { deriveReasoningMode, buildReasoningScopePatches } from "../helpers/reasoningRouting";
+import { resolveAudioRetentionStartupSync } from "../helpers/audioRetentionSync";
 import {
   INFERENCE_SCOPES,
   type InferenceScope,
@@ -1561,6 +1562,15 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
   setAudioRetentionDays: (days: number) => {
     if (isBrowser) localStorage.setItem("audioRetentionDays", String(days));
     set({ audioRetentionDays: days });
+    if (isBrowser && window.electronAPI?.saveAudioRetentionDays) {
+      window.electronAPI.saveAudioRetentionDays(days).catch((err) => {
+        logger.warn(
+          "Failed to sync audio retention days to main process",
+          { error: (err as Error).message },
+          "settings"
+        );
+      });
+    }
   },
   setDataRetentionEnabled: (value: boolean) => {
     if (isBrowser) localStorage.setItem("dataRetentionEnabled", String(value));
@@ -2307,6 +2317,41 @@ export async function initializeSettings(): Promise<void> {
         "settings"
       );
       void i18n.changeLanguage(normalizeUiLanguage(state.uiLanguage));
+    }
+
+    // Sync audio retention days with main process (mirrors activation
+    // mode/UI language above, with one twist). Main only becomes
+    // authoritative once a value has genuinely been persisted at least once
+    // — until then, main's 0 is just a fallback, not a real prior choice, so
+    // pulling it unconditionally would silently clobber an existing user's
+    // real, never-before-synced renderer preference (e.g. 30, set before
+    // this main-process setting ever existed). resolveAudioRetentionStartupSync
+    // decides: pull main's value once it's genuinely been set; otherwise
+    // push the renderer's own current value up to main, establishing it as
+    // the persisted value for the first time. See audioRetentionSync.js.
+    try {
+      const syncState = await window.electronAPI.getAudioRetentionSyncState?.();
+      if (syncState) {
+        const decision = resolveAudioRetentionStartupSync({
+          hasBeenSetOnMain: syncState.hasBeenSet,
+          mainValue: syncState.days,
+          rendererValue: state.audioRetentionDays,
+        });
+        if (decision.action === "pull") {
+          if (decision.value !== state.audioRetentionDays) {
+            if (isBrowser) localStorage.setItem("audioRetentionDays", String(decision.value));
+            useSettingsStore.setState({ audioRetentionDays: decision.value });
+          }
+        } else {
+          await window.electronAPI.saveAudioRetentionDays?.(decision.value);
+        }
+      }
+    } catch (err) {
+      logger.warn(
+        "Failed to sync audio retention days on startup",
+        { error: (err as Error).message },
+        "settings"
+      );
     }
 
     const migratedLang = isBrowser ? localStorage.getItem("preferredLanguage") : null;

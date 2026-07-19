@@ -70,6 +70,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
   deleteTranscriptionAudio: (id) => ipcRenderer.invoke("delete-transcription-audio", id),
   getAudioStorageUsage: () => ipcRenderer.invoke("get-audio-storage-usage"),
   deleteAllAudio: () => ipcRenderer.invoke("delete-all-audio"),
+  getMeetingAudioStorageUsage: () => ipcRenderer.invoke("get-meeting-audio-storage-usage"),
+  deleteAllMeetingAudio: () => ipcRenderer.invoke("delete-all-meeting-audio"),
   retryTranscription: (id, settings) => ipcRenderer.invoke("retry-transcription", id, settings),
   updateTranscriptionText: (id, text, rawText) =>
     ipcRenderer.invoke("update-transcription-text", id, text, rawText),
@@ -396,6 +398,10 @@ contextBridge.exposeInMainWorld("electronAPI", {
   getUiLanguage: () => ipcRenderer.invoke("get-ui-language"),
   saveUiLanguage: (language) => ipcRenderer.invoke("save-ui-language", language),
   setUiLanguage: (language) => ipcRenderer.invoke("set-ui-language", language),
+
+  getAudioRetentionDays: () => ipcRenderer.invoke("get-audio-retention-days"),
+  saveAudioRetentionDays: (days) => ipcRenderer.invoke("save-audio-retention-days", days),
+  getAudioRetentionSyncState: () => ipcRenderer.invoke("get-audio-retention-sync-state"),
 
   // Custom endpoint API keys
   getCustomTranscriptionKey: () => ipcRenderer.invoke("get-custom-transcription-key"),

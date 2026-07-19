@@ -798,6 +798,29 @@ export default function SettingsPage({
     return () => dispose?.();
   }, [activeSection]);
 
+  const [meetingAudioStorageUsage, setMeetingAudioStorageUsage] = useState<{
+    fileCount: number;
+    totalBytes: number;
+  }>({ fileCount: 0, totalBytes: 0 });
+
+  useEffect(() => {
+    if (activeSection !== "privacyData") return;
+    const refreshMeetingAudioStorageUsage = () => {
+      window.electronAPI
+        ?.getMeetingAudioStorageUsage?.()
+        .then((usage: { fileCount: number; totalBytes: number }) => {
+          if (usage) setMeetingAudioStorageUsage(usage);
+        })
+        .catch(() => {});
+    };
+    refreshMeetingAudioStorageUsage();
+    // Re-fetch whenever a note is updated (this fires when a meeting note's
+    // audio finishes saving, among other note changes), so the count doesn't
+    // stay stale if this section is already open while a meeting is recording.
+    const dispose = window.electronAPI?.onNoteUpdated?.(refreshMeetingAudioStorageUsage);
+    return () => dispose?.();
+  }, [activeSection]);
+
   // Lazy keep-alive: mount AI sections only after the user has visited them once,
   // then keep them mounted so model-download progress and IPC listeners survive
   // section switches. The setState-during-render pattern flips the flag in the
@@ -823,6 +846,17 @@ export default function SettingsPage({
       await window.electronAPI.deleteAllAudio();
       setAudioStorageUsage({ fileCount: 0, totalBytes: 0 });
       toast({ title: t("settingsPage.privacy.clearAllAudio"), variant: "default" });
+    } catch {
+      // silent fail
+    }
+  };
+
+  const handleClearAllMeetingAudio = async () => {
+    if (!window.electronAPI?.deleteAllMeetingAudio) return;
+    try {
+      await window.electronAPI.deleteAllMeetingAudio();
+      setMeetingAudioStorageUsage({ fileCount: 0, totalBytes: 0 });
+      toast({ title: t("settingsPage.privacy.clearAllMeetingAudio"), variant: "default" });
     } catch {
       // silent fail
     }
@@ -2402,6 +2436,40 @@ EOF`,
                       onClick={handleClearAllAudio}
                     >
                       {t("settingsPage.privacy.clearAllAudio")}
+                    </Button>
+                  </SettingsRow>
+                </SettingsPanelRow>
+              </SettingsPanel>
+            </div>
+
+            {/* Meeting Audio — never auto-purged (CLAUDE.md §7); manual controls only */}
+            <div>
+              <SectionHeader
+                title={t("settingsPage.privacy.meetingAudioStorageUsage")}
+                description={t("settingsPage.privacy.meetingAudioStorageUsageDescription")}
+              />
+
+              <SettingsPanel>
+                <SettingsPanelRow>
+                  <SettingsRow
+                    label={t("settingsPage.privacy.meetingAudioStorageUsage")}
+                    description={
+                      meetingAudioStorageUsage.fileCount > 0
+                        ? t("settingsPage.privacy.audioStorageFiles", {
+                            count: meetingAudioStorageUsage.fileCount,
+                            size: formatBytes(meetingAudioStorageUsage.totalBytes),
+                          })
+                        : t("settingsPage.privacy.meetingAudioStorageEmpty")
+                    }
+                  >
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-7 text-xs"
+                      disabled={meetingAudioStorageUsage.fileCount === 0}
+                      onClick={handleClearAllMeetingAudio}
+                    >
+                      {t("settingsPage.privacy.clearAllMeetingAudio")}
                     </Button>
                   </SettingsRow>
                 </SettingsPanelRow>
