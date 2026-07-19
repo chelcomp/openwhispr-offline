@@ -1231,7 +1231,7 @@ Padrão comum: stdout = dados/eventos em texto simples; stderr = diagnóstico/JS
 
 ### 7.9 CI (`.github/workflows/`)
 
-13 workflows: `tests.yml` (PR, `npm ci --ignore-scripts && npm test`), `lockfile-lint.yml`, `codeql.yml` (segunda-feira + push/PR), `build-and-notarize.yml` (push/PR, build Windows assinado via Azure Trusted Signing em push / não-assinado em PR), `release.yml` (tag `v*.*.*`, publica release oficial), `auto-release.yml` (bump patch automático em push main), 6 workflows de binário nativo individual (`build-windows-key-listener.yml`, etc. — `workflow_dispatch`, compilam e publicam tag própria `{componente}-v*`), `update-nix.yml` (atualiza `nix/package.nix`). (`build-windows-mic-listener.yml` existia para o binário de detecção automática de reuniões; removido junto com ela — ver §3.4.)
+13 workflows: `tests.yml` (PR, `npm ci --ignore-scripts && npm test`), `lockfile-lint.yml`, `codeql.yml` (segunda-feira + push/PR), `build-and-notarize.yml` (push/PR, build Windows assinado via Azure Trusted Signing em push / não-assinado em PR), `release.yml` (tag `v*.*.*`, publica release oficial), `auto-release.yml` (cron diário `0 3 * * *` UTC + `workflow_dispatch` com input `force`; faz bump patch/tag/push somente se houver commits não lançados desde a última tag `v*.*.*`, senão é um no-op), 6 workflows de binário nativo individual (`build-windows-key-listener.yml`, etc. — `workflow_dispatch`, compilam e publicam tag própria `{componente}-v*`), `update-nix.yml` (atualiza `nix/package.nix`). (`build-windows-mic-listener.yml` existia para o binário de detecção automática de reuniões; removido junto com ela — ver §3.4.)
 
 ### 7.10 Roteiro de Recriação do Ambiente de Build
 
