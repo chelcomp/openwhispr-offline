@@ -236,9 +236,9 @@ dependency despite its home). Exports:
 - **New**: `isParakeetSegmentLowQuality(quality, ctx)` — low-quality when: `ctx.text` is empty;
   or `isHallucinatedText(ctx.text, language)`; or
   `computeTextCompressionRatio(ctx.text) > WHISPER_COMPRESSION_CEIL` (the same 2.4 ceiling reused
-  across engines — flagged in Open Questions as a concrete proposal, not project-owner-confirmed,
-  since it was tuned for Whisper's decode-failure behavior and may need its own Parakeet-specific
-  value once real usage data exists).
+  across engines — **adopted as the starting value** even though it was tuned for Whisper's
+  decode-failure behavior, not Parakeet's; see Open Questions for why this is treated as resolved
+  rather than left blocking, and revisit once real Parakeet usage data exists).
 - **New**: `summarizeParakeetQuality(rawText, rmsForChunk)` — returns
   `{ compressionRatio, rms, hallucinated }`, the Parakeet-side counterpart of
   `summarizeWhisperQuality`, feeding `isParakeetSegmentLowQuality`.
@@ -258,8 +258,8 @@ rewrite). Update the sole import site (`ipcHandlers.js:44`) and rename the exist
 does not change).
 
 **New behavior added to `finish()`**: a wall-clock elapsed-time budget,
-`TAIL_FINALIZE_BUDGET_MS` (proposed concrete value: **300ms** — flagged as a concrete proposal for
-confirmation, not an owner-specified number, chosen to leave headroom under the 500ms total budget
+`TAIL_FINALIZE_BUDGET_MS` (**adopted default: 300ms** — see Open Questions for why this is treated
+as resolved rather than left blocking; chosen to leave headroom under the 500ms total budget
 for IPC round trips and the existing 120ms post-stop flush wait already present in
 `stop-dictation-preview`), that applies **only** while `finish()` is deciding whether to defer
 (merge-and-retry) the last, still-open utterance at hotkey release. Concretely: `finish()` records
@@ -354,7 +354,10 @@ beta toggle to auto-disable.
 - `showTranscriptionPreview`'s label/description copy in Settings should be reworded (implementation
   detail for spec-executor, coordinate with i18n files) to reflect its narrowed meaning: "show a
   live caption overlay while dictating" rather than implying it controls transcription speed —
-  since after this spec, the speed mechanism is always on regardless of this toggle.
+  since after this spec, the speed mechanism is always on regardless of this toggle. **Resolved**:
+  the reworded copy should also include a short note that Dictation speed no longer depends on this
+  toggle (see Open Questions for why this is settled rather than left open) — exact phrasing is
+  spec-executor's call, added through the normal i18n process across all locale files.
 
 ### 9. Interaction with `docs/specs/transcription-engine-lifecycle.md`
 
@@ -388,6 +391,133 @@ open utterance) is unchanged and, like today, only fires while `showOverlay` is 
 volatile partial-caption re-transcription has no purpose when there's no overlay to show it in —
 this is the one piece of the mechanism that legitimately stays gated behind the visual toggle (it
 does not affect the committed/pasted transcript either way).
+
+### 11. Resolved investigation: do the three `runtime: "online"` Parakeet models have *any* offline/batch inference path?
+
+This was the open blocker flagged for further conversation with the project owner
+("vamos conversar mais sobre este item"). The codebase and its vendored sherpa-onnx binaries were
+inspected directly (not assumed) to confirm the claim in the Problem/Goal section. Findings, with
+evidence:
+
+- **Two structurally different sherpa-onnx server binaries exist and are bundled separately.**
+  `scripts/download-sherpa-onnx.js:15-72` downloads and installs `sherpa-onnx-offline-websocket-server`
+  (renamed `sherpa-onnx-ws-{platform}-{arch}`) and `sherpa-onnx-online-websocket-server` (renamed
+  `sherpa-onnx-online-ws-{platform}-{arch}`) as two distinct upstream binaries — this split is
+  upstream sherpa-onnx project structure, not something invented in this codebase.
+  `ParakeetWsServer.getWsBinaryPath(runtime)` (`src/helpers/parakeetWsServer.js:45-72`) picks one or
+  the other purely from the model's `runtime` field; `ParakeetWsServer.transcribe()`
+  (`parakeetWsServer.js:332-340`) routes to `_transcribeOffline()` or `_transcribeOnline()`
+  accordingly. There is no code path, flag, or fallback anywhere that runs an `"online"`-runtime
+  model through the offline binary or vice versa.
+- **The model *export itself* — not just the server binary choice — is streaming-specific.**
+  `src/models/modelRegistryData.json` shows the difference directly: the two offline models'
+  download assets are named `sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8.tar.bz2` and, tellingly,
+  `sherpa-onnx-nemo-parakeet-unified-en-0.6b-int8-**non-streaming**.tar.bz2` (line 49) — the upstream
+  release explicitly labels the offline export "non-streaming." The three `runtime: "online"` models'
+  assets (lines 63, 91, 119) are named
+  `sherpa-onnx-nemotron-speech-streaming-en-0.6b-**560ms**-int8-...`,
+  `sherpa-onnx-nemotron-3.5-asr-streaming-0.6b-**560ms**-int8-...`, and
+  `...-nemotron-3.5-asr-streaming-0.6b-**1120ms**-int8-...`. The `560ms`/`1120ms` figures are the
+  causal encoder's fixed chunk/lookahead window baked into the exported ONNX graph at export time
+  (this is standard sherpa-onnx/icefall streaming-Zipformer/Conformer export practice: a streaming
+  encoder takes additional cached-state tensors as graph inputs — `cached_len`, `cached_key`,
+  `cached_val`, `cached_conv`, etc. — that a non-streaming encoder graph does not have and cannot
+  accept). This is corroborated in-app: `TAIL_SILENCE`'s doc comment
+  (`parakeetWsServer.js:24-30`) explicitly references "the largest (1120 ms) chunk window" as a
+  property of the model itself, not a server configuration choice.
+- **Practical consequence confirmed by tracing every call site**: `ParakeetWsServer._doStart()`
+  (`parakeetWsServer.js:143-165`) always passes the same three model files
+  (`encoder.int8.onnx`/`decoder.int8.onnx`/`joiner.int8.onnx`) regardless of runtime — but to a
+  different binary. Because the online models' encoder graph has a different input/output tensor
+  signature than an offline encoder graph requires, there is no way to feed
+  `nemotron-speech-streaming-en-0.6b`'s exported files into the offline binary and get a valid result;
+  the offline binary would reject the graph outright. There is no vendored non-streaming counterpart
+  export of these three specific NVIDIA Nemotron checkpoints available from the sherpa-onnx model zoo
+  today.
+- **No confidence signal exists for the online path either** (relevant to Design §2/§3):
+  `parseOfflineMessage()`/`createOnlineAccumulator()` (`src/helpers/parakeetWsResult.js:1-48`) confirm
+  the online protocol's JSON messages only ever carry `text`/`is_final`/`segment` — the same
+  text-derived heuristic proposed for offline-runtime Parakeet in Design §3 would be the only
+  available confidence signal here too, whichever resolution option is chosen.
+
+**Conclusion**: the claim in Problem/Goal is confirmed, not merely assumed. These three shipped
+models genuinely have no batch/offline sherpa-onnx execution path available in this codebase or in
+what's published upstream for the checkpoint export. "No streaming, ever" cannot be applied to them
+without either (a) dropping the models, or (b) changing what "no streaming" means for their specific
+call path. Both are legitimate, materially different product decisions — see §12.
+
+### 12. Resolution options for the three online-runtime models (pending project owner decision)
+
+Three options were evaluated. **This spec does not select one** — per this repo's CLAUDE.md rule
+that decisions of this consequence are made directly by the project owner in conversation, not
+relayed through a subagent. This section exists to make that conversation concrete, not to
+pre-empt it.
+
+**Option A — Drop the three models from the product entirely.**
+Remove them from `modelRegistryData.json`, their Settings UI entries, and download-script support;
+migrate any user currently on one of these models to a documented default offline model (e.g.
+`parakeet-tdt-0.6b-v3`) on next launch, per CLAUDE.md's Migration Safety premise. Cleanest possible
+adherence to "no streaming, ever, for any engine" — after this, there is no code path in the entire
+app that uses `createOnlineStream()`/`_transcribeOnline()` for Dictation, Meeting, or Upload, and the
+whole online-websocket-server binary/download entry could eventually be removed too.
+*Tradeoff*: this is a real product regression, not a refactor — it removes model options a prior
+decision already chose to ship (very low per-utterance latency: 560ms/1120ms chunk windows;
+multilingual coverage for `nemotron-3.5-asr-streaming-0.6b`). Users currently on one of these models
+lose it outright, with no equivalent replacement at the same latency point. This is the largest-blast
+-radius option and is the one most likely to need its own migration-focused user communication.
+
+**Option B — Keep them as a documented, narrow Speed/mechanism exception (this spec's current
+Non-goals/Design §6 already describes this; restated here for direct comparison).** The three
+models keep exactly their current one-shot-at-release behavior, internally implemented via
+`createOnlineStream()`, completely untouched by and excluded from the new progressive-batching
+mechanism (no VAD chunking, no confidence gate, no merge-retry, no fast committed text). This is
+recorded as a new, explicit exception of the same kind as CLAUDE.md §3's existing documented
+medium/large-Whisper exception to the Speed premise.
+*Tradeoff*: minimal implementation risk and zero product-surface loss — but it does mean these three
+models never gain the quality-improving merge-and-retry mechanism this whole spec exists to deliver,
+indefinitely, and it leaves "no true streaming, ever" true only for the *new mechanism*, not for the
+app as a whole — a reader of Problem/Goal's opening sentence could reasonably say this is a carve-out
+of the letter of decision #1, even though Design §6/this section explain why. It is honest about that
+tension rather than hiding it, which is the main reason it is workable as an interim answer.
+
+**Option C — Run the online models through the new mechanism by treating each closed VAD chunk as
+an independent, state-free "batch" call to the streaming API.** `ParakeetWsServer._transcribeOnline()`
+(`parakeetWsServer.js:402-430`) already opens a fresh WebSocket, streams the given buffer in
+`ONLINE_CHUNK_BYTES` pieces, appends `TAIL_SILENCE`, and returns one finalized `{ text }` per call —
+no decoder state persists across separate `_transcribeOnline()`/`createOnlineStream()` invocations.
+That means it could be wired as the `transcribe(pcmChunk)` callback for the shared batching session
+(Requirement 1) exactly like the offline engines: each VAD-closed utterance (and each merge-retry
+combined buffer) becomes its own independent online-stream call, using the same text-derived
+confidence heuristic already proposed for offline Parakeet (Design §3) since the online protocol has
+no confidence field either (§11 above). Externally, to the rest of the pipeline, this behaves exactly
+like any other engine's batch `transcribe()` call — no state survives across separate committed
+chunks, which is precisely the property Problem/Goal cites as the reason streaming was rejected. This
+would let these three models participate fully in VAD chunking, confidence gating, and merge-retry.
+*Tradeoff, and why this is "promising, not yet provable"*: (1) **Real, untested accuracy risk**: these
+models' causal encoders are designed to benefit from continuous left-context across a whole
+utterance; feeding them shorter, VAD-chunked slices instead of the full recording (today's actual
+behavior) could measurably *reduce* transcription quality for exactly these three models relative to
+what they achieve today — the opposite of this spec's stated priority. This is an empirical question
+that needs a real side-by-side accuracy comparison before it could be recommended as the default, not
+something resolvable by code review alone. (2) More WS connect/finish/TAIL_SILENCE round trips per
+recording (bounded by speech content, same class of cost already accepted in Design §10, but higher
+than today's single one-shot call for these three models specifically). (3) Adds a third distinct
+transcribe-callback shape (Whisper / offline-Parakeet / online-Parakeet-as-batch) to §5's wiring,
+slightly weakening (not breaking) the "only confidence-signal-extraction differs" framing in
+Requirement 1, since the server-routing/session-lifecycle also differs by one more branch.
+Implementation cost is moderate (the raw mechanism already exists in `_transcribeOnline()`); the
+open risk is entirely about output quality, which can only be settled by trying it.
+
+**Recommendation: Option B, pending project owner decision.** It is the only option with no accuracy
+risk and no product-surface loss, at the cost of an explicitly-documented, narrow exception to the
+letter of decision #1 — the same tradeoff shape CLAUDE.md already accepts for medium/large Whisper
+models. Option C is worth prototyping as a *follow-up*, once the core mechanism in this spec has
+shipped and there's a live baseline to measure accuracy against, precisely because its main
+open question (does chunking hurt these specific models' accuracy) cannot be answered without
+running it. Option A should only be chosen if the project owner independently decides the product no
+longer wants to offer these three models regardless of this spec — that is a strictly larger
+decision than what this spec was scoped to make. **This recommendation is not a decision** — see
+Open Questions #1.
 
 ## Validation Plan
 
@@ -499,23 +629,52 @@ does not affect the committed/pasted transcript either way).
 
 ## Open Questions
 
-1. **Scope of decision #1 versus the three `runtime: "online"` Parakeet models (Design §6).** This
-   is the single most consequential open item. This spec's proposed resolution: decision #1
-   ("no true streaming, ever, for any engine") governs the *new Dictation batching mechanism being
-   built*, and does not retroactively remove the three existing online-runtime models' baseline
-   transcription support, since there is no alternative implementation available for them in
-   sherpa-onnx and doing so would be a separate, larger product-scope decision. **Please confirm
-   this reading is correct**, or state explicitly if the intent was in fact to drop support for
-   these three models entirely (which would be a materially different, larger spec).
-2. **`TAIL_FINALIZE_BUDGET_MS = 300ms`** (Design §4) is a concrete proposal grounded in leaving
-   headroom under the 500ms total Speed-premise budget, not an owner-specified number — confirm or
-   adjust before implementation.
-3. **Reusing Whisper's `compression_ratio > 2.4` ceiling for Parakeet's text-derived heuristic**
-   (Design §3) is a pragmatic starting point (the metric is textual, not decoder-specific, so the
-   math transfers) but was tuned against Whisper's actual failure modes, not Parakeet's — confirm
-   this is acceptable as a starting value, to be revisited once real Parakeet usage data exists,
-   rather than blocking this spec on deriving a Parakeet-specific threshold empirically first.
-4. Should the reworded `showTranscriptionPreview` Settings copy (Design §8) also gain a short note
-   explaining that Dictation speed no longer depends on this toggle, to avoid user confusion from
-   the visible behavior change (a toggle that used to noticeably affect release-time latency no
-   longer does)? Proposed yes, but flagging since it's a copy/UX call, not a technical one.
+1. **[BLOCKING — requires the project owner's direct decision, not a relayed recommendation] Scope
+   of decision #1 versus the three `runtime: "online"` Parakeet models.** Design §11 confirms, with
+   file/line evidence, that `nemotron-speech-streaming-en-0.6b`, `nemotron-3.5-asr-streaming-0.6b`,
+   and `nemotron-3.5-asr-streaming-0.6b-1120ms` genuinely have no offline/batch sherpa-onnx execution
+   path available — this is not an assumption, it was verified against the actual vendored binaries,
+   model registry, and sherpa-onnx routing code. Design §12 lays out three concrete resolution
+   options with honest tradeoffs:
+   - **Option A**: drop the three models from the product entirely (full compliance with "no
+     streaming, ever," at the cost of a real product-surface regression for existing users of these
+     models).
+   - **Option B**: keep them exactly as they behave today, documented as a narrow, explicit exception
+     to decision #1 (same shape as CLAUDE.md §3's medium/large-Whisper exception) — they simply don't
+     participate in the new batching mechanism, ever.
+   - **Option C**: route their VAD-chunked/merge-retry calls through independent, state-free
+     `_transcribeOnline()` invocations per chunk, so they *do* gain the new mechanism — technically
+     feasible today, but carries a real, untested risk of reducing these specific models' accuracy
+     (their causal encoders are designed around continuous-utterance context, and this spec's
+     explicit priority is quality, not just speed).
+   This document's authors recommend **Option B, pending confirmation**, as the lowest-risk interim
+   answer, with Option C flagged as a worthwhile follow-up prototype once there's a shipped baseline
+   to measure against. **This is a recommendation, not a decision** — per CLAUDE.md's spec-driven
+   workflow, only the project owner can approve this spec, and this item specifically needs their
+   explicit call in conversation before implementation proceeds, not agreement-by-silence. Until
+   answered, this spec's `Status` should not move to `Approved`.
+
+**Resolved during this refinement pass** (minor, non-blocking items — reasoning kept inline in the
+Design section where each applies; noted here for traceability against the prior draft):
+
+- ~~`TAIL_FINALIZE_BUDGET_MS = 300ms`~~ (was Open Question #2): adopted as the working default. It
+  already had a concrete justification in Design §4 (headroom under the 500ms Speed-premise budget
+  alongside the existing 120ms post-stop flush wait and IPC round-trip cost), and 300ms is a small,
+  easily-tunable constant with no migration or compatibility implications — not the kind of decision
+  that benefits from staying open. Revisit only if real-world telemetry-free manual testing (Manual
+  step 1-3) shows the tail is being cut off or committed too eagerly in practice.
+- ~~Reusing Whisper's `compression_ratio > 2.4` ceiling for Parakeet~~ (was Open Question #3):
+  adopted as the starting value, per the reasoning already in Design §3 — the metric is textual, not
+  decoder-internal, so it transfers mechanically; there is no Parakeet-specific usage data to derive
+  a better number from yet, and blocking this spec on gathering that data first would delay the whole
+  mechanism for a threshold that's cheap to retune later in one place (`transcriptionQualityHeuristics.js`).
+- ~~UX copy for the reworded `showTranscriptionPreview` toggle~~ (was Open Question #4): resolved
+  yes — the reworded label (Design §8) should include a short explanatory note that Dictation speed
+  no longer depends on this toggle. Rationale: this toggle's visible behavior is changing (it used to
+  gate a mechanism that noticeably affected release-time latency; after this spec it only gates a
+  cosmetic overlay), and CLAUDE.md's i18n rules already require every new/changed user-facing string
+  to go through the standard translation-key process regardless — so adding one more short sentence
+  to an already-being-edited string costs nothing extra and prevents a support/confusion cost that
+  would otherwise land on every user who remembers the old behavior. Exact wording is
+  spec-executor's implementation call, coordinated through the normal i18n process (all locale
+  files), not a new open question.

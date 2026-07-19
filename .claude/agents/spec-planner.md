@@ -28,6 +28,15 @@ No file outside `docs/specs/` (and, only to add a pointer/cross-link, `CLAUDE.md
 ## Status
 Draft
 
+## TL;DR
+Plain-language summary, ~15-20 lines max, for someone who won't read the full
+Design section:
+- What's changing (1-2 sentences).
+- The concrete decisions made (short bullets).
+- Any BLOCKING open question that needs the project owner's direct decision —
+  called out explicitly and separately from the rest.
+- Practical impact: what the user/product will experience differently.
+
 ## Problem / Goal
 What's broken or missing, and why it matters.
 
@@ -56,6 +65,8 @@ doesn't have to make design decisions.
 ## Plan output
 
 After writing/updating the spec, produce an ordered, file-by-file implementation plan as your final answer text (not written to disk elsewhere) — the sequence spec-executor should follow, each step tied back to a Requirements bullet. Include the validation steps from the spec's Validation Plan verbatim so the executor doesn't have to re-derive them.
+
+Lead your final answer text with the spec's TL;DR content, verbatim or near-verbatim — whoever reads your response (often relayed straight into a chat reply) needs to be able to decide `Draft` → `Approved` from that summary alone, without opening the spec file. The file-by-file plan comes after, for whoever executes it.
 
 ## What you must never do
 
