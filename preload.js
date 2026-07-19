@@ -397,6 +397,10 @@ contextBridge.exposeInMainWorld("electronAPI", {
   saveUiLanguage: (language) => ipcRenderer.invoke("save-ui-language", language),
   setUiLanguage: (language) => ipcRenderer.invoke("set-ui-language", language),
 
+  getAudioRetentionDays: () => ipcRenderer.invoke("get-audio-retention-days"),
+  saveAudioRetentionDays: (days) => ipcRenderer.invoke("save-audio-retention-days", days),
+  getAudioRetentionSyncState: () => ipcRenderer.invoke("get-audio-retention-sync-state"),
+
   // Custom endpoint API keys
   getCustomTranscriptionKey: () => ipcRenderer.invoke("get-custom-transcription-key"),
   saveCustomTranscriptionKey: (key) => ipcRenderer.invoke("save-custom-transcription-key", key),

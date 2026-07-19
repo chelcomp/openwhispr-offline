@@ -46,7 +46,7 @@ EKTOSWHISPR_LOG_LEVEL=debug
 | Meeting Detection     | Process monitoring, audio activity, calendar event matching      |
 | Meeting Transcription | WebSocket connection, Realtime API session, audio buffering      |
 | Media Control         | Pause/resume events, player detection (MediaRemote/GSMTC/MPRIS2) |
-| Audio Storage         | File retention, cleanup cycles, storage usage                    |
+| Audio Storage         | File retention, cleanup cycles, storage usage, skipped/invalid-retention warnings |
 | Meeting Audio         | WebM/Opus save path, FFmpeg mix args, re-transcription chunks    |
 
 ## Common Issues

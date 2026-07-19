@@ -753,6 +753,9 @@ declare global {
       getUiLanguage: () => Promise<string>;
       saveUiLanguage: (language: string) => Promise<{ success: boolean; language: string }>;
       setUiLanguage: (language: string) => Promise<{ success: boolean; language: string }>;
+      getAudioRetentionDays: () => Promise<number>;
+      saveAudioRetentionDays: (days: number) => Promise<{ success: boolean; days: number }>;
+      getAudioRetentionSyncState: () => Promise<{ hasBeenSet: boolean; days: number }>;
       saveAllKeysToEnv: () => Promise<{ success: boolean; path: string }>;
       syncStartupPreferences: (prefs: {
         useLocalWhisper: boolean;

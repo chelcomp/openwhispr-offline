@@ -42,6 +42,7 @@ const PERSISTED_KEYS = [
   "PANEL_START_POSITION",
   "START_MINIMIZED",
   "UI_LANGUAGE",
+  "AUDIO_RETENTION_DAYS",
   "WHISPER_CUDA_ENABLED",
   "WHISPER_GPU_MODE",
   "LLAMA_GPU_MODE",
@@ -469,6 +470,36 @@ class EnvironmentManager {
     const result = this._saveKey("UI_LANGUAGE", normalized);
     this.saveAllKeysToEnvFile().catch(() => {});
     return { ...result, language: normalized };
+  }
+
+  // 0 is a deliberate, valid value meaning "delete all existing audio
+  // immediately" — not "disabled." Fallback (missing/empty/malformed value)
+  // is also 0, per the app's privacy-by-default stance: local audio storage
+  // is opt-in, so an unconfigured install retains nothing. This getter always
+  // returns a clean, finite, non-negative integer — never NaN or negative.
+  getAudioRetentionDays() {
+    const raw = this._getKey("AUDIO_RETENTION_DAYS");
+    if (raw === "") return 0;
+    const parsed = parseInt(raw, 10);
+    if (!Number.isFinite(parsed) || parsed < 0) return 0;
+    return parsed;
+  }
+
+  saveAudioRetentionDays(days) {
+    const normalized = Number.isFinite(days) && days >= 0 ? Math.floor(days) : 0;
+    const result = this._saveKey("AUDIO_RETENTION_DAYS", String(normalized));
+    this.saveAllKeysToEnvFile().catch(() => {});
+    return { ...result, days: normalized };
+  }
+
+  // True once AUDIO_RETENTION_DAYS has been persisted at least once (by a real
+  // renderer sync, or by _setupAudioCleanup()'s own startup-ordering
+  // safeguard recording that its first pass was skipped). False only for a
+  // genuinely never-configured session — distinct from a value that has been
+  // explicitly set to 0, which getAudioRetentionDays() cannot distinguish on
+  // its own since 0 is both the fallback and a valid explicit choice.
+  hasAudioRetentionDaysBeenSet() {
+    return this._getKey("AUDIO_RETENTION_DAYS") !== "";
   }
 
   async saveAllKeysToEnvFile() {

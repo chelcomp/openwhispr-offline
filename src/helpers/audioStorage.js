@@ -100,6 +100,18 @@ class AudioStorageManager {
   }
 
   cleanupExpiredAudio(retentionDays, databaseManager) {
+    if (!Number.isFinite(retentionDays) || retentionDays < 0) {
+      let kept = 0;
+      try {
+        kept = fs.readdirSync(this.audioDir).filter((f) => f.endsWith(".webm")).length;
+      } catch {}
+      debugLogger.warn(
+        "Audio cleanup skipped — invalid retention value",
+        { retentionDays },
+        "audio-storage"
+      );
+      return { deleted: 0, kept };
+    }
     try {
       const cutoffMs = Date.now() - retentionDays * 86400000;
       const files = fs.readdirSync(this.audioDir).filter((f) => f.endsWith(".webm"));
