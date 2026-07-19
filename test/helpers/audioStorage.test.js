@@ -103,54 +103,30 @@ test("dictation audio: invalid retention (NaN) deletes nothing", () => {
   assert.equal(fs.existsSync(veryOldFile), true);
 });
 
-test("meeting audio: configured (non-30) retention honors that cutoff", () => {
-  const dir = path.join(userDataDir, "meeting-audio");
-  clearWebmFiles(dir);
-  const oldFile = path.join(dir, "note-1-old.webm");
-  const newFile = path.join(dir, "note-2-new.webm");
-  touchFile(oldFile, 10);
-  touchFile(newFile, 2);
-
-  const result = meetingAudioStorage.cleanupExpiredAudio(7);
-
-  assert.equal(result.deleted, 1);
-  assert.equal(result.kept, 1);
-  assert.equal(fs.existsSync(oldFile), false);
-  assert.equal(fs.existsSync(newFile), true);
+test("meeting audio: cleanupExpiredAudio no longer exists — automatic purge must stay removed per CLAUDE.md §7", () => {
+  // Tripwire: meeting audio must never be auto-purged by age/retention again.
+  // If a future change re-adds cleanupExpiredAudio (even without wiring it
+  // back into _setupAudioCleanup()), this forces a conscious decision rather
+  // than a silent reintroduction of the removed behavior.
+  assert.equal(meetingAudioStorage.cleanupExpiredAudio, undefined);
+  assert.equal(typeof meetingAudioStorage.getAudioPath, "function");
+  assert.equal(typeof meetingAudioStorage.deleteAudio, "function");
+  assert.equal(typeof meetingAudioStorage.getStorageUsage, "function");
+  assert.equal(typeof meetingAudioStorage.saveAudio, "function");
+  assert.equal(typeof meetingAudioStorage.deleteAllMeetingAudio, "function");
 });
 
-test("meeting audio: retention 0 deletes ALL files, including fresh ones", () => {
+test("meeting audio: deleteAllMeetingAudio removes all files unconditionally, regardless of age", () => {
   const dir = path.join(userDataDir, "meeting-audio");
   clearWebmFiles(dir);
-  const freshFile = path.join(dir, "note-3-fresh.webm");
+  const oldFile = path.join(dir, "note-6-old.webm");
+  const freshFile = path.join(dir, "note-7-fresh.webm");
+  touchFile(oldFile, 400);
   touchFile(freshFile, 0);
 
-  const result = meetingAudioStorage.cleanupExpiredAudio(0);
+  const result = meetingAudioStorage.deleteAllMeetingAudio();
 
-  assert.equal(result.deleted, 1);
-  assert.equal(fs.existsSync(freshFile), false);
-});
-
-test("meeting audio: invalid retention (negative) deletes nothing, even very old files", () => {
-  const dir = path.join(userDataDir, "meeting-audio");
-  clearWebmFiles(dir);
-  const veryOldFile = path.join(dir, "note-4-veryold.webm");
-  touchFile(veryOldFile, 400);
-
-  const result = meetingAudioStorage.cleanupExpiredAudio(-5);
-
-  assert.equal(result.deleted, 0);
-  assert.equal(fs.existsSync(veryOldFile), true);
-});
-
-test("meeting audio: invalid retention (NaN) deletes nothing", () => {
-  const dir = path.join(userDataDir, "meeting-audio");
-  clearWebmFiles(dir);
-  const veryOldFile = path.join(dir, "note-5-veryold.webm");
-  touchFile(veryOldFile, 400);
-
-  const result = meetingAudioStorage.cleanupExpiredAudio(NaN);
-
-  assert.equal(result.deleted, 0);
-  assert.equal(fs.existsSync(veryOldFile), true);
+  assert.deepEqual(result, { deleted: 2 });
+  assert.equal(fs.existsSync(oldFile), false, "old file is deleted");
+  assert.equal(fs.existsSync(freshFile), false, "fresh file is deleted too — unconditional, not age-based");
 });

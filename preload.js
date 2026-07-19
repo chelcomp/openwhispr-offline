@@ -70,6 +70,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
   deleteTranscriptionAudio: (id) => ipcRenderer.invoke("delete-transcription-audio", id),
   getAudioStorageUsage: () => ipcRenderer.invoke("get-audio-storage-usage"),
   deleteAllAudio: () => ipcRenderer.invoke("delete-all-audio"),
+  getMeetingAudioStorageUsage: () => ipcRenderer.invoke("get-meeting-audio-storage-usage"),
+  deleteAllMeetingAudio: () => ipcRenderer.invoke("delete-all-meeting-audio"),
   retryTranscription: (id, settings) => ipcRenderer.invoke("retry-transcription", id, settings),
   updateTranscriptionText: (id, text, rawText) =>
     ipcRenderer.invoke("update-transcription-text", id, text, rawText),

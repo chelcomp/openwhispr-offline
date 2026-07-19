@@ -543,6 +543,8 @@ declare global {
       deleteTranscriptionAudio: (id: number) => Promise<{ success: boolean }>;
       getAudioStorageUsage: () => Promise<{ fileCount: number; totalBytes: number }>;
       deleteAllAudio: () => Promise<{ deleted: number }>;
+      getMeetingAudioStorageUsage: () => Promise<{ fileCount: number; totalBytes: number }>;
+      deleteAllMeetingAudio: () => Promise<{ deleted: number }>;
       retryTranscription: (
         id: number,
         settings?: {

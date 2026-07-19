@@ -1687,6 +1687,10 @@
       "audioStorageEmpty": "Nenhum arquivo de áudio armazenado",
       "clearAllAudio": "Excluir todos os áudios",
       "clearAllAudioConfirm": "Excluir todos os arquivos de áudio armazenados? Esta ação não pode ser desfeita.",
+      "meetingAudioStorageUsage": "Armazenamento de áudio de reuniões",
+      "meetingAudioStorageUsageDescription": "Áudio de gravações de reuniões armazenado neste dispositivo. O áudio de reuniões nunca é excluído automaticamente — exclua-o manualmente abaixo.",
+      "meetingAudioStorageEmpty": "Nenhum arquivo de áudio de reunião armazenado",
+      "clearAllMeetingAudio": "Excluir todo o áudio de reuniões",
       "saveDiscarded": "Salvar ditados descartados",
       "saveDiscardedDescription": "Quando você cancela um ditado com Escape, mantém o áudio no histórico para poder recuperá-lo. Requer a retenção de dados e áudio ativada."
     },

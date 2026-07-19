@@ -738,9 +738,14 @@ class IPCHandlers {
     // Reads the user's currently configured retention value fresh on every
     // invocation (not a value captured once at startup) since the user can
     // change the setting without restarting the app. A configured value of 0
-    // deliberately deletes ALL existing audio, regardless of age — see
-    // audioCleanupPolicy.js and the Problem section of
+    // deliberately deletes ALL existing dictation audio, regardless of age —
+    // see audioCleanupPolicy.js and the Problem section of
     // docs/specs/audio-retention-cleanup-fix.md for the confirmed semantics.
+    // This applies to DICTATION audio only. Meeting audio is permanently
+    // exempt from any automatic expiry per CLAUDE.md's Non-Negotiable Product
+    // Premises §7 (Data retention) — it is operational data, deleted only via
+    // user-initiated actions (deleting a note, or the "Clear All Meeting
+    // Audio" button), never by this cleanup job.
     const runCleanup = () => {
       const retentionDays = this.environmentManager.getAudioRetentionDays();
       const decision = decideAudioCleanup(retentionDays);
@@ -756,11 +761,6 @@ class IPCHandlers {
         this.audioStorageManager.cleanupExpiredAudio(decision.retentionDays, this.databaseManager);
       } catch (error) {
         debugLogger.error("Audio cleanup failed", { error: error.message }, "audio-storage");
-      }
-      try {
-        meetingAudioStorage.cleanupExpiredAudio(decision.retentionDays);
-      } catch (error) {
-        debugLogger.error("Meeting audio cleanup failed", { error: error.message }, "audio-storage");
       }
     };
 
@@ -1064,6 +1064,33 @@ class IPCHandlers {
       } catch (error) {
         debugLogger.error(
           "Failed to clear audio flags after delete-all",
+          { error: error.message },
+          "audio-storage"
+        );
+      }
+      return result;
+    });
+
+    ipcMain.handle("get-meeting-audio-storage-usage", async () => {
+      return meetingAudioStorage.getStorageUsage();
+    });
+
+    // Bulk-deletes all meeting audio files (deliberate, user-initiated —
+    // per CLAUDE.md §7, meeting audio is never auto-purged, only manually
+    // cleared). Clears each affected note's audio_path pointer but never
+    // touches title/content/transcript/enhanced_content or the note itself.
+    ipcMain.handle("delete-all-meeting-audio", async () => {
+      const result = meetingAudioStorage.deleteAllMeetingAudio();
+      try {
+        const rows = this.databaseManager.db
+          .prepare("SELECT id FROM notes WHERE audio_path IS NOT NULL")
+          .all();
+        for (const row of rows) {
+          this.databaseManager.updateNote(row.id, { audio_path: null });
+        }
+      } catch (error) {
+        debugLogger.error(
+          "Failed to clear audio_path after meeting delete-all",
           { error: error.message },
           "audio-storage"
         );

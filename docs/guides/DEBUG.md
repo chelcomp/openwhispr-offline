@@ -46,8 +46,8 @@ EKTOSWHISPR_LOG_LEVEL=debug
 | Meeting Detection     | Process monitoring, audio activity, calendar event matching      |
 | Meeting Transcription | WebSocket connection, Realtime API session, audio buffering      |
 | Media Control         | Pause/resume events, player detection (MediaRemote/GSMTC/MPRIS2) |
-| Audio Storage         | File retention, cleanup cycles, storage usage, skipped/invalid-retention warnings |
-| Meeting Audio         | WebM/Opus save path, FFmpeg mix args, re-transcription chunks    |
+| Audio Storage         | Dictation audio file retention, cleanup cycles, storage usage, skipped/invalid-retention warnings (meeting audio is never auto-purged — see "Meeting Audio" row) |
+| Meeting Audio         | WebM/Opus save path, FFmpeg mix args, re-transcription chunks, manual "Clear All Meeting Audio" bulk deletes (no automatic retention/cleanup) |
 
 ## Common Issues
 
