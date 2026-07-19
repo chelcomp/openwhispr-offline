@@ -1,9 +1,29 @@
 # Remove Meeting Auto-Detection / Notification System
 
 ## Status
-Approved
+Implemented
 
 Approved directly by the project owner in conversation, with the three Open Questions below resolved — not inferred by any subagent.
+
+Implemented per the Design section: `meetingDetectionEngine.js` renamed to
+`manualMeetingLauncher.js`/`ManualMeetingLauncher` with all detection/notification
+machinery removed; `meetingProcessDetector.js`, `audioActivityDetector.js`,
+`processListCache.js` deleted; native mic-listener binaries/scripts/CI workflow deleted;
+"Meeting Detected" notification UI/IPC/preferences removed end to end; dead onboarding
+`MeetingSetupStep.tsx`/step removed; `meetingProcessDetection` setting removed. One
+deviation from the plan, resolved inline (not routed back to spec-planner, since it was an
+unambiguous, mechanical gap discovered during execution, not a scope change): the Design's
+enumerated `setUserRecording` call-site removals only listed `windowManager.js`'s 3 sites,
+but `ipcHandlers.js`'s "Meeting Transcription" block (`meeting-transcription-start`/`-stop`,
+preserved by R6/R7) had 3 more calls into the same now-removed method; left as-is they would
+have thrown at runtime the first time a user actually started a manual meeting recording —
+directly breaking the very feature R6/R7 require to keep working. Removed those 3 dangling
+calls too, for the same reason given in R9. Validated via `test/helpers/manualMeetingLauncher.test.js`
+(new), `npm test` (all pre-existing tests pass unmodified, including
+`meetingEchoLeakDetector.test.js`/`meetingMicHoldback.test.js`), `npm run lint`,
+`npm run typecheck`, `npm run build:renderer`, and `node scripts/check-i18n.js` — all green.
+Note: the repo's actual `src/locales/` only contains `en`/`pt` (not the 9 languages CLAUDE.md
+describes elsewhere) — R12's i18n cleanup was applied to both files that actually exist.
 
 ## Problem / Goal
 

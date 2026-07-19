@@ -704,8 +704,6 @@ export default function SettingsPage({
     setRemoteTranscriptionModel,
     notificationsEnabled,
     setNotificationsEnabled,
-    notifyMeetingDetection,
-    setNotifyMeetingDetection,
     audioCuesEnabled,
     setAudioCuesEnabled,
     pauseMediaOnDictation,
@@ -1013,9 +1011,8 @@ export default function SettingsPage({
   useEffect(() => {
     window.electronAPI?.syncNotificationPreferences?.({
       notificationsEnabled,
-      notifyMeetingDetection,
     });
-  }, [notificationsEnabled, notifyMeetingDetection]);
+  }, [notificationsEnabled]);
 
   const handleAutoStartChange = async (enabled: boolean) => {
     if (window.electronAPI?.setAutoStartEnabled) {
@@ -1491,20 +1488,6 @@ export default function SettingsPage({
                     <Toggle
                       checked={!notificationsEnabled}
                       onChange={(v) => setNotificationsEnabled(!v)}
-                    />
-                  </SettingsRow>
-                </SettingsPanelRow>
-                <SettingsPanelRow>
-                  <SettingsRow
-                    label={t("settingsPage.general.notifications.meetingDetection")}
-                    description={t(
-                      "settingsPage.general.notifications.meetingDetectionDescription"
-                    )}
-                  >
-                    <Toggle
-                      checked={notifyMeetingDetection}
-                      onChange={setNotifyMeetingDetection}
-                      disabled={!notificationsEnabled}
                     />
                   </SettingsRow>
                 </SettingsPanelRow>

@@ -136,7 +136,12 @@ EktosWhispr tries clipboard methods in order: `wl-copy` (most reliable) → rend
 
 ### Meeting Transcription Issues
 
-**Symptoms:** Meeting detection not working, no transcription, audio not captured
+**Symptoms:** No transcription, audio not captured
+
+Meeting recording is always manually started (there is no automatic meeting
+detection or "Meeting Detected" notification) — press the configured Meeting
+Hotkey (Settings → General → Meeting Hotkey) or start a Note Recording from
+Personal Notes to begin.
 
 **macOS:**
 
@@ -151,10 +156,9 @@ EktosWhispr tries clipboard methods in order: `wl-copy` (most reliable) → rend
 
 **All Platforms:**
 
-1. Check that meeting detection is enabled in settings
+1. Confirm a "Meeting Hotkey" is registered under Settings → General, and that pressing it creates a note in the "Meetings" folder
 2. Verify your OpenAI API key is valid (required for Realtime API transcription)
-3. Ensure your meeting app (Zoom, Teams, FaceTime) is running — process detection looks for known meeting applications
-4. If auto-detection fails, you can manually start recording from the meeting notification
+3. Check debug logs under the `"meeting"` category for errors during note creation or transcription start
 
 ### Agent Mode Issues
 

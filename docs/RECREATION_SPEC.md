@@ -30,8 +30,8 @@ Estas são as discrepâncias mais relevantes encontradas entre a documentação 
 1. 🗑️ **Removido.** Itens 1–3 originalmente documentavam divergências do subsistema de busca semântica local (sidecar Qdrant, embeddings MiniLM via ONNX, fluxo híbrido FTS5+vetor com RRF). Esse subsistema inteiro foi **removido** do código (ver `docs/specs/remove-qdrant-dependency.md`): não há mais sidecar Qdrant, não há mais embeddings locais/`localEmbeddings.js`/`vectorIndex.js`, e `search_notes`/busca de conversas do agente agora usam **apenas FTS5** (keyword puro, sem RRF nem fallback semântico). Mantido aqui como referência histórica de que essa arquitetura existiu; ver §4 para o estado atual.
 2. ✅ **Corrigido.** Não existe um provider de IA chamado "ektoswhispr". O conceito de "EktosWhispr Cloud" (backend próprio hospedado) está desativado/em remoção (a branch atual chama-se `chore/remove-dead-cloud-code`). Todos os seletores `selectIsCloud*Mode` retornam `false` hardcoded, e `streamFromIPC` lança erro `"Cloud agent streaming is not available in this version"`. Os providers reais são 7: `openai`/`custom`/`openrouter` (1 handler), `anthropic`, `gemini`, `groq`, `local`, `bedrock`/`azure`/`vertex` (1 handler "enterprise"), `lan`. Ver §5. (Ver também a remoção de `agent-skills/ektoswhispr-api/` e a limpeza de `docs/network-allowlist.md`, que documentavam esse mesmo backend cloud inexistente.)
 3. ✅ **Corrigido.** Não existe `src/config/aiProvidersConfig.ts`. A derivação de "AI_MODES" mencionada no CLAUDE.md é, na verdade, `buildReasoningProviders()` em `src/models/ModelRegistry.ts`. Ver §5.
-4. ✅ **Corrigido.** Google Calendar foi removido do código atual. `src/helpers/googleCalendarManager.js`/`googleCalendarOAuth.js` não existem mais nesta branch. Em `meetingDetectionEngine.js`, `imminentEvent` é hardcoded para `null`. A seção do CLAUDE.md sobre "Calendar Sync Resilience" descrevia uma arquitetura histórica já removida. Ver §3. **Atualização**: os remanescentes dessa remoção (`joinCalendarMeeting()`/`getActiveEvents()`/`getCalendarEventById()` em `meetingDetectionEngine.js`/`database.js`, os 20 métodos mortos de `database.js` relacionados a Google Calendar, as tabelas `google_calendar_tokens`/`google_calendars`/`calendar_events`, e as strings órfãs `get_calendar_events`/`integrations.*` em prompts/ícones/locales) foram removidos por completo (`docs/specs/remove-dead-google-calendar-code.md`). Não há mais nenhum código, schema, ou string relacionado a Google Calendar no repositório.
-5. ✅ **Corrigido.** Onboarding não tem 8 passos fixos nem passo de "agent naming". O wizard atual é dinâmico (passo `localModel` é condicional; passo `meeting` existe no código mas está desativado via flag hardcoded `showMeetingStep = false`). Não há passo dedicado para nomear o agente — isso só existe em Settings hoje, com default `"EktosWhispr"`. Ver §6.
+4. ✅ **Corrigido.** Google Calendar foi removido do código atual. `src/helpers/googleCalendarManager.js`/`googleCalendarOAuth.js` não existem mais nesta branch. No antigo `meetingDetectionEngine.js` (hoje `manualMeetingLauncher.js`, com toda a máquina de detecção/notificação removida — ver §3.4), `imminentEvent` era hardcoded para `null`. A seção do CLAUDE.md sobre "Calendar Sync Resilience" descrevia uma arquitetura histórica já removida. Ver §3. **Atualização**: os remanescentes dessa remoção (`joinCalendarMeeting()`/`getActiveEvents()`/`getCalendarEventById()` no antigo `meetingDetectionEngine.js`/`database.js`, os 20 métodos mortos de `database.js` relacionados a Google Calendar, as tabelas `google_calendar_tokens`/`google_calendars`/`calendar_events`, e as strings órfãs `get_calendar_events`/`integrations.*` em prompts/ícones/locales) foram removidos por completo (`docs/specs/remove-dead-google-calendar-code.md`). Não há mais nenhum código, schema, ou string relacionado a Google Calendar no repositório.
+5. ✅ **Corrigido.** Onboarding não tem 8 passos fixos nem passo de "agent naming". O wizard atual é dinâmico (passo `localModel` é condicional). Não há passo dedicado para nomear o agente — isso só existe em Settings hoje, com default `"EktosWhispr"`. O passo `meeting` (e `MeetingSetupStep.tsx`) existia no código, desativado via flag hardcoded `showMeetingStep = false`, e foi **removido** junto com a detecção automática de reuniões (ver §3.4). Ver §6.
 6. ✅ **Corrigido.** Chaves de `localStorage` divergiam do CLAUDE.md: a chave real do hotkey é `dictationKey` (não `hotkey`); a flag de onboarding concluído é `onboardingCompleted` (não `hasCompletedOnboarding`); idioma de UI e idioma de transcrição são chaves **separadas** (`uiLanguage` e `preferredLanguage`), não uma única chave `language`. Ver §6 para a tabela completa.
 7. ✅ **Corrigido.** `SECRET_KEYS` em `environment.js` tem 16 chaves, não 12. Além das 7 BYOK + 5 enterprise citadas no CLAUDE.md, há mais 4: `ASSEMBLYAI_API_KEY`, `DEEPGRAM_API_KEY`, `CUSTOM_TRANSCRIPTION_API_KEY`, `CUSTOM_CLEANUP_API_KEY`. Ver §1 e §7.
 8. ✅ **Corrigido.** Node pinado é 26, não 24. `.nvmrc`/`package.json` (`engines.node >= 26`) apontam para Node 26; o CLAUDE.md mencionava Node 24 (desatualizado). Ver §7.
@@ -82,7 +82,7 @@ Após o `userData` ser resolvido, `dotenv.config({ path: path.join(app.getPath("
 
 #### 1.2.6 Managers (import estático, instanciação tardia)
 
-Classes importadas no topo mas só instanciadas dentro de `initializeCoreManagers()`/`startApp()`: `EnvironmentManager`, `WindowManager`, `DatabaseManager`, `ClipboardManager`, `WhisperManager`, `ParakeetManager`, `DiarizationManager`, `TrayManager`, `IPCHandlers`, `CliBridge`, `UpdateManager`, `GlobeKeyManager`, `DevServerManager`, `WindowsKeyManager`, `LinuxKeyManager`, `TextEditMonitor`, `WhisperCudaManager`, `MeetingProcessDetector`, `AudioActivityDetector`, `AudioTapManager`, `LinuxPortalAudioManager`, `WindowsLoopbackAudioManager`, `MeetingAecManager`, `MeetingDetectionEngine`, `i18nMain`, `ensureYdotool`, `sidecarRegistry`, `reapStaleSidecars`, `TransformManager`.
+Classes importadas no topo mas só instanciadas dentro de `initializeCoreManagers()`/`startApp()`: `EnvironmentManager`, `WindowManager`, `DatabaseManager`, `ClipboardManager`, `WhisperManager`, `ParakeetManager`, `DiarizationManager`, `TrayManager`, `IPCHandlers`, `CliBridge`, `UpdateManager`, `GlobeKeyManager`, `DevServerManager`, `WindowsKeyManager`, `LinuxKeyManager`, `TextEditMonitor`, `WhisperCudaManager`, `AudioTapManager`, `LinuxPortalAudioManager`, `WindowsLoopbackAudioManager`, `MeetingAecManager`, `ManualMeetingLauncher`, `i18nMain`, `ensureYdotool`, `sidecarRegistry`, `reapStaleSidecars`, `TransformManager`. (`MeetingProcessDetector`/`AudioActivityDetector` não existem mais — ver §3.4.)
 
 #### 1.2.7 `startApp()` — sequência de boot
 
@@ -100,7 +100,7 @@ registerSidecars()                // registra stop-functions no sidecarRegistry
    - `environmentManager = new EnvironmentManager()` → aplica `UI_LANGUAGE` em `process.env`.
    - `windowManager = new WindowManager()`; `hotkeyManager = windowManager.hotkeyManager`.
    - Demais managers instanciados.
-   - `MeetingDetectionEngine` criado com `MeetingProcessDetector` + `AudioActivityDetector` + `windowManager` + `databaseManager`.
+   - `ManualMeetingLauncher` criado com `windowManager` + `databaseManager` (sem detectores — não existe mais detecção automática, ver §3.4).
    - `UpdateManager` criado e ligado ao `windowManager`.
    - `WindowsKeyManager`, `LinuxKeyManager`, `TextEditMonitor`, `AudioTapManager`, `LinuxPortalAudioManager`, `WindowsLoopbackAudioManager` instanciados; `cleanupOrphanedLinuxRestoreToken()` remove um arquivo de token de portal órfão. `MeetingAecManager` instanciado.
    - `TransformManager` criado com `windowManager` + `clipboardManager`.
@@ -129,7 +129,6 @@ registerSidecars()                // registra stop-functions no sidecarRegistry
     - `clipboardManager.preWarmAccessibility()`.
     - `trayManager = new TrayManager()`.
     - `globeKeyManager = new GlobeKeyManager()`; erro → `dialog.showMessageBox` uma única vez.
-    - `meetingDetectionEngine.start()`.
 13. `powerMonitor.on("resume", ...)` — agenda (`WHISPER_WAKE_REWARM_DELAY_MS = 3000`) `whisperManager.onWakeFromSleep()` (sleep expulsa o modelo local da VRAM).
 14. **Pré-aquecimento não bloqueante de servidores locais** (todos `.catch()` non-fatal):
     - `whisperManager.initializeAtStartup(...)`.
@@ -153,7 +152,7 @@ registerSidecars()                // registra stop-functions no sidecarRegistry
 
 #### 1.2.9 `performSyncTeardown()`
 
-Limpa, na ordem: timer de wake; `cliBridge`; janelas `agentWindow`/`transcriptionPreviewWindow`; `hotkeyManager.unregisterAll()`; `globeKeyManager`/`windowsKeyManager`/`linuxKeyManager`; `meetingDetectionEngine`; `audioTapManager`/`linuxPortalAudioManager`/`windowsLoopbackAudioManager`/`meetingAecManager`; `textEditMonitor`; `updateManager`.
+Limpa, na ordem: timer de wake; `cliBridge`; janelas `agentWindow`/`transcriptionPreviewWindow`; `hotkeyManager.unregisterAll()`; `globeKeyManager`/`windowsKeyManager`/`linuxKeyManager`; `audioTapManager`/`linuxPortalAudioManager`/`windowsLoopbackAudioManager`/`meetingAecManager`; `textEditMonitor`; `updateManager`. (`ManualMeetingLauncher` não tem estado de teardown — a versão anterior, `MeetingDetectionEngine`, tinha `stop()` para os detectores removidos; não existe mais.)
 
 ### 1.3 `preload.js` — Superfície `window.electronAPI`
 
@@ -248,7 +247,7 @@ Métodos utilitários notáveis:
 
 **Transcrição de reunião (streaming dual-channel)**: `meeting-transcription-prepare/start/send(on)/stop/cancel`; push: `meeting-transcription-segment`, `meeting-speaker-identified`, `meeting-speakers-merged`, `meeting-transcription-error`.
 
-**Detecção de reuniões**: `meeting-detection-get/set-preferences`, `sync-notification-preferences`, `meeting-set-speaker-diarization-enabled`, `whisper-vad-get/set-config`, `meeting-set-session-speaker-config`, `meeting-notification-respond`, `get-meeting-notification-data`, `meeting-notification-ready`, `get-pending-meeting-note-navigation`; push: `meeting-detected(-start-recording)`, `meeting-notification-data`, `meeting-note-navigation-pending`, `navigate-to-note`.
+**Notificações e navegação de reunião** (sem detecção automática — ver §3.4): `sync-notification-preferences`, `meeting-set-speaker-diarization-enabled`, `whisper-vad-get/set-config`, `meeting-set-session-speaker-config`, `get-pending-meeting-note-navigation`; push: `meeting-note-navigation-pending`, `navigate-to-note`.
 
 **Notificação de update**: `get-update-notification-data`, `update-notification-ready`, `update-notification-respond`; push `update-notification-data`.
 
@@ -340,7 +339,7 @@ Detecta usuários voltando do bundle ID antigo (pré-"Gizmo"), exclusivo macOS. 
 
 - Porta: `EKTOSWHISPR_DEV_SERVER_PORT`/`VITE_DEV_SERVER_PORT`, default `5183`.
 - `waitForDevServer()`: polling HTTP até 30 tentativas de 1s.
-- `getAppFilePath(isControlPanel)`: produção resolve `app.getAppPath()/src/dist/index.html` com query string (`?panel=true`, `?agent=true`, `?meeting-notification=true`, `?update-notification=true`, `?transcription-preview=true`) — todas as janelas compartilham o mesmo bundle React via roteamento por query string.
+- `getAppFilePath(isControlPanel)`: produção resolve `app.getAppPath()/src/dist/index.html` com query string (`?panel=true`, `?agent=true`, `?update-notification=true`, `?transcription-preview=true`) — todas as janelas compartilham o mesmo bundle React via roteamento por query string.
 
 ### 1.11 Notas Finais de Arquitetura (Main Process)
 
@@ -665,8 +664,8 @@ Um processo `windows-key-listener.exe` **por tecla observada**. `setKeys(keys)` 
 
 **Lógica do hook**: `UpdateModifierState` + `SyncModifierState` (via `GetAsyncKeyState`, exceto a tecla do evento atual) — corrige estado "preso" por key-up perdido (ex. `Win+L` bloqueia tela, SO não entrega key-up do Win). Auto-cura: se `g_isKeyDown` mas a tecla não está fisicamente pressionada, força `KEY_UP`. Modo modifiers-only: `KEY_DOWN` quando todos pressionados, `KEY_UP` quando algum solta.
 
-#### 3.2.3 `resources/windows-mic-listener.c`
-Usado por `audioActivityDetector.js`. Implementa manualmente (vtables C) `IAudioSessionEvents`/`IAudioSessionNotification` via WASAPI. `MIC_START <pid>`/`MIC_STOP <pid>`. `--exclude-pid <pid>` ignora eventos do próprio processo do EktosWhispr (evita falso-positivo "reunião detectada" pelo próprio ditado).
+#### 3.2.3 `resources/windows-mic-listener.c` — **removido**
+Existia para servir `audioActivityDetector.js` (detecção automática de reuniões via atividade "sustentada" de microfone). Removido junto com todo o sistema de detecção automática — ver §3.4.
 
 ### 3.3 Backends Nativos de Hotkey Linux
 
@@ -681,30 +680,31 @@ Só slot `dictation`. `registerKeybinding` via `hyprctl keyword bind`. Combos so
 #### 3.3.3 `kdeShortcut.js`
 Via KGlobalAccel. Suporta múltiplos slots. Combos somente-modificador **não suportados em X11** (XGrabKey exige keycode real) mas **suportados em Wayland** (KWin trata nativamente). Checagem de conflito pré- e pós-registro via D-Bus. Retorno: `true`/`"conflict"`/`"modifier-only"`/`false`.
 
-### 3.4 Detecção de Reuniões
+### 3.4 Reuniões: gravação manual + histórico da detecção automática removida
 
-#### 3.4.1 `meetingDetectionEngine.js`
-Orquestrador único de eventos de `meetingProcessDetector` + `audioActivityDetector`. **Importante**: detecção por processo é apenas **contextual** (só loga, não dispara notificação — evita falso-positivo de apps como FaceTime em background); só `sustained-audio-detected` chama `_handleDetection`.
+#### 3.4.1 `manualMeetingLauncher.js` (antes `meetingDetectionEngine.js`)
+Não existe mais detecção automática de reuniões. `src/helpers/meetingDetectionEngine.js` foi renomeado para `src/helpers/manualMeetingLauncher.js` (classe `MeetingDetectionEngine` → `ManualMeetingLauncher`) e reduzido a apenas o fluxo manual: constructor `(windowManager, databaseManager)` (sem os dois detectores), `startManualMeeting()`, `setMeetingModeActive(active)`, `broadcastToWindows(channel, data)`. Toda a máquina de preferências/notificação/fila (`preferences`, `setPreferences`/`getPreferences`, `_handleDetection`, `_showPrompt`, `handleNotificationResponse`, `handleNotificationTimeout`, `_flushNotificationQueue`, `activeDetections`, `_userRecording`/`setUserRecording`, `_postRecordingCooldown`, `start()`/`stop()`) foi removida — ela só existia para servir a notificação "Meeting Detected" que não existe mais. (`joinCalendarMeeting()` também existia aqui como código morto de calendário quando esta remoção começou; foi eliminado por completo na limpeza subsequente de remanescentes de Google Calendar — ver §3.4.5.)
 
-Regras de supressão em ordem: (1) `audioDetection` desligado → ignora; (2) detecção já ativa → ignora; (3) `_meetingModeActive` (já escrevendo nota) → suprime; (4) `_userRecording`/cooldown pós-gravação → **enfileira** (não descarta); (5) senão mostra prompt.
+`startManualMeeting()` é acionado pelo hotkey de slot `meeting` (`main.js`): cria uma nota na pasta "Meetings", navega o painel de controle até ela (`windowManager.queueMeetingNoteNavigation`), e a gravação real começa via o bloco IPC "Meeting Transcription" (`meeting-transcription-*`, ver §1.4.1) — o mesmo backend usado por Note Recording (`PersonalNotesView.tsx`/`meetingRecordingStore.ts`).
 
-`setUserRecording(active)`: `true` limpa cooldown pendente; `false` agenda `_postRecordingCooldown=setTimeout(...,2500)` que ao expirar chama `_flushNotificationQueue()` — implementa cooldown de **2.5s** pós-gravação. `_flushNotificationQueue()` mostra **apenas o primeiro item** da fila (coalescência).
+**⚠️ Nota histórica**: `imminentEvent` era hardcoded `null` no `meetingDetectionEngine.js` original — o lookup de evento de calendário iminente foi removido junto com Google Calendar (ver §0.6), antes e independentemente desta remoção de detecção automática. Após a limpeza subsequente dos remanescentes de Google Calendar (`docs/specs/remove-dead-google-calendar-code.md`), `startManualMeeting()` também perdeu sua branch de delegação para eventos de calendário (junto com `joinCalendarMeeting()` — ver §3.4.5), e `handleNotificationResponse()` (já removido nesta própria mudança, junto com toda a notificação — ver §3.4.6) não computava mais `isRealEvent` antes de deixar de existir.
 
-**⚠️ Nota**: `imminentEvent` é hardcoded `null` — o lookup de evento de calendário iminente foi removido junto com Google Calendar (ver §0.6). `startManualMeeting()` não tem mais branch de delegação para eventos de calendário (removido junto com `joinCalendarMeeting()` — ver §3.4.5), e `handleNotificationResponse()` não computa mais `isRealEvent`.
+#### 3.4.2 `meetingProcessDetector.js` — **removido**
+Detectava apps de reunião conhecidos (Zoom/Teams/Webex/FaceTime; macOS via `systemPreferences.subscribeWorkspaceNotification`, Windows/Linux via polling `processListCache` a cada 30s). Puramente contextual (só logava, nunca disparava notificação sozinho). Removido por inteiro — não há mais nenhum consumidor de detecção por processo.
 
-#### 3.4.2 `meetingProcessDetector.js`
-macOS: `systemPreferences.subscribeWorkspaceNotification` (CPU zero), mapeia bundle ID via `BUNDLE_ID_MAP` (Zoom/Teams/Webex/FaceTime). Windows/Linux: polling `processListCache` a cada 30s.
+#### 3.4.3 `audioActivityDetector.js` — **removido**
+Detectava uso "sustentado" de microfone (reuniões não-agendadas, Google Meet) via `macos-mic-listener`/`windows-mic-listener.exe --exclude-pid`/`pactl subscribe` (com fallback para polling), e alimentava a notificação "Meeting Detected". Removido por inteiro, junto com os binários nativos `resources/windows-mic-listener.c`/`resources/macos-mic-listener.swift` e os scripts `scripts/build-macos-mic-listener.js`/`scripts/download-windows-mic-listener.js` e o workflow `.github/workflows/build-windows-mic-listener.yml`.
 
-#### 3.4.3 `audioActivityDetector.js`
-Detecta uso "sustentado" de microfone (reuniões não-agendadas, Google Meet). `SUSTAINED_EVENT_DRIVEN_MS=2000` (event-driven), `SUSTAINED_THRESHOLD_CHECKS=2` (polling), `COOLDOWN_MS=5min` pós-dismiss, `INACTIVE_RESET_MS=1min`. Event-driven por plataforma: macOS (`macos-mic-listener`), Windows (`windows-mic-listener.exe --exclude-pid`), Linux (`pactl subscribe`). Fallback automático para polling se o binário falhar.
-
-#### 3.4.4 `processListCache.js`
-Singleton, TTL 5s, usa `ps-list`, deduplica chamadas concorrentes.
+#### 3.4.4 `processListCache.js` — **removido**
+Singleton (TTL 5s, `ps-list`) que só existia para servir `meetingProcessDetector.js`/`audioActivityDetector.js`; removido junto com os dois, verificado sem outros consumidores.
 
 #### 3.4.5 Google Calendar — **removido do código atual**
 `googleCalendarManager.js`/`googleCalendarOAuth.js` não existem mais nesta branch (`chore/remove-dead-cloud-code`). `imminentEvent` hardcoded `null` em `meetingDetectionEngine.js`. **Não implementar** essa funcionalidade numa recriação fiel do estado atual.
 
-**Atualização (`docs/specs/remove-dead-google-calendar-code.md`)**: os remanescentes dessa remoção também foram eliminados. `getActiveEvents()`/`getCalendarEventById()` não existem mais em `database.js` (nem os outros 18 métodos mortos de Google Calendar); `joinCalendarMeeting()` não existe mais em `meetingDetectionEngine.js`; `startManualMeeting()` cria a nota manual diretamente, sem branch de delegação; `handleNotificationResponse()`'s `"start"` não computa mais `isRealEvent`. As tabelas `google_calendar_tokens`/`google_calendars`/`calendar_events` foram removidas do schema (`DROP TABLE IF EXISTS` idempotente em `initDatabase()` para instalações existentes). Uma recriação fiel do estado atual não deve incluir nenhum desses métodos, branches, ou tabelas.
+**Atualização (`docs/specs/remove-dead-google-calendar-code.md`)**: os remanescentes dessa remoção também foram eliminados. `getActiveEvents()`/`getCalendarEventById()` não existem mais em `database.js` (nem os outros 18 métodos mortos de Google Calendar); `joinCalendarMeeting()` não existe mais em `manualMeetingLauncher.js` (antigo `meetingDetectionEngine.js`); `startManualMeeting()` cria a nota manual diretamente, sem branch de delegação; `handleNotificationResponse()`'s `"start"` não computa mais `isRealEvent` (a própria função já não existe — ver §3.4.6). As tabelas `google_calendar_tokens`/`google_calendars`/`calendar_events` foram removidas do schema (`DROP TABLE IF EXISTS` idempotente em `initDatabase()` para instalações existentes). Uma recriação fiel do estado atual não deve incluir nenhum desses métodos, branches, ou tabelas.
+
+#### 3.4.6 "Meeting Detected" — a notificação em si (removida)
+A janela/overlay de notificação (`MeetingNotificationOverlay.tsx`/`MeetingNotificationCard.tsx`, rota `?meeting-notification=true`), a plumbing de janela em `windowManager.js` (`showMeetingNotification`, `showNotificationWindow`, `dismissMeetingNotification`, `notificationWindow`, `_pendingNotificationData`, `_notificationTimeout`, `_notificationReadyFallback`), sua superfície IPC (`meeting-detection-get/set-preferences`, `meeting-notification-respond`, `get-meeting-notification-data`, `meeting-notification-ready`, pushes `meeting-detected`/`meeting-detected-start-recording`/`meeting-notification-data`), o toggle de Settings "Meeting Detection" (`notifyMeetingDetection`) e o campo vestigial `meetingProcessDetection` foram todos removidos. O passo de onboarding `meeting`/`MeetingSetupStep.tsx` (já inatingível via `showMeetingStep = false`) também foi removido — ver §6.7.
 
 ### 3.5 Voice Agent Hotkey
 
@@ -1104,7 +1104,7 @@ Atalhos configuráveis que aplicam reescrita via LLM sobre texto selecionado em 
 
 **⚠️ Divergência confirmada com CLAUDE.md**: não são 8 passos fixos, e não há passo de "agent naming" dedicado (nome do agente só em Settings, default `"EktosWhispr"`).
 
-**Passos reais** (dinâmico): `language → setup (transcrição) → languageModel → localModel (condicional, só se cleanupMode==="local") → permissions → activation (hotkey) → meeting (hardcoded showMeetingStep=false, oculto) → finish`.
+**Passos reais** (dinâmico): `language → setup (transcrição) → languageModel → localModel (condicional, só se cleanupMode==="local") → permissions → activation (hotkey) → finish`. O passo `meeting` (e o componente `MeetingSetupStep.tsx` que ele renderizava, já inatingível via `showMeetingStep=false`) **não existe mais no código** — foi removido junto com a detecção automática de reuniões (ver §3.4).
 
 - **`setup`**: força modo local ao entrar (`setUseLocalWhisper(true)`); ao sair, espelha a seleção para escopos meeting/upload.
 - **`languageModel`**: ao sair, copia config resolvida para `dictationAgent`/`noteFormatting`/`chatIntelligence`.
@@ -1147,11 +1147,11 @@ Nome npm `ektos-whispr`, appId `com.gizmolabs.ektoswhispr`, productName `EktosWh
 
 ### 7.3 Scripts npm — Ordem de Execução
 
-**Compilação nativa**: `compile:native` = `compile:globe && compile:fast-paste && compile:winkeys && compile:linuxkeys && compile:winpaste && compile:linux-paste && compile:linux-system-audio && compile:text-monitor && compile:media-remote && compile:mic-listener && compile:audio-tap` — cada sub-script é no-op nas plataformas onde não se aplica.
+**Compilação nativa**: `compile:native` = `compile:globe && compile:fast-paste && compile:winkeys && compile:linuxkeys && compile:winpaste && compile:linux-paste && compile:linux-system-audio && compile:text-monitor && compile:media-remote && compile:audio-tap` — cada sub-script é no-op nas plataformas onde não se aplica. (`compile:mic-listener` existia para compilar o `macos-mic-listener` de detecção automática de reuniões; removido junto com ela.)
 
 **Dev**: `predev` = `compile:native && download:meeting-aec-helper`. `dev` = `concurrently -k -r "npm:dev:renderer" "npm:dev:main"`. `dev:main` usa `scripts/run-electron.js --dev` (wrapper que remove `ELECTRON_RUN_AS_NODE` e injeta `--ozone-platform=x11` em Wayland+KDE/GNOME).
 
-**Build**: `prebuild`/`prebuild:mac`/`prebuild:win`/`prebuild:linux`/`prepack`/`predist` (hooks automáticos) baixam whisper-cpp, llama-server, sherpa-onnx, meeting-aec-helper, whisper-vad-model, diarization-models — cada variante de plataforma adiciona binários exclusivos (Windows: nircmd, fast-paste, key-listener, mic-listener, system-audio-helper; macOS: `compile:mac-icon`). (Os passos `download:qdrant`/`download:embedding-model` existiam aqui até a remoção do Qdrant — ver `docs/specs/remove-qdrant-dependency.md`.)
+**Build**: `prebuild`/`prebuild:mac`/`prebuild:win`/`prebuild:linux`/`prepack`/`predist` (hooks automáticos) baixam whisper-cpp, llama-server, sherpa-onnx, meeting-aec-helper, whisper-vad-model, diarization-models — cada variante de plataforma adiciona binários exclusivos (Windows: nircmd, fast-paste, key-listener, system-audio-helper; macOS: `compile:mac-icon`). (Os passos `download:qdrant`/`download:embedding-model` existiam aqui até a remoção do Qdrant — ver `docs/specs/remove-qdrant-dependency.md`. O passo `download:windows-mic-listener` existia aqui até a remoção da detecção automática de reuniões — ver §3.4.)
 
 `build:mac/win/linux` = `build:renderer && electron-builder --<plataforma>`. `pack` = build de diretório não assinado (`CSC_IDENTITY_AUTO_DISCOVERY=false`). `postinstall` = `electron-builder install-app-deps` (recompila módulos nativos, automático pós-`npm install`).
 
@@ -1169,7 +1169,7 @@ Biblioteca compartilhada `scripts/lib/download-utils.js`: `fetchLatestRelease` (
 | `download-whisper-vad-model.js` | HuggingFace `ggml-org/whisper-vad` | `ggml-silero-v5.1.2.bin` |
 | `download-diarization-models.js` | `k2-fsa/sherpa-onnx` (tags especiais) | modelos de segmentação/embedding/VAD |
 | `download-nircmd.js` | nirsoft.net direto (não GitHub) | `nircmd.exe` (fallback PowerShell sem bypass TLS — usa validação de certificado padrão do SO/.NET) |
-| `download-windows-{key,mic}-listener.js`, `-fast-paste.js`, `-system-audio-helper.js` | `OpenWhispr/openwhispr` (tags `{componente}-v{versão}`) | binários Windows nativos |
+| `download-windows-key-listener.js`, `-fast-paste.js`, `-system-audio-helper.js` | `OpenWhispr/openwhispr` (tags `{componente}-v{versão}`) | binários Windows nativos |
 | `download-meeting-aec-helper.js` | idem | `meeting-aec-helper-{platform}-{arch}` (4 alvos) |
 | `download-text-monitor.js` | idem | linux/windows text monitor |
 
@@ -1177,7 +1177,7 @@ Biblioteca compartilhada `scripts/lib/download-utils.js`: `fetchLatestRelease` (
 
 ### 7.5 Scripts de Compilação (`build-*.js`)
 
-**macOS (Swift, via `xcrun swiftc`)**: `build-globe-listener.js`, `build-macos-mic-listener.js`, `build-macos-fast-paste.js`, `build-macos-audio-tap.js` (exige macOS 14.2+, Process Tap), `build-macos-text-monitor.js`, `build-media-remote.js`. Cache incremental via hash SHA-256 do `.swift` fonte + validação do Mach-O header (arquitetura).
+**macOS (Swift, via `xcrun swiftc`)**: `build-globe-listener.js`, `build-macos-fast-paste.js`, `build-macos-audio-tap.js` (exige macOS 14.2+, Process Tap), `build-macos-text-monitor.js`, `build-media-remote.js`. Cache incremental via hash SHA-256 do `.swift` fonte + validação do Mach-O header (arquitetura). (`build-macos-mic-listener.js` existia para o `macos-mic-listener` de detecção automática de reuniões; removido junto com ela — ver §3.4.)
 
 **Windows (C, `cl`→MinGW→Clang)**: `build-windows-key-listener.js` (compila primeiro, baixa como fallback), `build-windows-fast-paste.js`/`build-windows-text-monitor.js` (baixa primeiro, compila como fallback). Verificação só por mtime.
 
@@ -1210,7 +1210,6 @@ Padrão comum: stdout = dados/eventos em texto simples; stderr = diagnóstico/JS
 | Plataforma | Arquivo | Propósito |
 |---|---|---|
 | Windows | `windows-key-listener.c` | Push-to-talk (`WH_KEYBOARD_LL`) |
-| Windows | `windows-mic-listener.c` | WASAPI session monitor |
 | Windows | `windows-system-audio-helper.c` | Captura loopback (exclui próprio processo) |
 | Windows | `windows-fast-paste.c` | Cola texto (SendInput) |
 | Windows | `windows-text-monitor.c` | UI Automation, detecta mudança pós-paste |
@@ -1219,19 +1218,20 @@ Padrão comum: stdout = dados/eventos em texto simples; stderr = diagnóstico/JS
 | Linux | `linux-system-audio-helper.c` | PipeWire loopback |
 | Linux | `linux-text-monitor.c`/`.py` | AT-SPI2 (Python usa event listeners, mais eficiente) |
 | macOS | `macos-globe-listener.swift` | Fn/Globe, modificadores direitos, botões de mouse |
-| macOS | `macos-mic-listener.swift` | CoreAudio property listener |
 | macOS | `macos-audio-tap.swift` | Core Audio Process Tap (14.2+) |
 | macOS | `macos-fast-paste.swift` | Cmd+V simples |
 | macOS | `macos-text-monitor.swift` | Accessibility API |
 | macOS | `macos-media-remote.swift` | Framework privada MediaRemote |
 
+(`windows-mic-listener.c`/`macos-mic-listener.swift` existiam para detecção automática de reuniões via atividade de microfone; ambos removidos junto com todo o sistema de detecção — ver §3.4.)
+
 ### 7.8 Testes (`test/`)
 
-`npm test` = `node --test` (runner nativo, sem Jest/Mocha). 56 arquivos (46 `test/helpers/` + 10 `test/utils/`), cada um autocontido com mocks via interceptação de `Module._load`. Cobertura: wake word, roteamento de ditado, dicionário/eco, auto-learn (correções + proveniência + guard de anti-oscilação, invariante do baseline final do text-monitor), hotkeys, backends llama, VAD/streaming, GPU mode resolver, snippets, etc.
+`npm test` = `node --test` (runner nativo, sem Jest/Mocha). 61 arquivos (51 `test/helpers/` + 10 `test/utils/`), cada um autocontido com mocks via interceptação de `Module._load`. Cobertura: wake word, roteamento de ditado, dicionário/eco, auto-learn (correções + proveniência + guard de anti-oscilação, invariante do baseline final do text-monitor), hotkeys, backends llama, VAD/streaming, GPU mode resolver, snippets, gravação manual de reunião (`manualMeetingLauncher.test.js`), etc.
 
 ### 7.9 CI (`.github/workflows/`)
 
-14 workflows: `tests.yml` (PR, `npm ci --ignore-scripts && npm test`), `lockfile-lint.yml`, `codeql.yml` (segunda-feira + push/PR), `build-and-notarize.yml` (push/PR, build Windows assinado via Azure Trusted Signing em push / não-assinado em PR), `release.yml` (tag `v*.*.*`, publica release oficial), `auto-release.yml` (bump patch automático em push main), 7 workflows de binário nativo individual (`build-windows-{key,mic}-listener.yml`, etc. — `workflow_dispatch`, compilam e publicam tag própria `{componente}-v*`), `update-nix.yml` (atualiza `nix/package.nix`).
+13 workflows: `tests.yml` (PR, `npm ci --ignore-scripts && npm test`), `lockfile-lint.yml`, `codeql.yml` (segunda-feira + push/PR), `build-and-notarize.yml` (push/PR, build Windows assinado via Azure Trusted Signing em push / não-assinado em PR), `release.yml` (tag `v*.*.*`, publica release oficial), `auto-release.yml` (bump patch automático em push main), 6 workflows de binário nativo individual (`build-windows-key-listener.yml`, etc. — `workflow_dispatch`, compilam e publicam tag própria `{componente}-v*`), `update-nix.yml` (atualiza `nix/package.nix`). (`build-windows-mic-listener.yml` existia para o binário de detecção automática de reuniões; removido junto com ela — ver §3.4.)
 
 ### 7.10 Roteiro de Recriação do Ambiente de Build
 

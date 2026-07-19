@@ -187,7 +187,6 @@
       "permissions": "Permissões",
       "activation": "Ditado",
       "useCase": "Sobre você",
-      "meeting": "Reuniões",
       "finish": "Concluir",
       "voiceAgent": "Agente de voz",
       "language": "Idioma"
@@ -302,18 +301,6 @@
         }
       },
       "selectHint": "Selecione todas as opções aplicáveis"
-    },
-    "meeting": {
-      "title": "Notas de reunião",
-      "description": "Capture e resuma suas reuniões",
-      "autoDetect": "O EktosWhispr detecta automaticamente quando você está em uma reunião e oferece iniciar notas — nada é gravado sem você.",
-      "notification": {
-        "title": "Reunião detectada",
-        "body": "Parece que você está em uma reunião. Quer fazer anotações?",
-        "cta": "Começar a gravar"
-      },
-      "hotkeyLabel": "Atalho de reunião",
-      "hotkeyHint": "Opcional — pressione-o em qualquer reunião para iniciar uma nota na hora."
     },
     "finish": {
       "title": "Tudo pronto",
@@ -1491,8 +1478,6 @@
         "description": "Controle quais notificações o EktosWhispr pode mostrar",
         "disableAll": "Desativar todas as notificações",
         "disableAllDescription": "Silenciar tudo exceto mensagens de erro",
-        "meetingDetection": "Detecção de reuniões",
-        "meetingDetectionDescription": "Notificar quando uma reunião for detectada para iniciar a gravação",
         "calendarReminders": "Lembretes do calendário",
         "calendarRemindersDescription": "Notificar quando uma reunião agendada está prestes a começar",
         "updates": "Atualizações do app",

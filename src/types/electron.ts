@@ -1489,10 +1489,6 @@ declare global {
       onDictationRealtimeError?: (callback: (error: string) => void) => () => void;
       onDictationRealtimeSessionEnd?: (callback: (data: { text: string }) => void) => () => void;
 
-      meetingDetectionGetPreferences?: () => Promise<{ success: boolean; preferences?: any }>;
-      meetingDetectionSetPreferences?: (
-        prefs: Record<string, boolean>
-      ) => Promise<{ success: boolean }>;
       syncNotificationPreferences?: (
         prefs: Record<string, boolean>
       ) => Promise<{ success: boolean }>;
@@ -1529,15 +1525,6 @@ declare global {
         speechPadMs?: number;
         samplesOverlap?: number;
       }) => Promise<{ success: boolean; config?: Record<string, unknown>; error?: string }>;
-      onMeetingDetected?: (callback: (data: any) => void) => () => void;
-      onMeetingDetectedStartRecording?: (callback: (data: any) => void) => () => void;
-      onMeetingNotificationData?: (callback: (data: any) => void) => () => void;
-      getMeetingNotificationData?: () => Promise<any>;
-      meetingNotificationReady?: () => Promise<void>;
-      meetingNotificationRespond?: (
-        detectionId: string,
-        action: string
-      ) => Promise<{ success: boolean }>;
       getPendingMeetingNoteNavigation?: () => Promise<{
         noteId: number;
         folderId: number;

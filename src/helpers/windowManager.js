@@ -23,14 +23,11 @@ class WindowManager {
     this.mainWindow = null;
     this.controlPanelWindow = null;
     this.agentWindow = null;
-    this.notificationWindow = null;
-    this._notificationTimeout = null;
     this.transcriptionPreviewWindow = null;
     this.updateNotificationWindow = null;
     this._updateNotificationDismissed = false;
     this.notificationPrefs = {
       notificationsEnabled: true,
-      notifyMeetingDetection: true,
       notifyCalendarReminders: true,
       notifyUpdates: true,
     };
@@ -457,7 +454,6 @@ class WindowManager {
       this.showDictationPanel();
       this.mainWindow.webContents.send(channel);
       this._isDictatingToggle = !this._isDictatingToggle;
-      this.meetingDetectionEngine?.setUserRecording(this._isDictatingToggle);
     }
   }
 
@@ -480,7 +476,6 @@ class WindowManager {
     if (this.mainWindow && !this.mainWindow.isDestroyed()) {
       this.showDictationPanel();
       this.mainWindow.webContents.send("start-dictation");
-      this.meetingDetectionEngine?.setUserRecording(true);
     }
   }
 
@@ -491,7 +486,6 @@ class WindowManager {
     if (this.mainWindow && !this.mainWindow.isDestroyed()) {
       this.mainWindow.webContents.send("stop-dictation");
       this._isDictatingToggle = false;
-      this.meetingDetectionEngine?.setUserRecording(false);
     }
   }
 
@@ -1163,99 +1157,6 @@ class WindowManager {
     if (this.mainWindow && !this.mainWindow.isDestroyed()) {
       WindowPositionUtil.setupAlwaysOnTop(this.mainWindow);
     }
-  }
-
-  async showMeetingNotification(promptData) {
-    if (this.notificationWindow && !this.notificationWindow.isDestroyed()) {
-      this.notificationWindow.close();
-      this.notificationWindow = null;
-    }
-    if (this._notificationTimeout) {
-      clearTimeout(this._notificationTimeout);
-      this._notificationTimeout = null;
-    }
-
-    const display = screen.getPrimaryDisplay();
-    const position = WindowPositionUtil.getNotificationPosition(display);
-
-    this.notificationWindow = new BrowserWindow({
-      ...NOTIFICATION_WINDOW_CONFIG,
-      ...position,
-    });
-
-    if (process.platform === "darwin") {
-      this.notificationWindow.setIgnoreMouseEvents(true, { forward: true });
-    }
-
-    WindowPositionUtil.setupAlwaysOnTop(this.notificationWindow);
-
-    this._pendingNotificationData = promptData;
-
-    if (process.env.NODE_ENV === "development") {
-      await DevServerManager.waitForDevServer();
-      await this.notificationWindow.loadURL(
-        `${DevServerManager.DEV_SERVER_URL}?meeting-notification=true`
-      );
-    } else {
-      const fileInfo = DevServerManager.getAppFilePath(false);
-      await this.notificationWindow.loadFile(fileInfo.path, {
-        query: { ...fileInfo.query, "meeting-notification": "true" },
-      });
-    }
-
-    this._notificationReadyFallback = setTimeout(() => {
-      this._notificationReadyFallback = null;
-      if (this.notificationWindow && !this.notificationWindow.isDestroyed()) {
-        debugLogger.warn(
-          "Notification renderer did not signal ready, force-showing",
-          {},
-          "meeting"
-        );
-        this.notificationWindow.webContents.send("meeting-notification-data", promptData);
-        this.notificationWindow.showInactive();
-      }
-    }, 3000);
-
-    this._notificationTimeout = setTimeout(() => {
-      if (this.meetingDetectionEngine) {
-        this.meetingDetectionEngine.handleNotificationTimeout();
-      }
-      this.dismissMeetingNotification();
-    }, 30000);
-
-    this.notificationWindow.on("closed", () => {
-      this.notificationWindow = null;
-      if (this._notificationTimeout) {
-        clearTimeout(this._notificationTimeout);
-        this._notificationTimeout = null;
-      }
-    });
-  }
-
-  showNotificationWindow() {
-    if (this._notificationReadyFallback) {
-      clearTimeout(this._notificationReadyFallback);
-      this._notificationReadyFallback = null;
-    }
-    if (this.notificationWindow && !this.notificationWindow.isDestroyed()) {
-      this.notificationWindow.showInactive();
-    }
-  }
-
-  dismissMeetingNotification() {
-    this._pendingNotificationData = null;
-    if (this._notificationReadyFallback) {
-      clearTimeout(this._notificationReadyFallback);
-      this._notificationReadyFallback = null;
-    }
-    if (this._notificationTimeout) {
-      clearTimeout(this._notificationTimeout);
-      this._notificationTimeout = null;
-    }
-    if (this.notificationWindow && !this.notificationWindow.isDestroyed()) {
-      this.notificationWindow.close();
-    }
-    this.notificationWindow = null;
   }
 
   async showUpdateNotification(info) {

@@ -1,7 +1,6 @@
 import React, { Suspense, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import App from "./App.jsx";
-import MeetingNotificationOverlay from "./components/MeetingNotificationOverlay.tsx";
 import TranscriptionPreviewOverlay from "./components/TranscriptionPreviewOverlay.tsx";
 import UpdateNotificationOverlay from "./components/UpdateNotificationOverlay.tsx";
 import WindowControls from "./components/WindowControls.tsx";
@@ -14,10 +13,6 @@ const AgentOverlay = React.lazy(() => import("./components/AgentOverlay.tsx"));
 export default function AppRouter() {
   useTheme();
   const params = window.location.search;
-
-  if (params.includes("meeting-notification=true")) {
-    return <MeetingNotificationOverlay />;
-  }
 
   if (params.includes("update-notification=true")) {
     return <UpdateNotificationOverlay />;
