@@ -19,8 +19,28 @@ Module._load = function (request, ...rest) {
 
 const DatabaseManager = require("../../src/helpers/database");
 
-test("FTS5 keyword search works standalone with no vector/semantic layer", () => {
-  const db = new DatabaseManager();
+// Mirrors the isNativeBindingUnavailable()/t.skip() pattern established in
+// test/helpers/databaseCalendarMigration.test.js — CI's `npm ci --ignore-scripts`
+// never rebuilds better-sqlite3's native binding, so constructing a real
+// DatabaseManager there throws; skip gracefully instead of failing the suite.
+function isNativeBindingUnavailable(error) {
+  const message = String(error?.message || error);
+  return (
+    message.includes("NODE_MODULE_VERSION") || message.includes("Could not locate the bindings file")
+  );
+}
+
+test("FTS5 keyword search works standalone with no vector/semantic layer", (t) => {
+  let db;
+  try {
+    db = new DatabaseManager();
+  } catch (error) {
+    if (isNativeBindingUnavailable(error)) {
+      t.skip("better-sqlite3 native binding is not available for this Node runtime");
+      return;
+    }
+    throw error;
+  }
 
   const saveResult = db.saveNote(
     "Quarterly Numbers",
