@@ -1,7 +1,9 @@
 # Remove Meeting Auto-Detection / Notification System
 
 ## Status
-Draft
+Approved
+
+Approved directly by the project owner in conversation, with the three Open Questions below resolved — not inferred by any subagent.
 
 ## Problem / Goal
 
@@ -361,17 +363,13 @@ time since line numbers drift)
   Design.
 - `docs/guides/DEBUG.md` log-category table updated per Design.
 
-## Open Questions
+## Resolved Decisions (formerly Open Questions)
 
-- Should the `"meeting"` debug-log category be renamed (e.g. to
-  `"meeting-transcription"`) now that it no longer covers detection, or left as-is since
-  it's still an accurate umbrella term for the surviving manual-recording pipeline? This
-  spec assumes "leave as-is" (Non-goals) to minimize churn in preserved files, but the
-  user may prefer the rename for clarity — confirm before `spec-executor` starts if a
-  preference exists.
-- `joinCalendarMeeting()`/`getActiveEvents()`/`getCalendarEventById()` are pre-existing
-  dead calendar code (Non-goals). Confirm the user is fine leaving this as tracked
-  technical debt rather than folding its removal into this change.
-- `docs/guides/DEBUG.md`'s "Meeting Detection" table row: confirm whether to delete the
-  row outright or repurpose it, once execution reveals exactly which debug log lines
+- The `"meeting"` debug-log category is **left as-is** — still an accurate umbrella term
+  for the surviving manual-recording pipeline; renaming would be churn without benefit.
+- `joinCalendarMeeting()`/`getActiveEvents()`/`getCalendarEventById()` (pre-existing dead
+  calendar code, Non-goals) are **tracked as separate technical debt**, not folded into
+  this change — see the standalone follow-up task for its removal.
+- `docs/guides/DEBUG.md`'s "Meeting Detection" table row is **deleted outright** (not
+  repurposed as a historical note) once execution reveals exactly which debug log lines
   under the `"meeting"` category survive the removal.
