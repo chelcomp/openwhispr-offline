@@ -1,6 +1,6 @@
 {
   "name": "ektos-whispr",
-  "version": "0.0.18",
+  "version": "0.0.19",
   "description": "A desktop dictation application using whisper.cpp for speech-to-text transcription",
   "main": "main.js",
   "private": true,
