@@ -5,21 +5,23 @@ DNS filter configuration.
 
 All connections are client-initiated over TLS. No inbound ports.
 
-## Required by default
+This is an offline-first fork: there is no first-party EktosWhispr Cloud
+backend (no `api.ektoswhispr.com`/`auth.ektoswhispr.com`), and Google
+Calendar integration has been removed from the codebase. Every host below is
+either always-on infrastructure (auto-update) or opt-in, tied to a specific
+feature the user has explicitly enabled or configured.
 
-Contacted by every install using EktosWhispr Cloud (the default after
-onboarding).
+## Required by default
 
 | Host                                          | Protocol | Port | Purpose                                                                            |
 | --------------------------------------------- | -------- | ---- | ---------------------------------------------------------------------------------- |
-| `api.ektoswhispr.com`                          | HTTPS    | 443  | Cloud API: transcription, sync, agent reasoning, settings, usage.                  |
-| `auth.ektoswhispr.com`                         | HTTPS    | 443  | Account sign-in and session refresh (Better Auth).                                 |
 | `github.com`, `objects.githubusercontent.com` | HTTPS    | 443  | Application auto-update (release artifacts via electron-updater, GitHub provider). |
 
 ## Required for streaming transcription
 
-EktosWhispr Cloud routes streaming sessions through one of three providers.
-Allowlist all three unless a specific provider is pinned in configuration.
+Meeting transcription routes streaming sessions through one of three BYOK
+providers. Allowlist all three unless a specific provider is pinned in
+configuration.
 
 | Host                       | Protocol   | Port | Purpose                                                                           |
 | -------------------------- | ---------- | ---- | --------------------------------------------------------------------------------- |
@@ -30,24 +32,13 @@ Allowlist all three unless a specific provider is pinned in configuration.
 ## Required for local model downloads
 
 Contacted only when a user opts into a local model (Whisper, Parakeet, or a
-local GGUF reasoning model). Not required for cloud-only installs.
+local GGUF reasoning model). Not required otherwise.
 
 | Host                                                    | Protocol | Port | Purpose                                                                     |
 | ------------------------------------------------------- | -------- | ---- | --------------------------------------------------------------------------- |
 | `huggingface.co`                                        | HTTPS    | 443  | Whisper GGML, Parakeet, GGUF, and embedding model downloads.                |
 | `cdn-lfs.huggingface.co`, `cdn-lfs-us-1.huggingface.co` | HTTPS    | 443  | HuggingFace large-file CDN (LFS-backed model files).                        |
 | `github.com`, `objects.githubusercontent.com`           | HTTPS    | 443  | sherpa-onnx, llama.cpp, whisper.cpp, and Qdrant binaries (GitHub releases). |
-
-## Required for Google Calendar (optional feature)
-
-Contacted only if the user connects Google Calendar in settings.
-
-| Host                    | Protocol | Port | Purpose                                                     |
-| ----------------------- | -------- | ---- | ----------------------------------------------------------- |
-| `accounts.google.com`   | HTTPS    | 443  | OAuth authorization.                                        |
-| `oauth2.googleapis.com` | HTTPS    | 443  | OAuth token exchange and revoke.                            |
-| `www.googleapis.com`    | HTTPS    | 443  | Calendar event and calendar list reads.                     |
-| `ektoswhispr.com`        | HTTPS    | 443  | OAuth desktop callback redirect (`/auth/desktop-callback`). |
 
 ## BYOK provider hosts (only if configured)
 
@@ -86,10 +77,10 @@ Run from a machine on the same network as the user. A successful response
 (any HTTP status, including `401`) confirms the network path works.
 
 ```sh
-# EktosWhispr Cloud reachability
-curl -v https://api.ektoswhispr.com/api/health
+# Auto-update
+curl -v -I https://github.com
 
-# Streaming providers
+# Streaming providers (only if a BYOK streaming provider is configured)
 curl -v https://api.deepgram.com/v1/projects
 curl -v https://api.openai.com/v1/models
 curl -v https://streaming.assemblyai.com/v3/token

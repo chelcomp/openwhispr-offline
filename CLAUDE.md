@@ -2,6 +2,8 @@
 
 This document provides comprehensive technical details about the EktosWhispr project architecture for AI assistants working on the codebase.
 
+**Documentation map**: [`docs/README.md`](docs/README.md) indexes every doc in this repo (guides, reference, specs, agent definitions) and explains how they relate. Consult it before searching the repo ad hoc for "where is X documented." In particular, this file (CLAUDE.md) is the day-to-day architecture reference, but [`docs/RECREATION_SPEC.md`](docs/RECREATION_SPEC.md) — especially its §0 — is the authority when the two disagree about current behavior.
+
 ## Project Overview
 
 EktosWhispr is an Electron-based desktop dictation application that uses whisper.cpp for speech-to-text transcription. It supports both local (privacy-focused) and cloud (OpenAI API) processing modes.
@@ -16,7 +18,7 @@ EktosWhispr is an Electron-based desktop dictation application that uses whisper
 - **UI Components**: shadcn/ui with Radix primitives
 - **Speech Processing**: whisper.cpp + NVIDIA Parakeet (via sherpa-onnx) + OpenAI API
 - **Audio Processing**: FFmpeg (bundled via ffmpeg-static)
-- **Node.js**: 24 (pinned in `.nvmrc` — CI uses Node 24, do NOT regenerate `package-lock.json` with a different major version)
+- **Node.js**: 26 (pinned in `.nvmrc` — CI reads it via `node-version-file`, do NOT regenerate `package-lock.json` with a different major version)
 
 ### Key Architectural Decisions
 
@@ -109,10 +111,6 @@ EktosWhispr is an Electron-based desktop dictation application that uses whisper
   - Linux: Event-driven via `pactl subscribe` (PulseAudio source-output events)
   - All platforms: Graceful fallback to polling if native approach fails
 - **processListCache.js**: Shared singleton process list cache (5s TTL, `ps-list` npm)
-- **googleCalendarManager.js**: Google Calendar sync with exponential backoff
-  - 10s socket timeout on API requests
-  - Backoff: 2min → 4min → 8min → cap 30min on consecutive failures
-  - Reset to normal interval on success
 - **menuManager.js**: Application menu management
 - **tray.js**: System tray icon and menu
 - **whisper.js**: Local whisper.cpp integration and model management
@@ -130,7 +128,7 @@ EktosWhispr is an Electron-based desktop dictation application that uses whisper
 
 - **App.jsx**: Main dictation interface with recording states
 - **ControlPanel.tsx**: Settings, history, model management UI
-- **OnboardingFlow.tsx**: 8-step first-time setup wizard
+- **OnboardingFlow.tsx**: Dynamic-length first-time setup wizard (not a fixed step count — e.g. the `localModel` step is conditional, and a `meeting` step exists in code but is disabled via a hardcoded `showMeetingStep = false` flag). There is no dedicated "name your agent" step; the agent name is only set in Settings, defaulting to `"EktosWhispr"`.
 - **PostMigrationOnboarding.tsx**: One-time modal for users returning from the pre-Gizmo bundle ID; reuses `PermissionsSection` to walk through re-granting Microphone, Accessibility, and System Audio. Triggered by `postMigrationDetector.js` (see Helper Modules)
 - **SettingsPage.tsx**: Comprehensive settings interface
 - **WhisperModelPicker.tsx**: Model selection and download UI
@@ -154,7 +152,7 @@ EktosWhispr is an Electron-based desktop dictation application that uses whisper
 
 - **ReasoningService.ts**: AI processing for agent-addressed commands
   - Detects when user addresses their named agent and removes the agent name from final output
-  - Provider implementations live in a registry at `src/services/ai/inferenceProviders/index.ts` covering 8 providers (`anthropic`, `enterprise`, `gemini`, `groq`, `lan`, `local`, `openai`, `ektoswhispr`), each implementing the `InferenceProvider` interface from `types.ts`
+  - Provider implementations live in a registry at `src/services/ai/inferenceProviders/index.ts` covering 7 implementations behind 11 registry keys (`openai`/`custom`/`openrouter` → one OpenAI-compatible handler, also used for Tinfoil/Mistral-style OpenAI-compatible endpoints; `anthropic`; `gemini`; `groq`; `local`; `bedrock`/`azure`/`vertex` → one "enterprise" handler; `lan`), each implementing the `InferenceProvider` interface from `types.ts`. There is no `ektoswhispr` cloud provider — this offline fork has no first-party cloud backend.
   - Per-scope LLM config: 4 scopes (`dictationCleanup`, `dictationAgent`, `noteFormatting`, `chatIntelligence`) defined in `src/config/inferenceScopes.ts`
   - `selectResolvedLLMConfig(state, scope)` in `settingsStore.ts` resolves provider/model per scope with fallback chains
 
@@ -175,6 +173,7 @@ EktosWhispr is an Electron-based desktop dictation application that uses whisper
   - Models stored in `~/.cache/ektoswhispr/parakeet-models/`
   - Server pre-warming on startup when `LOCAL_TRANSCRIPTION_PROVIDER=nvidia` is set
   - Provider preference persisted to `.env` via `saveAllKeysToEnvFile()` on server start/stop
+  - **GPU behavior differs from Whisper**: Parakeet always attempts CUDA when a GPU is present, with no user-facing CPU/GPU toggle (unlike Whisper, which respects `WHISPER_GPU_MODE`). This is an explicit design decision in the source, not a bug — there is no equivalent env var to force Parakeet onto CPU.
 
 - **Available Models**:
   - `parakeet-tdt-0.6b-v3`: Multilingual (25 languages), ~680MB
@@ -184,32 +183,32 @@ EktosWhispr is an Electron-based desktop dictation application that uses whisper
 
 ### Local Semantic Search (Qdrant + MiniLM)
 
-Always-on offline semantic search that finds notes by meaning, not just keywords. Used by the AI agent's `search_notes` tool. Qdrant starts automatically on app launch; embedding model auto-downloads on first run if missing.
+Offline semantic search that finds notes by meaning, not just keywords. Used by the AI agent's `search_notes` tool. The `QdrantManager` instance is created at boot (and registered for shutdown), but the Qdrant **process** is only actually spawned lazily, on the first semantic-search call (`_ensureQdrantReady()`) — not on app launch. The embedding model is **not** downloaded at runtime; it's fetched by an npm script before Electron even starts (see Dev setup below).
 
 **Architecture**:
 
-- **Qdrant sidecar**: Rust binary spawned as child process (`qdrantManager.js`), port 6333–6350
+- **Qdrant sidecar**: Rust binary spawned as child process (`qdrantManager.js`), port 6333–6350, lazily on first use
 - **Embedding model**: `all-MiniLM-L6-v2` via ONNX Runtime (`localEmbeddings.js`), 384-dim vectors
 - **Vector index**: Qdrant collection management (`vectorIndex.js`), cosine distance
 - **Hybrid search**: FTS5 + Qdrant in parallel → Reciprocal Rank Fusion (K=60) with 0.3 cosine score threshold
 
 **Pipeline**:
 
-1. App launches → Qdrant binary starts → collection created. Embedding model auto-downloads if missing (~22MB)
+1. App launches → `QdrantManager` instance created (not yet running). First `db-semantic-search-notes` call → `_ensureQdrantReady()` spawns the Qdrant binary and ensures the collection exists.
 2. Note create/update/delete → SQLite write → background vector upsert/delete via `_asyncVectorUpsert()`/`_asyncVectorDelete()`
 3. Agent searches → `db-semantic-search-notes` IPC → parallel FTS5 + vector search → RRF merge → ranked results
 
-**Search fallback chain** (in `searchNotesTool.ts`): cloud search → local semantic → FTS5 keyword
+**Search fallback chain** (in `searchNotesTool.ts`): local semantic (RRF) → FTS5 keyword. There is no "cloud search" step — the `useCloudSearch` parameter is accepted but unused (this offline fork has no cloud backend).
 
 **Storage**:
 
 - Qdrant data: `~/.cache/ektoswhispr/qdrant-data/`
 - Qdrant binary: `resources/bin/qdrant-{platform}-{arch}` (bundled — downloaded during `prebuild` / `predev`)
-- Embedding model: `~/.cache/ektoswhispr/embedding-models/all-MiniLM-L6-v2/` (auto-downloaded on first launch)
+- Embedding model: `~/.cache/ektoswhispr/embedding-models/all-MiniLM-L6-v2/` (downloaded by an npm script before runtime — see below)
 
 **Dependencies**: `@qdrant/js-client-rest`, `onnxruntime-node`
 
-**Dev setup**: The Qdrant binary downloads automatically via `predev`/`prestart`. The embedding model auto-downloads on first app launch. To manually download: `npm run download:qdrant` and `npm run download:embedding-model`.
+**Dev setup**: Both the Qdrant binary and the embedding model download via `predev`/`prestart`/`prebuild` → `scripts/download-minilm.js`, which runs **before** Electron starts (dev) or is bundled into the installer (packaged build) — `localEmbeddings.downloadModel()` exists in source but is never called at runtime. To manually download: `npm run download:qdrant` and `npm run download:embedding-model`.
 
 ### Build Scripts (scripts/)
 
@@ -285,15 +284,16 @@ Settings stored in localStorage with these keys:
 
 - `whisperModel`: Selected Whisper model
 - `useLocalWhisper`: Boolean for local vs cloud
-- `language`: Selected language code
+- `uiLanguage`: UI display language (separate from transcription language)
+- `preferredLanguage`: Selected transcription language code
 - `agentName`: User's custom agent name
 - `reasoningModel`: Selected AI model for processing
 - `reasoningProvider`: AI provider (openai/anthropic/gemini/local)
-- `hotkey`: Custom hotkey configuration
-- `hasCompletedOnboarding`: Onboarding completion flag
+- `dictationKey`: Custom hotkey configuration
+- `onboardingCompleted`: Onboarding completion flag
 - `customDictionary`: JSON array of words/phrases for improved transcription accuracy
 
-Secret env vars (12 total: 7 BYOK API keys + 5 enterprise cloud creds — see `SECRET_KEYS` in `environment.js`) are encrypted at rest via Electron `safeStorage` and stored as per-key files under `userData/secure-keys/`. They are loaded into `process.env` at startup by `EnvironmentManager.init()`. Renderer reads them via IPC (`get-*-key`) and writes via debounced IPC (`save-*-key`). On Linux without a keyring, secrets fall back to plaintext.
+Secret env vars (16 total: 7 BYOK API keys + 5 enterprise cloud creds + 4 more — `ASSEMBLYAI_API_KEY`, `DEEPGRAM_API_KEY`, `CUSTOM_TRANSCRIPTION_API_KEY`, `CUSTOM_CLEANUP_API_KEY` — see `SECRET_KEYS` in `environment.js`) are encrypted at rest via Electron `safeStorage` and stored as per-key files under `userData/secure-keys/`. They are loaded into `process.env` at startup by `EnvironmentManager.init()`. Renderer reads them via IPC (`get-*-key`) and writes via debounced IPC (`save-*-key`). On Linux without a keyring, secrets fall back to plaintext.
 
 Non-secret env vars persisted to `.env` (via `saveAllKeysToEnvFile()`):
 
@@ -310,7 +310,7 @@ Non-secret env vars persisted to `.env` (via `saveAllKeysToEnvFile()`):
 
 ### 7. Agent Naming System
 
-- User names their agent during onboarding (step 6/8)
+- The agent name is set in Settings, not during onboarding (there is no dedicated onboarding step for it) — defaults to `"EktosWhispr"`
 - Name stored in localStorage and database
 - ReasoningService detects "Hey [AgentName]" patterns
 - AI processes command and removes agent reference from output
@@ -348,8 +348,7 @@ All AI model definitions are centralized in `src/models/modelRegistryData.json` 
 **Key files:**
 
 - `src/models/modelRegistryData.json` - Single source of truth for all models
-- `src/models/ModelRegistry.ts` - TypeScript wrapper with helper methods
-- `src/config/aiProvidersConfig.ts` - Derives AI_MODES from registry
+- `src/models/ModelRegistry.ts` - TypeScript wrapper with helper methods; `buildReasoningProviders()` derives the reasoning provider list from the registry (there is no separate `src/config/aiProvidersConfig.ts` — that file doesn't exist)
 - `src/utils/languages.ts` - Derives REASONING_PROVIDERS from registry
 - `src/helpers/modelManagerBridge.js` - Handles local model downloads
 
@@ -540,13 +539,12 @@ On Hyprland (wlroots Wayland compositor), Electron's `globalShortcut` API and th
 
 ### 16. Meeting Detection (Event-Driven)
 
-Detects meetings via three independent sources, orchestrated by `MeetingDetectionEngine`:
+Detects meetings via two independent sources, orchestrated by `MeetingDetectionEngine`. (Google Calendar integration — `googleCalendarManager.js`/`googleCalendarOAuth.js` — has been removed from the codebase; there is no calendar-aware context anymore.)
 
 **Architecture**:
 
 - `MeetingDetectionEngine` listens to events from `MeetingProcessDetector` and `AudioActivityDetector`
-- `GoogleCalendarManager` provides calendar context (imminent events, active meetings)
-- All three sources feed into a unified notification pipeline
+- Both sources feed into a unified notification pipeline
 
 **Process Detection** (known meeting apps — Zoom, Teams, Webex, FaceTime):
 
@@ -565,20 +563,12 @@ Detects meetings via three independent sources, orchestrated by `MeetingDetectio
 - During recording (tap-to-talk or push-to-talk): ALL notifications suppressed
 - After recording: 2.5s cooldown before showing queued notifications
 - Multiple signals coalesced: process > audio priority, one notification shown
-- Calendar-aware: if imminent calendar event exists, notification shows event name
-- Active calendar meeting recording: all detections suppressed
 
 **Binary Distribution**:
 
 - macOS: Compiled from Swift source via `scripts/build-macos-mic-listener.js` during `compile:native`
 - Windows: Prebuilt binary downloaded via `scripts/download-windows-mic-listener.js` during `prebuild:win`
 - CI workflow: `.github/workflows/build-windows-mic-listener.yml` auto-builds on push to main
-
-**Calendar Sync Resilience**:
-
-- 10s socket timeout on all Google Calendar API requests
-- Exponential backoff on consecutive failures: 2min → 4min → 8min → cap 30min
-- Reset to normal 2min interval on any successful sync
 
 ### 17. Voice Agent Hotkey
 
@@ -605,6 +595,30 @@ A dedicated global hotkey that starts a dictation whose transcript is sent strai
 **Tests**: `test/helpers/dictationRouting.test.js` (run with `node --test`)
 
 ## Development Guidelines
+
+### AI Assistant Workflow — Spec-Driven Development (Mandatory)
+
+From now on, every improvement — feature, refactor, or bug fix — starts from a spec, not from code. Never edit application code before a plan exists and its validation approach is defined, even for changes that sound trivial. Three subagents implement this pipeline:
+
+1. **Plan** — invoke `spec-planner` (`.claude/agents/spec-planner.md`) for any new piece of work. It creates or updates a spec under `docs/specs/<slug>.md` (problem, requirements, design, and a Validation Plan describing exactly how the change will be proven correct). It never edits application code.
+2. **Approve** — the user reviews the spec. Implementation must not start while the spec's `Status` is `Draft` — only on `Approved`.
+3. **Execute** — invoke `spec-executor` (`.claude/agents/spec-executor.md`) to implement exactly what the approved spec's Design section describes, run its Validation Plan, update the relevant docs, and mark the spec `Implemented`. It refuses to start on an unapproved or missing spec.
+4. **Gate** — invoke `pr-reviewer` (`.claude/agents/pr-reviewer.md`) before any `git commit` or PR (see below). `spec-executor` invokes this itself before reporting work as commit-ready.
+
+`docs/specs/*.md` describes the target state to build toward; `docs/RECREATION_SPEC.md` remains the authoritative record of current/actual behavior (its §0 lists known divergences from this file) and should be kept in sync as specs are implemented.
+
+### AI Assistant Workflow — Mandatory Pre-Commit/PR Review
+
+Before creating any git commit or opening/updating a pull request, invoke the `pr-reviewer` subagent (`.claude/agents/pr-reviewer.md`). This is not optional and does not require the user to ask for it.
+
+The `pr-reviewer` agent:
+
+- Runs the test suite (`npm test`), lint (`npm run lint`), typecheck (`npm run typecheck`), format check, and the renderer build
+- Reviews the diff for bugs, regressions, and missing test coverage
+- Guarantees the code follows this document (CLAUDE.md) and `docs/RECREATION_SPEC.md` (the authoritative "what the code actually does" spec — see its §0 for known divergences from this file) as a hard pass/fail gate, not an advisory note
+- Returns a `PASS`/`FAIL` verdict
+
+Only proceed with `git commit` / `gh pr create` after a `PASS`. On `FAIL`, fix the reported issues and re-run the agent rather than committing anyway.
 
 ### Internationalization (i18n) — REQUIRED
 
@@ -659,7 +673,7 @@ const { t } = useTranslation();
 - [ ] Test meeting notification suppression during recording
 - [ ] Test post-recording cooldown (notifications shouldn't flash immediately)
 - [ ] Create a note about "quarterly revenue projections", search via agent for "financial forecast" — should match semantically
-- [ ] Verify Qdrant starts on app launch (check debug logs for "qdrant started successfully")
+- [ ] Verify Qdrant starts lazily on first semantic search, not on app launch (check debug logs for "qdrant started successfully" appearing only after the first `search_notes` call)
 - [ ] Kill Qdrant process manually — verify FTS5 keyword search still works as fallback
 
 ### Common Issues and Solutions
@@ -690,7 +704,7 @@ const { t } = useTranslation();
    - Run `npm run download:whisper-cpp` before packaging (current platform)
    - Use `npm run download:whisper-cpp:all` for multi-platform packaging
    - afterSign.js automatically skips signing when CSC_IDENTITY_AUTO_DISCOVERY=false
-   - **Lockfile**: Always use Node 24 when running `npm install` (matches CI). If your local Node version differs, use `nvm exec 24 npm install`. Running `npm install` with a different major version will produce an incompatible `package-lock.json` that breaks `npm ci` in CI.
+   - **Lockfile**: Always use Node 26 when running `npm install` (matches CI, per `.nvmrc`). If your local Node version differs, use `nvm exec 26 npm install`. Running `npm install` with a different major version will produce an incompatible `package-lock.json` that breaks `npm ci` in CI.
 
 5. **Windows Push-to-Talk Binary**:
    - Prebuilt binary downloaded automatically on Windows during build
@@ -707,7 +721,7 @@ const { t } = useTranslation();
 
 7. **Local Semantic Search Not Working**:
    - Qdrant binary should be in `resources/bin/qdrant-{platform}-{arch}` (auto-downloaded during `predev`/`prebuild`)
-   - Embedding model should be in `~/.cache/ektoswhispr/embedding-models/all-MiniLM-L6-v2/model.onnx` (auto-downloaded on first app launch)
+   - Embedding model should be in `~/.cache/ektoswhispr/embedding-models/all-MiniLM-L6-v2/model.onnx` (downloaded by `predev`/`prestart`/`prebuild` before Electron starts — not at runtime)
    - Run `npm run download:qdrant` and `npm run download:embedding-model` manually if missing
    - Check debug logs for "qdrant" entries (port, health check, errors)
    - If Qdrant fails to start, search still works via FTS5 keyword fallback
@@ -779,11 +793,10 @@ const { t } = useTranslation();
 - Process timeout protection (5 minutes)
 - Meeting detection uses event-driven OS APIs (near-zero CPU) with polling fallback
 - Process list cache shared between detectors to avoid duplicate `tasklist`/`pgrep` calls
-- Google Calendar sync uses exponential backoff to avoid hammering API on network failures
 
 ## Security Considerations
 
-- API keys and enterprise cloud creds (12 secrets total) encrypted at rest via Electron `safeStorage` → OS keychain (Keychain / DPAPI / libsecret), stored as per-key files in `userData/secure-keys/`. Linux without a keyring falls back to plaintext (Electron default). Closed in #629.
+- API keys and enterprise cloud creds (16 secrets total) encrypted at rest via Electron `safeStorage` → OS keychain (Keychain / DPAPI / libsecret), stored as per-key files in `userData/secure-keys/`. Linux without a keyring falls back to plaintext (Electron default). Closed in #629.
 - Context isolation enabled
 - No remote code execution
 - Sanitized file paths

@@ -83,7 +83,7 @@
 
 **Fix:**
 
-1. Use Node.js 24: `node -v`
+1. Use Node.js 26: `node -v`
 2. Ensure npm install scripts are enabled: `npm config set ignore-scripts false`
 3. Rebuild Electron's platform binary: `npm rebuild electron`
 4. If `ELECTRON_SKIP_BINARY_DOWNLOAD` is set, unset it and run `npm install` again
