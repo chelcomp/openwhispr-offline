@@ -323,8 +323,6 @@ function useSettingsInternal() {
     setActivationMode: store.setActivationMode,
     notificationsEnabled: store.notificationsEnabled,
     setNotificationsEnabled: store.setNotificationsEnabled,
-    notifyMeetingDetection: store.notifyMeetingDetection,
-    setNotifyMeetingDetection: store.setNotifyMeetingDetection,
     notifyCalendarReminders: store.notifyCalendarReminders,
     setNotifyCalendarReminders: store.setNotifyCalendarReminders,
     notifyUpdates: store.notifyUpdates,

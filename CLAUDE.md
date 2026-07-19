@@ -24,7 +24,7 @@ These three constraints are foundational and take priority over convenience, fea
 EktosWhispr starts with Windows and runs continuously in the background, so idle cost matters more than active-use cost.
 
 - Idle budget (app running, no active recording, no transcription/reasoning in flight): **≤300 MB RAM, <2% average CPU**, measured over several minutes of idle — not instantaneous spikes.
-- Prefer event-driven OS APIs over polling for anything continuous (the existing pattern for meeting detection and mic activity). New background work should follow the same lazy-spawn approach used by `QdrantManager` and the ONNX utility process — spawned on first use, never at app launch.
+- Prefer event-driven OS APIs over polling for anything continuous. New background work should follow the same lazy-spawn approach used by `QdrantManager` and the ONNX utility process — spawned on first use, never at app launch.
 - Any new always-on timer, polling loop, or background service must justify its interval and cost in the spec; `pr-reviewer` checks it against the idle budget above.
 
 ### 3. Speed — sub-500ms raw transcription
@@ -42,7 +42,7 @@ EktosWhispr starts with Windows and runs continuously in the background, so idle
 
 ### 5. Graceful degradation — optional components never take the app down
 
-- Every optional native binary, sidecar process, or platform integration (Qdrant, the ONNX worker, whisper.cpp/Parakeet engines, native mic/key listeners, GNOME/Hyprland/KDE D-Bus shortcuts, Linux clipboard tools) must have a defined fallback. Its failure or absence must never crash the app or block its core function (record → transcribe → paste). This generalizes the pattern already used for search (Qdrant → FTS5), meeting detection (native listener → polling), and hotkeys (push-to-talk → tap mode).
+- Every optional native binary, sidecar process, or platform integration (Qdrant, the ONNX worker, whisper.cpp/Parakeet engines, native mic/key listeners, GNOME/Hyprland/KDE D-Bus shortcuts, Linux clipboard tools) must have a defined fallback. Its failure or absence must never crash the app or block its core function (record → transcribe → paste). This generalizes the pattern already used for search (Qdrant → FTS5) and hotkeys (push-to-talk → tap mode).
 - Any spec introducing a new optional dependency must state its fallback path in the design; `pr-reviewer` treats a missing fallback as a violation, not a nice-to-have.
 
 ### 6. Migration safety — upgrades never lose user data
@@ -98,11 +98,9 @@ EktosWhispr starts with Windows and runs continuously in the background, so idle
 ### Native Resources (resources/)
 
 - **windows-key-listener.c**: C source for Windows low-level keyboard hook (Push-to-Talk)
-- **windows-mic-listener.c**: C source for WASAPI mic session monitor (event-driven mic detection)
 - **windows-system-audio-helper.c**: C source for WASAPI process-loopback system audio capture (meeting transcription). Excludes EktosWhispr's own process tree, so it hears every app on every output device. Requires Windows 10 2004+; falls back to Chromium display-media loopback when unavailable. Outputs 24 kHz mono s16le PCM on stdout, line-delimited JSON events on stderr (same protocol as linux-system-audio-helper)
-- **macos-mic-listener.swift**: Swift source for CoreAudio mic property listener (event-driven mic detection)
 - **globe-listener.swift**: Swift source for macOS Globe/Fn key detection
-- **bin/**: Directory for compiled native binaries (whisper-cpp, nircmd, key/mic listeners)
+- **bin/**: Directory for compiled native binaries (whisper-cpp, nircmd, key listeners)
 
 ### Helper Modules (src/helpers/)
 
@@ -150,19 +148,7 @@ EktosWhispr starts with Windows and runs continuously in the background, so idle
   - Supports compound hotkeys (e.g., `Ctrl+Shift+F11`, `CommandOrControl+Space`)
   - Emits `key-down` and `key-up` events for push-to-talk functionality
   - Graceful fallback if binary unavailable
-- **meetingDetectionEngine.js**: Orchestrates meeting detection from all sources
-  - Gates notifications during recording (tap-to-talk and push-to-talk)
-  - Post-recording cooldown (2.5s) before showing queued notifications
-  - Priority-based coalescing (process > audio) — one notification, not three
-- **meetingProcessDetector.js**: Detects running meeting apps
-  - macOS: Event-driven via `systemPreferences.subscribeWorkspaceNotification` (zero CPU)
-  - Windows/Linux: Shared `processListCache` polling (30s interval)
-- **audioActivityDetector.js**: Detects microphone usage for unscheduled meetings
-  - macOS: Event-driven via `macos-mic-listener` binary (CoreAudio property listeners)
-  - Windows: Event-driven via `windows-mic-listener.exe` (WASAPI sessions, self-PID exclusion)
-  - Linux: Event-driven via `pactl subscribe` (PulseAudio source-output events)
-  - All platforms: Graceful fallback to polling if native approach fails
-- **processListCache.js**: Shared singleton process list cache (5s TTL, `ps-list` npm)
+- **manualMeetingLauncher.js**: Handles the manual, user-initiated "start a meeting recording" flow (meeting hotkey / a deliberate click). There is no automatic meeting detection — see §16.
 - **menuManager.js**: Application menu management
 - **tray.js**: System tray icon and menu
 - **whisper.js**: Local whisper.cpp integration and model management
@@ -178,7 +164,7 @@ EktosWhispr starts with Windows and runs continuously in the background, so idle
 
 - **App.jsx**: Main dictation interface with recording states
 - **ControlPanel.tsx**: Settings, history, model management UI
-- **OnboardingFlow.tsx**: Dynamic-length first-time setup wizard (not a fixed step count — e.g. the `localModel` step is conditional, and a `meeting` step exists in code but is disabled via a hardcoded `showMeetingStep = false` flag). There is no dedicated "name your agent" step; the agent name is only set in Settings, defaulting to `"EktosWhispr"`.
+- **OnboardingFlow.tsx**: Dynamic-length first-time setup wizard (not a fixed step count — e.g. the `localModel` step is conditional). There is no dedicated "name your agent" step; the agent name is only set in Settings, defaulting to `"EktosWhispr"`. There is no "meeting" step (removed along with automatic meeting detection — see §16).
 - **PostMigrationOnboarding.tsx**: One-time modal for users returning from the pre-Gizmo bundle ID; reuses `PermissionsSection` to walk through re-granting Microphone, Accessibility, and System Audio. Triggered by `postMigrationDetector.js` (see Helper Modules)
 - **SettingsPage.tsx**: Comprehensive settings interface
 - **WhisperModelPicker.tsx**: Model selection and download UI
@@ -243,10 +229,8 @@ pipeline previously backed a hybrid semantic search here but was removed — see
 - **download-llama-server.js**: Downloads llama.cpp server for local LLM inference
 - **download-nircmd.js**: Downloads nircmd.exe for Windows clipboard operations
 - **download-windows-key-listener.js**: Downloads prebuilt Windows key listener binary
-- **download-windows-mic-listener.js**: Downloads prebuilt Windows mic listener binary
 - **download-sherpa-onnx.js**: Downloads sherpa-onnx binaries for Parakeet support
 - **build-globe-listener.js**: Compiles macOS Globe key listener from Swift source
-- **build-macos-mic-listener.js**: Compiles macOS mic listener from Swift source
 - **build-windows-key-listener.js**: Compiles Windows key listener (for local development)
 - **run-electron.js**: Development script to launch Electron with proper environment
 - **lib/download-utils.js**: Shared utilities for downloading and extracting files
@@ -581,38 +565,46 @@ On Hyprland (wlroots Wayland compositor), Electron's `globalShortcut` API and th
 - Push-to-talk not supported (Hyprland `bind` fires a single exec, not key-down/key-up)
 - Requires `hyprctl` on PATH (ships with Hyprland)
 
-### 16. Meeting Detection (Event-Driven)
+### 16. Meeting Recording (Manual) and Note Recording
 
-Detects meetings via two independent sources, orchestrated by `MeetingDetectionEngine`. (Google Calendar integration — `googleCalendarManager.js`/`googleCalendarOAuth.js` — has been removed from the codebase; there is no calendar-aware context anymore.)
+There is no automatic/background meeting detection or "Meeting Detected" notification in
+this codebase — that system (process-app detection, sustained-microphone-activity
+detection, and the notification prompt it drove) has been removed entirely. (Google
+Calendar integration — `googleCalendarManager.js`/`googleCalendarOAuth.js` — was removed
+separately and earlier; there is no calendar-aware context either way.)
 
-**Architecture**:
+What remains is a fully manual, user-initiated flow, plus the unrelated Note Recording
+feature that happens to share its backend:
 
-- `MeetingDetectionEngine` listens to events from `MeetingProcessDetector` and `AudioActivityDetector`
-- Both sources feed into a unified notification pipeline
+**Manual meeting recording**:
 
-**Process Detection** (known meeting apps — Zoom, Teams, Webex, FaceTime):
+- A dedicated `meeting` hotkey slot (Settings → General → "Meeting Hotkey") is the only
+  way a meeting recording starts — there is no passive detection proposing it.
+- Pressing the hotkey calls `src/helpers/manualMeetingLauncher.js`'s
+  `ManualMeetingLauncher.startManualMeeting()`: creates a note in the "Meetings" folder,
+  navigates the control panel to it, and the renderer starts the actual recording via the
+  "Meeting Transcription" IPC block in `ipcHandlers.js`
+  (`meeting-transcription-prepare/-start/-send/-stop/-cancel`), which streams both the
+  microphone and system audio, with diarization/speaker identification and optional
+  acoustic echo cancellation (`meetingAecManager.js`).
+- `ManualMeetingLauncher` also exposes `setMeetingModeActive()` (used when the control
+  panel is snapped in/out of meeting layout) and `broadcastToWindows()`. It has no
+  detection state, preferences, or notification-response handling — the class was
+  deliberately narrowed to only what the manual flow needs.
 
-- macOS: `systemPreferences.subscribeWorkspaceNotification` — zero CPU, instant detection
-- Windows/Linux: `processListCache` shared polling (30s interval, `ps-list` npm)
+**Note Recording**: recording audio while creating/editing a Personal Note
+(`src/components/notes/PersonalNotesView.tsx` + `src/stores/meetingRecordingStore.ts`)
+consumes the exact same `meeting-transcription-*` IPC channels as manual meeting
+recording — it is a different UI entry point into the same backend pipeline, not a
+separate detection concept.
 
-**Microphone Detection** (unscheduled/browser meetings like Google Meet):
+**System-audio capture** (used by both flows above once a recording has actually
+started, never for detection):
 
-- macOS: `macos-mic-listener` binary — CoreAudio `kAudioDevicePropertyDeviceIsRunningSomewhere` property listeners with hot-plug support
-- Windows: `windows-mic-listener.exe` — WASAPI `IAudioSessionManager2` session monitoring, `--exclude-pid` for self-mic exclusion
-- Linux: `pactl subscribe` — PulseAudio source-output events
-- All platforms: Graceful fallback to polling if native binary/command unavailable
-
-**UX Rules**:
-
-- During recording (tap-to-talk or push-to-talk): ALL notifications suppressed
-- After recording: 2.5s cooldown before showing queued notifications
-- Multiple signals coalesced: process > audio priority, one notification shown
-
-**Binary Distribution**:
-
-- macOS: Compiled from Swift source via `scripts/build-macos-mic-listener.js` during `compile:native`
-- Windows: Prebuilt binary downloaded via `scripts/download-windows-mic-listener.js` during `prebuild:win`
-- CI workflow: `.github/workflows/build-windows-mic-listener.yml` auto-builds on push to main
+- Windows: `windows-system-audio-helper.exe` (WASAPI process-loopback, excludes
+  EktosWhispr's own process tree) via `windowsLoopbackAudioManager.js`
+- macOS: `AudioTapManager` (Core Audio Process Tap, macOS 14.2+) via `audioTapManager.js`
+- Linux: `linux-system-audio-helper` (PipeWire loopback) via `linuxPortalAudioManager.js`
 
 ### 17. Voice Agent Hotkey
 
@@ -730,9 +722,8 @@ const { t } = useTranslation();
 - [ ] Test GNOME Wayland hotkeys (if on GNOME + Wayland)
 - [ ] Test Hyprland Wayland hotkeys (if on Hyprland + Wayland)
 - [ ] Verify activation mode selector is hidden on GNOME Wayland and Hyprland Wayland
-- [ ] Verify meeting detection works with event-driven mode (check debug logs for "event-driven")
-- [ ] Test meeting notification suppression during recording
-- [ ] Test post-recording cooldown (notifications shouldn't flash immediately)
+- [ ] Press the meeting hotkey and verify a note is created in the "Meetings" folder and recording starts (manual flow — there is no automatic meeting detection to test)
+- [ ] Start a Note Recording from Personal Notes and verify it produces a transcript
 - [ ] Create a note about "quarterly revenue projections", search via agent for "revenue" — should match by keyword (FTS5 only; a semantically-related but keyword-different query like "financial forecast" is expected to NOT match)
 
 ### Common Issues and Solutions
@@ -771,12 +762,10 @@ const { t } = useTranslation();
    - To compile locally: install Visual Studio Build Tools or MinGW-w64
    - CI workflow (`.github/workflows/build-windows-key-listener.yml`) auto-builds on push to main
 
-6. **Meeting Detection Not Working**:
-   - Check debug logs for "event-driven" vs "polling" mode
-   - macOS: Verify `macos-mic-listener` binary exists in `resources/bin/` (compiled during `npm run compile:native`)
-   - Windows: Verify `windows-mic-listener.exe` exists in `resources/bin/` (downloaded during `prebuild:win`)
-   - Linux: Verify `pactl` is installed (`pulseaudio-utils` or `pipewire-pulse` package)
-   - If event-driven binary is missing, detection falls back to polling automatically
+6. **Manual Meeting Recording Not Starting**:
+   - Confirm a "Meeting Hotkey" is registered under Settings → General
+   - Check debug logs under the `"meeting"` category for `startManualMeeting`/note-creation errors
+   - System audio capture issues are separate — see system-audio-helper troubleshooting below
 
 7. **`search_notes` not finding a note by meaning**: this is expected — local/cloud semantic
    search was removed (see `docs/specs/remove-qdrant-dependency.md`); the AI agent's `search_notes`
@@ -847,8 +836,6 @@ const { t } = useTranslation();
 - Temporary file cleanup
 - Memory usage with large models
 - Process timeout protection (5 minutes)
-- Meeting detection uses event-driven OS APIs (near-zero CPU) with polling fallback
-- Process list cache shared between detectors to avoid duplicate `tasklist`/`pgrep` calls
 
 ## Security Considerations
 

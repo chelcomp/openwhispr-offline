@@ -178,13 +178,11 @@ const WindowsKeyManager = require("./src/helpers/windowsKeyManager");
 const LinuxKeyManager = require("./src/helpers/linuxKeyManager");
 const TextEditMonitor = require("./src/helpers/textEditMonitor");
 const WhisperCudaManager = require("./src/helpers/whisperCudaManager");
-const MeetingProcessDetector = require("./src/helpers/meetingProcessDetector");
-const AudioActivityDetector = require("./src/helpers/audioActivityDetector");
 const AudioTapManager = require("./src/helpers/audioTapManager");
 const LinuxPortalAudioManager = require("./src/helpers/linuxPortalAudioManager");
 const WindowsLoopbackAudioManager = require("./src/helpers/windowsLoopbackAudioManager");
 const MeetingAecManager = require("./src/helpers/meetingAecManager");
-const MeetingDetectionEngine = require("./src/helpers/meetingDetectionEngine");
+const ManualMeetingLauncher = require("./src/helpers/manualMeetingLauncher");
 const { i18nMain, changeLanguage } = require("./src/helpers/i18nMain");
 const { ensureYdotool } = require("./src/helpers/ensureYdotool");
 const sidecarRegistry = require("./src/helpers/sidecarRegistry");
@@ -208,7 +206,7 @@ let windowsKeyManager = null;
 let linuxKeyManager = null;
 let textEditMonitor = null;
 let whisperCudaManager = null;
-let meetingDetectionEngine = null;
+let manualMeetingLauncher = null;
 let audioTapManager = null;
 let linuxPortalAudioManager = null;
 let windowsLoopbackAudioManager = null;
@@ -277,13 +275,8 @@ function initializeCoreManagers() {
   parakeetManager = new ParakeetManager();
   diarizationManager = new DiarizationManager();
 
-  meetingDetectionEngine = new MeetingDetectionEngine(
-    new MeetingProcessDetector(),
-    new AudioActivityDetector(),
-    windowManager,
-    databaseManager
-  );
-  windowManager.meetingDetectionEngine = meetingDetectionEngine;
+  manualMeetingLauncher = new ManualMeetingLauncher(windowManager, databaseManager);
+  windowManager.manualMeetingLauncher = manualMeetingLauncher;
   updateManager = new UpdateManager();
   updateManager.setWindowManager(windowManager);
   windowsKeyManager = new WindowsKeyManager();
@@ -314,7 +307,7 @@ function initializeCoreManagers() {
     linuxKeyManager,
     textEditMonitor,
     whisperCudaManager,
-    meetingDetectionEngine,
+    manualMeetingLauncher,
     audioTapManager,
     linuxPortalAudioManager,
     windowsLoopbackAudioManager,
@@ -382,8 +375,6 @@ function initializeDeferredManagers() {
       });
     });
   }
-
-  meetingDetectionEngine.start();
 }
 
 
@@ -499,7 +490,7 @@ async function startApp() {
   const meetingHotkeyCallback = () => {
     if (hotkeyManager.isInListeningMode()) return;
     debugLogger.info("Meeting hotkey triggered", {}, "meeting");
-    meetingDetectionEngine?.startManualMeeting();
+    manualMeetingLauncher?.startManualMeeting();
   };
 
   const savedMeetingKey = environmentManager.getMeetingKey?.() || "";
@@ -943,7 +934,7 @@ async function startApp() {
       } else if (hotkeyManager.slotHasHotkey("agent", key)) {
         if (!hotkeyManager.isInListeningMode()) windowManager.toggleAgentOverlay();
       } else if (hotkeyManager.slotHasHotkey("meeting", key)) {
-        if (!hotkeyManager.isInListeningMode()) meetingDetectionEngine?.startManualMeeting();
+        if (!hotkeyManager.isInListeningMode()) manualMeetingLauncher?.startManualMeeting();
       }
     };
 
@@ -1178,7 +1169,6 @@ function performSyncTeardown() {
   if (globeKeyManager) globeKeyManager.stop();
   if (windowsKeyManager) windowsKeyManager.stop();
   if (linuxKeyManager) linuxKeyManager.stop();
-  if (meetingDetectionEngine) meetingDetectionEngine.stop();
 
   if (audioTapManager) audioTapManager.stop().catch(() => {});
   if (linuxPortalAudioManager) linuxPortalAudioManager.stop().catch(() => {});

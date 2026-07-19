@@ -14,7 +14,6 @@ import {
   Languages,
   Brain,
   Cpu,
-  Users,
 } from "lucide-react";
 import TitleBar from "./TitleBar";
 import WindowControls from "./WindowControls";
@@ -50,7 +49,6 @@ import logger from "../utils/logger";
 import { ActivationModeSelector } from "./ui/ActivationModeSelector";
 import TranscriptionModelPicker from "./TranscriptionModelPicker";
 import { ACCESSIBILITY_SKIPPED_KEY, areRequiredPermissionsMet } from "../utils/permissions";
-import MeetingSetupStep from "./onboarding/MeetingSetupStep";
 import FinishStep from "./onboarding/FinishStep";
 import { USE_CASE_IDS } from "./onboarding/useCases";
 
@@ -105,8 +103,6 @@ export default function OnboardingFlow({ onComplete }: OnboardingFlowProps) {
     xaiApiKey,
     mistralApiKey,
     dictationKey,
-    meetingKey,
-    setMeetingKey,
     voiceAgentKey,
     setVoiceAgentKey,
     activationMode,
@@ -194,13 +190,6 @@ export default function OnboardingFlow({ onComplete }: OnboardingFlowProps) {
     setAccessibilitySkipped,
   ]);
 
-  // Dynamic flow: signed-in users get permissions folded into "setup".
-  // The meeting step is temporarily hidden for all users while it gets more
-  // design polish — the step's render code and MeetingSetupStep stay in place.
-  // Restore by reinstating the relevance check:
-  //   systemAudio.granted || onboardingUseCases.includes(USE_CASE_IDS.meetings)
-  const showMeetingStep = false;
-
   const steps = useMemo(() => {
     const list = [
       { id: "language", title: t("onboarding.steps.language"), icon: Languages },
@@ -212,12 +201,9 @@ export default function OnboardingFlow({ onComplete }: OnboardingFlowProps) {
     }
     list.push({ id: "permissions", title: t("onboarding.steps.permissions"), icon: Shield });
     list.push({ id: "activation", title: t("onboarding.steps.activation"), icon: Command });
-    if (showMeetingStep) {
-      list.push({ id: "meeting", title: t("onboarding.steps.meeting"), icon: Users });
-    }
     list.push({ id: "finish", title: t("onboarding.steps.finish"), icon: Flag });
     return list;
-  }, [showMeetingStep, showLocalModelStep, t]);
+  }, [showLocalModelStep, t]);
 
   const currentStepId = steps[currentStep]?.id;
 
@@ -630,15 +616,6 @@ export default function OnboardingFlow({ onComplete }: OnboardingFlowProps) {
             </div>
             <LocalModelSection />
           </div>
-        );
-
-      case "meeting":
-        return (
-          <MeetingSetupStep
-            meetingKey={meetingKey}
-            setMeetingKey={setMeetingKey}
-            dictationKey={hotkey}
-          />
         );
 
       case "finish":

@@ -208,7 +208,6 @@
       "permissions": "Permissions",
       "activation": "Dictation",
       "useCase": "About you",
-      "meeting": "Meetings",
       "finish": "Finish",
       "voiceAgent": "Voice Agent",
       "language": "Language"
@@ -323,18 +322,6 @@
         }
       },
       "selectHint": "Select all that apply"
-    },
-    "meeting": {
-      "title": "Meeting notes",
-      "description": "Capture and summarize your meetings",
-      "autoDetect": "EktosWhispr automatically detects when you're in a meeting and offers to start notes — nothing is recorded without you.",
-      "notification": {
-        "title": "Meeting detected",
-        "body": "It sounds like you're in a meeting. Want to take notes?",
-        "cta": "Start Recording"
-      },
-      "hotkeyLabel": "Meeting hotkey",
-      "hotkeyHint": "Optional — press it in any meeting to start a note instantly."
     },
     "finish": {
       "title": "You're all set",
@@ -1685,8 +1672,6 @@
         "description": "Control which notifications EktosWhispr can show",
         "disableAll": "Disable all notifications",
         "disableAllDescription": "Silence everything except error messages",
-        "meetingDetection": "Meeting detection",
-        "meetingDetectionDescription": "Notify when a meeting is detected so you can start recording",
         "calendarReminders": "Calendar reminders",
         "calendarRemindersDescription": "Notify when a scheduled meeting is about to start",
         "updates": "App updates",

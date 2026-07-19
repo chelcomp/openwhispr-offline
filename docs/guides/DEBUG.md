@@ -43,7 +43,6 @@ EKTOSWHISPR_LOG_LEVEL=debug
 | Audio Processing      | File creation, Whisper command, process output                   |
 | IPC                   | Messages between renderer and main process                       |
 | Agent Mode            | Streaming responses, conversation management, model selection    |
-| Meeting Detection     | Process monitoring, audio activity, calendar event matching      |
 | Meeting Transcription | WebSocket connection, Realtime API session, audio buffering      |
 | Media Control         | Pause/resume events, player detection (MediaRemote/GSMTC/MPRIS2) |
 | Audio Storage         | Dictation audio file retention, cleanup cycles, storage usage, skipped/invalid-retention warnings (meeting audio is never auto-purged — see "Meeting Audio" row) |

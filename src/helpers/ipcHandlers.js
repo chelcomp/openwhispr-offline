@@ -366,7 +366,7 @@ class IPCHandlers {
     this.textEditMonitor = managers.textEditMonitor;
     this.getTrayManager = managers.getTrayManager;
     this.whisperCudaManager = managers.whisperCudaManager;
-    this.meetingDetectionEngine = managers.meetingDetectionEngine;
+    this.manualMeetingLauncher = managers.manualMeetingLauncher;
     this.audioTapManager = managers.audioTapManager;
     this.linuxPortalAudioManager = managers.linuxPortalAudioManager;
     this.windowsLoopbackAudioManager = managers.windowsLoopbackAudioManager;
@@ -894,7 +894,7 @@ class IPCHandlers {
 
     ipcMain.handle("restore-from-meeting-mode", () => {
       this.windowManager.restoreControlPanelFromMeetingMode();
-      this.meetingDetectionEngine?.setMeetingModeActive(false);
+      this.manualMeetingLauncher?.setMeetingModeActive(false);
     });
 
     ipcMain.handle("hide-window", () => {
@@ -5596,7 +5596,6 @@ class IPCHandlers {
 
       meetingTranscriptionStartInProgress = true;
       meetingStartedAt = Date.now();
-      this.meetingDetectionEngine?.setUserRecording(true);
       try {
         const systemAudioPlan = await getMeetingSystemAudioPlan();
         let { mode: systemAudioMode, strategy: systemAudioStrategy } = systemAudioPlan;
@@ -5650,7 +5649,6 @@ class IPCHandlers {
         };
       } catch (error) {
         await rollbackMeetingTranscriptionStart();
-        this.meetingDetectionEngine?.setUserRecording(false);
         debugLogger.error("Meeting transcription start error", { error: error.message });
         return { success: false, error: error.message };
       } finally {
@@ -5664,7 +5662,6 @@ class IPCHandlers {
 
     // Simplified for offline build: only the meetingLocalMode path is kept.
     ipcMain.handle("meeting-transcription-stop", async () => {
-      this.meetingDetectionEngine?.setUserRecording(false);
       try {
         if (this.audioTapManager) {
           await this.audioTapManager.stop();
@@ -5781,26 +5778,8 @@ class IPCHandlers {
       return crypto.createHash("md5").update(text.toLowerCase().trim()).digest("hex");
     });
 
-    ipcMain.handle("meeting-detection-get-preferences", async () => {
-      try {
-        return { success: true, preferences: this.meetingDetectionEngine.getPreferences() };
-      } catch (error) {
-        return { success: false, error: error.message };
-      }
-    });
-
-    ipcMain.handle("meeting-detection-set-preferences", async (_event, prefs) => {
-      try {
-        this.meetingDetectionEngine.setPreferences(prefs);
-        return { success: true };
-      } catch (error) {
-        return { success: false, error: error.message };
-      }
-    });
-
     const NOTIFICATION_PREF_KEYS = new Set([
       "notificationsEnabled",
-      "notifyMeetingDetection",
       "notifyCalendarReminders",
       "notifyUpdates",
     ]);
@@ -5815,12 +5794,6 @@ class IPCHandlers {
             this.windowManager.notificationPrefs[k] = !!v;
           }
         }
-        // Detection only serves the notification, so the toggle also gates the detector.
-        const { notificationsEnabled, notifyMeetingDetection } =
-          this.windowManager.notificationPrefs;
-        this.meetingDetectionEngine?.setPreferences({
-          audioDetection: notificationsEnabled && notifyMeetingDetection,
-        });
         return { success: true };
       } catch (error) {
         return { success: false, error: error.message };
@@ -5874,25 +5847,8 @@ class IPCHandlers {
       }
     });
 
-    ipcMain.handle("meeting-notification-respond", async (_event, detectionId, action) => {
-      try {
-        await this.meetingDetectionEngine.handleNotificationResponse(detectionId, action);
-        return { success: true };
-      } catch (error) {
-        return { success: false, error: error.message };
-      }
-    });
-
-    ipcMain.handle("get-meeting-notification-data", async () => {
-      return this.windowManager?._pendingNotificationData ?? null;
-    });
-
     ipcMain.handle("get-pending-meeting-note-navigation", async () => {
       return this.windowManager?.consumePendingMeetingNoteNavigation() ?? null;
-    });
-
-    ipcMain.handle("meeting-notification-ready", async () => {
-      this.windowManager?.showNotificationWindow();
     });
 
     ipcMain.handle("get-update-notification-data", async () => {

@@ -160,7 +160,6 @@ const BOOLEAN_SETTINGS = new Set([
   "pauseMediaOnDictation",
   "floatingIconAutoHide",
   "startMinimized",
-  "meetingProcessDetection",
   "speakerDiarizationEnabled",
   "dictationSileroEnabled",
   "noteRecordingSileroEnabled",
@@ -178,7 +177,6 @@ const BOOLEAN_SETTINGS = new Set([
   "noteFormattingDisableThinking",
   "chatAgentDisableThinking",
   "notificationsEnabled",
-  "notifyMeetingDetection",
   "notifyCalendarReminders",
   "notifyUpdates",
 ]);
@@ -448,10 +446,8 @@ export interface SettingsState
   floatingIconAutoHide: boolean;
   startMinimized: boolean;
   notificationsEnabled: boolean;
-  notifyMeetingDetection: boolean;
   notifyCalendarReminders: boolean;
   notifyUpdates: boolean;
-  meetingProcessDetection: boolean;
   speakerDiarizationEnabled: boolean;
   dictationSileroEnabled: boolean;
   noteRecordingSileroEnabled: boolean;
@@ -688,10 +684,8 @@ export interface SettingsState
   setFloatingIconAutoHide: (enabled: boolean) => void;
   setStartMinimized: (enabled: boolean) => void;
   setNotificationsEnabled: (value: boolean) => void;
-  setNotifyMeetingDetection: (value: boolean) => void;
   setNotifyCalendarReminders: (value: boolean) => void;
   setNotifyUpdates: (value: boolean) => void;
-  setMeetingProcessDetection: (value: boolean) => void;
   setSpeakerDiarizationEnabled: (value: boolean) => void;
   setDictationSileroEnabled: (value: boolean) => void;
   setNoteRecordingSileroEnabled: (value: boolean) => void;
@@ -1077,10 +1071,8 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
   floatingIconAutoHide: readBoolean("floatingIconAutoHide", true),
   startMinimized: readBoolean("startMinimized", false),
   notificationsEnabled: readBoolean("notificationsEnabled", true),
-  notifyMeetingDetection: readBoolean("notifyMeetingDetection", false),
   notifyCalendarReminders: readBoolean("notifyCalendarReminders", true),
   notifyUpdates: readBoolean("notifyUpdates", true),
-  meetingProcessDetection: readBoolean("meetingProcessDetection", false),
   speakerDiarizationEnabled: readBoolean("speakerDiarizationEnabled", true),
   dictationSileroEnabled: readBoolean("dictationSileroEnabled", true),
   noteRecordingSileroEnabled: readBoolean("noteRecordingSileroEnabled", true),
@@ -1606,10 +1598,8 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
   },
 
   setNotificationsEnabled: createBooleanSetter("notificationsEnabled"),
-  setNotifyMeetingDetection: createBooleanSetter("notifyMeetingDetection"),
   setNotifyCalendarReminders: createBooleanSetter("notifyCalendarReminders"),
   setNotifyUpdates: createBooleanSetter("notifyUpdates"),
-  setMeetingProcessDetection: createBooleanSetter("meetingProcessDetection"),
   setSpeakerDiarizationEnabled: (value: boolean) => {
     if (isBrowser) localStorage.setItem("speakerDiarizationEnabled", String(value));
     useSettingsStore.setState({ speakerDiarizationEnabled: value });
@@ -2421,26 +2411,10 @@ export async function initializeSettings(): Promise<void> {
       );
     }
 
-    // Audio detection is derived from the meeting-notification toggle in
-    // sync-notification-preferences, so only process detection is sent here.
-    try {
-      const currentState = useSettingsStore.getState();
-      await window.electronAPI.meetingDetectionSetPreferences?.({
-        processDetection: currentState.meetingProcessDetection,
-      });
-    } catch (err) {
-      logger.warn(
-        "Failed to sync meeting detection preferences on startup",
-        { error: (err as Error).message },
-        "settings"
-      );
-    }
-
     try {
       const currentState = useSettingsStore.getState();
       await window.electronAPI.syncNotificationPreferences?.({
         notificationsEnabled: currentState.notificationsEnabled,
-        notifyMeetingDetection: currentState.notifyMeetingDetection,
         notifyCalendarReminders: currentState.notifyCalendarReminders,
         notifyUpdates: currentState.notifyUpdates,
       });
