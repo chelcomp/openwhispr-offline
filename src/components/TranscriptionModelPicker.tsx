@@ -26,7 +26,6 @@ import {
 } from "../utils/modelPickerStyles";
 import { useSettingsStore } from "../stores/settingsStore";
 import { getRemoteProviderIcon } from "../utils/providerIcons";
-import { createExternalLinkHandler } from "../utils/externalLinks";
 import { API_ENDPOINTS, normalizeBaseUrl } from "../config/constants";
 import { GetApiKeyLink } from "./ui/GetApiKeyLink";
 import { getCachedPlatform } from "../utils/platform";
@@ -252,8 +251,6 @@ const PROVIDER_CREDENTIALS: Record<
 
 const VALID_CLOUD_PROVIDER_IDS = CLOUD_PROVIDER_TABS.map((p) => p.id);
 
-const TINFOIL_AUDIO_DOCS_URL = "https://docs.tinfoil.sh/models/audio";
-
 const LOCAL_PROVIDER_TABS: Array<{ id: string; name: string; disabled?: boolean }> = [
   { id: "whisper", name: "OpenAI" },
   { id: "nvidia", name: "NVIDIA" },
@@ -344,6 +341,7 @@ export default function TranscriptionModelPicker({
   const ensureValidCloudSelectionRef = useRef<(() => void) | null>(null);
   const selectedLocalModelRef = useRef(selectedLocalModel);
   const onLocalModelSelectRef = useRef(onLocalModelSelect);
+  const selectedLocalProviderRef = useRef(selectedLocalProvider);
 
   const { confirmDialog, showConfirmDialog, hideConfirmDialog } = useDialogs();
   const colorScheme: ColorScheme = variant === "settings" ? "purple" : "blue";
@@ -365,6 +363,9 @@ export default function TranscriptionModelPicker({
   useEffect(() => {
     onLocalModelSelectRef.current = onLocalModelSelect;
   }, [onLocalModelSelect]);
+  useEffect(() => {
+    selectedLocalProviderRef.current = selectedLocalProvider;
+  }, [selectedLocalProvider]);
 
   const validateAndSelectModel = useCallback((loadedModels: LocalModel[]) => {
     const current = selectedLocalModelRef.current;
@@ -388,7 +389,13 @@ export default function TranscriptionModelPicker({
       const result = await window.electronAPI?.listWhisperModels();
       if (result?.success) {
         setLocalModels(result.models);
-        validateAndSelectModel(result.models);
+        // Only auto-fix the committed selection when whisper is the actually
+        // active provider — otherwise this fires while merely browsing the
+        // OpenAI tab (committed provider still nvidia) and stomps parakeetModel
+        // with a whisper model id, see handleLocalProviderChange comment above.
+        if (selectedLocalProviderRef.current !== "nvidia") {
+          validateAndSelectModel(result.models);
+        }
       }
     } catch (error) {
       logger.error("Failed to load models", { error }, "models");
@@ -547,15 +554,16 @@ export default function TranscriptionModelPicker({
     [cloudProviders, onCloudProviderSelect, onCloudModelSelect, setCloudTranscriptionBaseUrl]
   );
 
-  const handleLocalProviderChange = useCallback(
-    (providerId: string) => {
-      const tab = LOCAL_PROVIDER_TABS.find((t) => t.id === providerId);
-      if (tab?.disabled) return;
-      setInternalLocalProvider(providerId);
-      onLocalProviderSelect?.(providerId);
-    },
-    [onLocalProviderSelect]
-  );
+  const handleLocalProviderChange = useCallback((providerId: string) => {
+    const tab = LOCAL_PROVIDER_TABS.find((t) => t.id === providerId);
+    if (tab?.disabled) return;
+    // Switching this tab only changes which model list is browsed here — it must
+    // NOT commit the active transcription provider. That only happens when the
+    // user clicks "Activate" on a specific model (handleWhisperModelSelect /
+    // handleParakeetModelSelect below), otherwise merely glancing at the NVIDIA
+    // tab would silently make NVIDIA the active provider.
+    setInternalLocalProvider(providerId);
+  }, []);
 
   const handleWhisperModelSelect = useCallback(
     (modelId: string) => {
@@ -615,7 +623,9 @@ export default function TranscriptionModelPicker({
             const result = await window.electronAPI?.listWhisperModels();
             if (result?.success) {
               setLocalModels(result.models);
-              validateAndSelectModel(result.models);
+              if (selectedLocalProviderRef.current !== "nvidia") {
+                validateAndSelectModel(result.models);
+              }
             }
           });
         },
@@ -935,18 +945,6 @@ export default function TranscriptionModelPicker({
                     onModelSelect={onCloudModelSelect}
                     colorScheme="purple"
                   />
-                  {selectedCloudProvider === "tinfoil" && (
-                    <p className="text-xs text-muted-foreground/70">
-                      {t("transcription.tinfoil.transportNote")}{" "}
-                      <a
-                        href={TINFOIL_AUDIO_DOCS_URL}
-                        onClick={createExternalLinkHandler(TINFOIL_AUDIO_DOCS_URL)}
-                        className="text-primary/70 hover:text-primary transition-colors"
-                      >
-                        {t("transcription.tinfoil.docsLink")}
-                      </a>
-                    </p>
-                  )}
                 </div>
               </div>
             )}

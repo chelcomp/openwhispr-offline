@@ -75,7 +75,6 @@ export const API_ENDPOINTS = {
   ANTHROPIC: "https://api.anthropic.com/v1/messages",
   GEMINI: "https://generativelanguage.googleapis.com/v1beta",
   GROQ_BASE: "https://api.groq.com/openai/v1",
-  CORTI_MODELS_BASE: "https://ai.eu.corti.app/v1",
   XAI_BASE: "https://api.x.ai/v1",
   MISTRAL_BASE: "https://api.mistral.ai/v1",
   OPENROUTER_BASE: "https://openrouter.ai/api/v1",
@@ -117,9 +116,6 @@ export const CACHE_CONFIG = {
   AVAILABILITY_CHECK_TTL: 30000, // 30s for accessibility, FFmpeg, tool availability checks
   PASTE_DELAY_MS: 50, // Delay before paste simulation to allow clipboard to settle
 } as const;
-
-// EktosWhispr Cloud API
-export const EKTOSWHISPR_API_URL = (env.VITE_EKTOSWHISPR_API_URL as string) || "";
 
 // Retry Configuration
 export const RETRY_CONFIG = {

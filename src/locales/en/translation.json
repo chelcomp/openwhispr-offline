@@ -171,6 +171,7 @@
     "cancel": "Cancel",
     "recommended": "Recommended",
     "active": "Active",
+    "beta": "Beta",
     "activate": "Activate",
     "freeAccountRequired": "Free account required",
     "cloud": "Cloud",
@@ -345,20 +346,7 @@
       "autoStart": "Launch at startup",
       "autoStartDescription": "Open EktosWhispr automatically when you log in",
       "startMinimized": "Start minimized",
-      "startMinimizedDescription": "Launch without showing the control panel window",
-      "corti": {
-        "title": "You told us you're here for clinical transcription",
-        "description": "We've partnered with Corti — clinical-grade speech-to-text with the highest accuracy, and it's HIPAA compliant.",
-        "createAccount": "Create your Corti account",
-        "creditBadge": "$50 free credit",
-        "regionHint": "Choose where your audio is processed — US or EU.",
-        "llmHint": "Language model features will also run on Corti models.",
-        "useCorti": "Use Corti",
-        "skip": "Not now",
-        "step1": "Sign up on corti.ai",
-        "step2": "Open the Corti console and create API credentials",
-        "step3": "Paste your Client ID and Secret below"
-      }
+      "startMinimizedDescription": "Launch without showing the control panel window"
     }
   },
   "streaming": {
@@ -565,14 +553,6 @@
         "adcHelp": "Uses Application Default Credentials. Run: gcloud auth application-default login",
         "apikeyHelp": "Vertex AI Express Mode API key from Google AI Studio."
       }
-    },
-    "tinfoil": {
-      "modelRetiredTitle": "Model no longer available",
-      "modelRetired": "Tinfoil retired {{from}}. Switched to {{to}}.",
-      "refreshingModels": "Refreshing models…"
-    },
-    "corti": {
-      "euOnly": "Corti's models are only available in the EU region."
     }
   },
   "transcription": {
@@ -593,18 +573,7 @@
       "whisperModelDescription": "Model",
       "parakeetModelDescription": "NVIDIA Parakeet Model"
     },
-    "whisperModels": "Whisper Models",
-    "corti": {
-      "clientId": "Client ID",
-      "clientSecret": "Client Secret",
-      "apiKey": "API Key",
-      "environment": "Data Region",
-      "tenant": "Tenant"
-    },
-    "tinfoil": {
-      "transportNote": "Tinfoil streams using Voxtral Mini 4B, and batches with Voxtral Small 24B.",
-      "docsLink": "Read the docs"
-    }
+    "whisperModels": "Whisper Models"
   },
   "hooks": {
     "audioRecording": {
@@ -1941,7 +1910,36 @@
       },
       "localModel": {
         "sharedNotice": "Using shared Local Model configuration — select model and GPU in the Local Model section",
-        "description": "Choose which local AI model powers all local inference scopes"
+        "description": "Choose which local AI model powers all local inference scopes",
+        "params": {
+          "title": "Generation Parameters",
+          "description": "Manual sampling settings applied to every local model, regardless of which one is selected.",
+          "reset": "Reset to defaults",
+          "temperature": {
+            "label": "Temperature",
+            "description": "Higher values make output more random; lower values more focused and deterministic."
+          },
+          "topP": {
+            "label": "Top P",
+            "description": "Nucleus sampling — considers tokens within the top cumulative probability mass."
+          },
+          "topK": {
+            "label": "Top K",
+            "description": "Limits sampling to the K most likely tokens. 0 disables the limit."
+          },
+          "minP": {
+            "label": "Min P",
+            "description": "Discards tokens below this fraction of the top token's probability."
+          },
+          "repeatPenalty": {
+            "label": "Repeat Penalty",
+            "description": "Penalizes repeated tokens. 1.0 disables the penalty; higher reduces repetition."
+          },
+          "maxTokens": {
+            "label": "Max Tokens",
+            "description": "Maximum number of tokens the model may generate in a single response."
+          }
+        }
       }
     },
     "noteFormatting": {
@@ -1999,6 +1997,8 @@
       },
       "transcriptionPreview": "Live Transcription Preview",
       "transcriptionPreviewDescription": "Show transcription in a floating window before cleanup",
+      "parakeetStreamingBeta": "Real-Time Streaming",
+      "parakeetStreamingBetaDescription": "Paste text progressively as NVIDIA Parakeet transcribes, instead of waiting for the full result. Experimental — may behave unexpectedly.",
       "aec": {
         "toggle": {
           "title": "Echo cancellation for meetings",
@@ -2008,6 +2008,7 @@
       "vad": {
         "title": "Voice Activity Detection",
         "description": "Configure how Silero VAD detects and segments speech for local Whisper transcription",
+        "resetDefaults": "Reset to defaults",
         "toggles": {
           "dictation": {
             "title": "Silero VAD for Dictation",
@@ -2091,9 +2092,7 @@
         "groq_whisper_large_v3": "High accuracy speech recognition",
         "groq_whisper_large_v3_turbo": "216x real-time speed",
         "mistral_voxtral_mini_latest": "Fast multilingual transcription",
-        "corti_transcribe": "Clinical-grade medical transcription",
-        "xai_grok_stt": "High-accuracy speech recognition by xAI",
-        "tinfoil_voxtral": "Verifiably private transcription"
+        "xai_grok_stt": "High-accuracy speech recognition by xAI"
       },
       "cloud": {
         "openai_gpt_5_2": "Strong reasoning model",
@@ -2129,17 +2128,7 @@
         "anthropic_claude_opus_4_8": "Powerful Opus model tuned for honesty and reliability",
         "anthropic_claude_opus_4_7": "Powerful Opus model",
         "anthropic_claude_opus_4_6": "Previous Opus generation, 1M context",
-        "anthropic_claude_opus_4_5": "Earlier Opus model",
-        "tinfoil_deepseek_v4_pro": "Private long-context reasoning in secure enclaves, 800K context",
-        "tinfoil_glm_5_2": "Private agentic engineering model in secure enclaves, 384K context",
-        "tinfoil_kimi_k2_6": "Private long-horizon coding and multimodal model, 256K context",
-        "tinfoil_gemma4_31b": "Private multilingual reasoning model with tool calling, 256K context",
-        "tinfoil_gpt_oss_120b": "Private open-weight reasoning model with tool use, 131K context",
-        "tinfoil_llama3_3_70b": "Private conversational model with tool calling, 128K context",
-        "corti_corti_s1_instant": "Fast healthcare model, no reasoning trace",
-        "corti_corti_s1": "Most capable clinical model with reasoning",
-        "corti_corti_s1_mini_instant": "Compact healthcare model, fastest and lowest cost",
-        "corti_corti_s1_mini": "Compact clinical model with reasoning at half the price"
+        "anthropic_claude_opus_4_5": "Earlier Opus model"
       },
       "enterprise": {
         "bedrock_claude_fable_5": "Most capable Claude model. Best for the hardest Agent Mode tasks.",
@@ -2178,7 +2167,8 @@
         "gemma_gemma_4_e4b_it_q4_k_m": "Google's latest multimodal, strong reasoning",
         "gemma_gemma_4_e2b_it_q4_k_m": "Google's compact Gemma 4, fast and efficient",
         "gemma_gemma_3_12b_it_q4_k_m": "Google's mid-range model, strong reasoning",
-        "gemma_gemma_3_1b_it_q4_k_m": "Ultra-fast Google model, best for short dictation cleanup"
+        "gemma_gemma_3_1b_it_q4_k_m": "Ultra-fast Google model, best for short dictation cleanup",
+        "gemma_gemma_2_9b_it_q4_k_m": "Google's Gemma 2 instruct model, high quality"
       }
     }
   },
@@ -2188,7 +2178,6 @@
     "upload": "Upload",
     "dictionary": "Dictionary",
     "snippets": "Snippets",
-    "referral": "Get a free month",
     "settings": "Settings",
     "support": "Support",
     "limitReached": "Weekly limit reached",
@@ -2273,78 +2262,6 @@
     "searchTitle": "Search conversations",
     "searchDescription": "Search across all your conversations",
     "newChatEmpty": "Ask about your notes, transcripts, or anything else"
-  },
-  "referral": {
-    "title": "Refer and earn rewards",
-    "modalTitle": "Refer and earn rewards",
-    "subtitle": "Give a month. Get a month.",
-    "tabs": {
-      "refer": "Refer",
-      "pastInvites": "Past invites"
-    },
-    "howItWorks": {
-      "shareLink": "Share your invite link",
-      "theySignUp": "They sign up and get a ",
-      "freeMonthOfPro": "free month of Pro",
-      "youGet": "You get a ",
-      "freeMonth": "free month",
-      "whenTheyDictate": " when they dictate 2,000 words"
-    },
-    "inviteLink": {
-      "title": "Your invite link",
-      "copy": "Copy",
-      "copied": "Copied"
-    },
-    "sendInvites": {
-      "title": "Send invites",
-      "placeholder": "friend@example.com",
-      "send": "Send",
-      "sending": "Sending"
-    },
-    "stats": {
-      "referred": "Referred",
-      "converted": "Converted",
-      "monthsEarned": "Months earned"
-    },
-    "status": {
-      "converted": "Converted",
-      "opened": "Opened",
-      "failed": "Failed",
-      "sent": "Sent"
-    },
-    "friends": {
-      "title": "Friends",
-      "completed": "Completed",
-      "sentInvites": "Sent invites"
-    },
-    "empty": {
-      "title": "No invites sent yet",
-      "description": "Share your link or send an invite to get started"
-    },
-    "toasts": {
-      "copiedTitle": "Copied!",
-      "copiedDescription": "Referral link copied to clipboard",
-      "copyFailedTitle": "Copy Failed",
-      "copyFailedDescription": "Failed to copy link to clipboard",
-      "invalidEmailTitle": "Invalid Email",
-      "invalidEmailDescription": "Please enter a valid email address",
-      "inviteSentTitle": "Invite Sent!",
-      "inviteSentDescription": "Invitation sent to {{email}}",
-      "sendFailedTitle": "Send Failed",
-      "sendFailedDescription": "Failed to send invitation. Please try again."
-    },
-    "errors": {
-      "unableToLoad": "Unable to load referral data",
-      "unableToLoadStats": "Unable to load referral stats. Please try again later."
-    },
-    "tryAgain": "Try Again",
-    "card": {
-      "brand": "EktosWhispr",
-      "signalId": "Signal ID",
-      "audioSignature": "Your audio signature",
-      "stop": "Stop",
-      "playSignal": "Play signal"
-    }
   },
   "usage": {
     "approachingLimit": "Approaching Weekly Limit",
@@ -2475,7 +2392,9 @@
       "switchToCloudForLargeFiles": "Switch to EktosWhispr Cloud to transcribe this file.",
       "createAccount": "Create Account",
       "upgrade": "Upgrade",
-      "switchToCloud": "EktosWhispr Cloud"
+      "switchToCloud": "EktosWhispr Cloud",
+      "identifySpeakers": "Identify speakers",
+      "identifySpeakersHint": "Labels each speaker in the transcript. Adds processing time."
     },
     "meeting": {
       "title": "Meeting Notes",

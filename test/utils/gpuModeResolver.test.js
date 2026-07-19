@@ -101,6 +101,27 @@ test("llama: nvidia takes priority over intel when both present + vulkan", () =>
   );
 });
 
+test("llama: auto with cuda ready + nvidia (no vulkan) returns gpu-nvidia", () => {
+  assert.equal(
+    resolveLlamaGpuMode({ mode: "auto", hasNvidia: true, vulkanReady: false, cudaReady: true }),
+    "gpu-nvidia"
+  );
+});
+
+test("llama: auto with cuda ready but no nvidia returns cpu", () => {
+  assert.equal(
+    resolveLlamaGpuMode({ mode: "auto", hasNvidia: false, hasIntel: false, cudaReady: true }),
+    "cpu"
+  );
+});
+
+test("llama: cuda readiness does not enable intel path", () => {
+  assert.equal(
+    resolveLlamaGpuMode({ mode: "auto", hasIntel: true, vulkanReady: false, cudaReady: true }),
+    "cpu"
+  );
+});
+
 // getResolvedLabel
 
 test("getResolvedLabel for gpu-nvidia", () => {

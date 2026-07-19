@@ -150,6 +150,7 @@
     "cancel": "Cancelar",
     "recommended": "Recomendado",
     "active": "Ativo",
+    "beta": "Beta",
     "activate": "Ativar",
     "freeAccountRequired": "Conta gratuita necessária",
     "cloud": "Nuvem",
@@ -324,20 +325,7 @@
       "autoStart": "Iniciar ao ligar",
       "autoStartDescription": "Abre o EktosWhispr automaticamente ao fazer login",
       "startMinimized": "Iniciar minimizado",
-      "startMinimizedDescription": "Inicia sem mostrar a janela do painel de controle",
-      "corti": {
-        "title": "Você nos disse que está aqui pela transcrição clínica",
-        "description": "Firmamos parceria com a Corti — voz para texto de nível clínico com a maior precisão e em conformidade com a HIPAA.",
-        "createAccount": "Crie sua conta Corti",
-        "creditBadge": "US$ 50 de crédito grátis",
-        "regionHint": "Escolha onde seu áudio é processado — EUA ou UE.",
-        "llmHint": "Os recursos de modelo de linguagem também serão executados nos modelos da Corti.",
-        "useCorti": "Usar Corti",
-        "skip": "Agora não",
-        "step1": "Cadastre-se em corti.ai",
-        "step2": "Abra o console da Corti e crie credenciais de API",
-        "step3": "Cole seu Client ID e Secret abaixo"
-      }
+      "startMinimizedDescription": "Inicia sem mostrar a janela do painel de controle"
     }
   },
   "streaming": {
@@ -544,14 +532,6 @@
         "adcHelp": "Usa Application Default Credentials. Execute: gcloud auth application-default login",
         "apikeyHelp": "Chave API do Vertex AI Express Mode obtida no Google AI Studio."
       }
-    },
-    "tinfoil": {
-      "modelRetiredTitle": "Modelo não disponível",
-      "modelRetired": "A Tinfoil descontinuou {{from}}. Alterado para {{to}}.",
-      "refreshingModels": "A atualizar modelos…"
-    },
-    "corti": {
-      "euOnly": "Os modelos da Corti estão disponíveis apenas na região da UE."
     }
   },
   "transcription": {
@@ -572,18 +552,7 @@
       "whisperModelDescription": "Modelo",
       "parakeetModelDescription": "Modelo NVIDIA Parakeet"
     },
-    "whisperModels": "Modelos Whisper",
-    "corti": {
-      "clientId": "ID do cliente",
-      "clientSecret": "Segredo do cliente",
-      "apiKey": "Chave API",
-      "environment": "Região de dados",
-      "tenant": "Tenant"
-    },
-    "tinfoil": {
-      "transportNote": "O Tinfoil transmite com o Voxtral Mini 4B e processa em lote com o Voxtral Small 24B.",
-      "docsLink": "Ver a documentação"
-    }
+    "whisperModels": "Modelos Whisper"
   },
   "hooks": {
     "audioRecording": {
@@ -1747,7 +1716,36 @@
       },
       "localModel": {
         "sharedNotice": "Usando configuração de Modelo Local compartilhada — selecione o modelo e GPU na secção Modelo Local",
-        "description": "Escolha qual modelo local de IA alimenta todos os escopos de inferência local"
+        "description": "Escolha qual modelo local de IA alimenta todos os escopos de inferência local",
+        "params": {
+          "title": "Parâmetros de Geração",
+          "description": "Definições de amostragem manuais aplicadas a todos os modelos locais, independentemente do que estiver selecionado.",
+          "reset": "Repor predefinições",
+          "temperature": {
+            "label": "Temperatura",
+            "description": "Valores mais altos tornam a saída mais aleatória; valores mais baixos mais focada e determinística."
+          },
+          "topP": {
+            "label": "Top P",
+            "description": "Amostragem por núcleo — considera tokens dentro da maior massa de probabilidade cumulativa."
+          },
+          "topK": {
+            "label": "Top K",
+            "description": "Limita a amostragem aos K tokens mais prováveis. 0 desativa o limite."
+          },
+          "minP": {
+            "label": "Min P",
+            "description": "Descarta tokens abaixo desta fração da probabilidade do token principal."
+          },
+          "repeatPenalty": {
+            "label": "Penalização de Repetição",
+            "description": "Penaliza tokens repetidos. 1.0 desativa a penalização; valores mais altos reduzem a repetição."
+          },
+          "maxTokens": {
+            "label": "Máx. de Tokens",
+            "description": "Número máximo de tokens que o modelo pode gerar numa única resposta."
+          }
+        }
       }
     },
     "noteFormatting": {
@@ -1805,6 +1803,8 @@
       },
       "transcriptionPreview": "Pré-visualização ao vivo",
       "transcriptionPreviewDescription": "Mostrar transcrição em janela flutuante antes da limpeza",
+      "parakeetStreamingBeta": "Streaming em Tempo Real",
+      "parakeetStreamingBetaDescription": "Cola o texto progressivamente enquanto o NVIDIA Parakeet transcreve, em vez de esperar o resultado completo. Experimental — pode se comportar de forma inesperada.",
       "aec": {
         "toggle": {
           "title": "Cancelamento de eco para reuniões",
@@ -1814,6 +1814,7 @@
       "vad": {
         "title": "Detecção de atividade de voz",
         "description": "Configure como o Silero VAD detecta e segmenta a fala na transcrição local do Whisper",
+        "resetDefaults": "Repor predefinições",
         "toggles": {
           "dictation": {
             "title": "Silero VAD para ditado",
@@ -1978,9 +1979,7 @@
         "groq_whisper_large_v3_turbo": "Velocidade 216x em tempo real",
         "groq_whisper_large_v3": "Modelo Large v3, rápido e preciso",
         "mistral_voxtral_mini_latest": "Transcrição multilíngue rápida",
-        "corti_transcribe": "Transcrição médica de nível clínico",
-        "xai_grok_stt": "Reconhecimento de voz de alta precisão pela xAI",
-        "tinfoil_voxtral": "Transcrição verificavelmente privada"
+        "xai_grok_stt": "Reconhecimento de voz de alta precisão pela xAI"
       },
       "cloud": {
         "openai_gpt_5_2": "Modelo forte de raciocínio",
@@ -2016,17 +2015,7 @@
         "anthropic_claude_opus_4_8": "Poderoso modelo Opus voltado para honestidade e confiabilidade",
         "anthropic_claude_opus_4_7": "Modelo Opus potente",
         "anthropic_claude_opus_4_6": "Geração anterior do Opus, contexto de 1M",
-        "anthropic_claude_opus_4_5": "Modelo Opus mais antigo",
-        "tinfoil_deepseek_v4_pro": "Raciocínio privado de contexto longo em enclaves seguros, contexto de 800K",
-        "tinfoil_glm_5_2": "Modelo privado de engenharia agêntica em enclaves seguros, contexto de 384K",
-        "tinfoil_kimi_k2_6": "Modelo privado de codificação de longo prazo e multimodal, contexto de 256K",
-        "tinfoil_gemma4_31b": "Modelo privado de raciocínio multilíngue com chamada de ferramentas, contexto de 256K",
-        "tinfoil_gpt_oss_120b": "Modelo privado de raciocínio de pesos abertos com uso de ferramentas, contexto de 131K",
-        "tinfoil_llama3_3_70b": "Modelo privado conversacional com chamada de ferramentas, contexto de 128K",
-        "corti_corti_s1_instant": "Modelo de saúde rápido, sem rastro de raciocínio",
-        "corti_corti_s1": "Modelo clínico mais capaz com raciocínio",
-        "corti_corti_s1_mini_instant": "Modelo de saúde compacto, o mais rápido e econômico",
-        "corti_corti_s1_mini": "Modelo clínico compacto com raciocínio pela metade do preço"
+        "anthropic_claude_opus_4_5": "Modelo Opus mais antigo"
       },
       "enterprise": {
         "bedrock_claude_fable_5": "O modelo Claude mais capaz. Ideal para as tarefas mais difíceis do Modo Agente.",
@@ -2065,7 +2054,8 @@
         "gemma_gemma_4_e4b_it_q4_k_m": "Último multimodal do Google, raciocínio avançado",
         "gemma_gemma_4_e2b_it_q4_k_m": "Gemma 4 compacto do Google, rápido e eficiente",
         "gemma_gemma_3_12b_it_q4_k_m": "Modelo intermediário do Google, raciocínio sólido",
-        "gemma_gemma_3_1b_it_q4_k_m": "Modelo Google ultrarrápido, ideal para limpeza de ditados curtos"
+        "gemma_gemma_3_1b_it_q4_k_m": "Modelo Google ultrarrápido, ideal para limpeza de ditados curtos",
+        "gemma_gemma_2_9b_it_q4_k_m": "Modelo instruct Gemma 2 do Google, alta qualidade"
       },
       "diarization": {
         "segmentation": "Detecção de limites de fala para identificação de falantes",
@@ -2093,78 +2083,6 @@
     "maximize": "Maximizar",
     "restore": "Restaurar",
     "close": "Fechar"
-  },
-  "referral": {
-    "modalTitle": "Indicar um amigo",
-    "title": "Indique e ganhe recompensas",
-    "subtitle": "Dê um mês. Ganhe um mês.",
-    "tabs": {
-      "refer": "Indicar",
-      "pastInvites": "Convites anteriores"
-    },
-    "howItWorks": {
-      "shareLink": "Compartilhe seu link de convite",
-      "theySignUp": "A pessoa se cadastra e ganha um ",
-      "freeMonthOfPro": "mês grátis de Pro",
-      "youGet": "Você ganha um ",
-      "freeMonth": "mês grátis",
-      "whenTheyDictate": " quando ela ditar 2.000 palavras"
-    },
-    "inviteLink": {
-      "title": "Seu link de convite",
-      "copy": "Copiar",
-      "copied": "Copiado"
-    },
-    "sendInvites": {
-      "title": "Enviar convites",
-      "placeholder": "friend@example.com",
-      "send": "Enviar",
-      "sending": "Enviando"
-    },
-    "stats": {
-      "referred": "Indicados",
-      "converted": "Convertidos",
-      "monthsEarned": "Meses ganhos"
-    },
-    "status": {
-      "converted": "Convertido",
-      "opened": "Aberto",
-      "failed": "Falhou",
-      "sent": "Enviado"
-    },
-    "empty": {
-      "title": "Nenhum convite enviado ainda",
-      "description": "Compartilhe seu link ou envie um convite para começar"
-    },
-    "toasts": {
-      "copiedTitle": "Copiado!",
-      "copiedDescription": "Link de indicação copiado para a área de transferência",
-      "copyFailedTitle": "Falha ao copiar",
-      "copyFailedDescription": "Não foi possível copiar o link para a área de transferência",
-      "invalidEmailTitle": "E-mail inválido",
-      "invalidEmailDescription": "Por favor, insira um endereço de e-mail válido",
-      "inviteSentTitle": "Convite enviado!",
-      "inviteSentDescription": "Convite enviado para {{email}}",
-      "sendFailedTitle": "Falha ao enviar",
-      "sendFailedDescription": "Não foi possível enviar o convite. Por favor, tente novamente."
-    },
-    "errors": {
-      "unableToLoad": "Não foi possível carregar os dados de indicação",
-      "unableToLoadStats": "Não foi possível carregar as estatísticas de indicação. Por favor, tente novamente mais tarde."
-    },
-    "tryAgain": "Tentar novamente",
-    "card": {
-      "brand": "EktosWhispr",
-      "signalId": "Signal ID",
-      "audioSignature": "Sua assinatura de áudio",
-      "stop": "Parar",
-      "playSignal": "Reproduzir sinal"
-    },
-    "friends": {
-      "title": "Amigos",
-      "completed": "Concluído",
-      "sentInvites": "Convites enviados"
-    }
   },
   "notes": {
     "sidebar": {
@@ -2275,7 +2193,9 @@
       "switchToCloudForLargeFiles": "Mude para o EktosWhispr Cloud para transcrever este arquivo.",
       "createAccount": "Criar conta",
       "upgrade": "Fazer upgrade",
-      "switchToCloud": "EktosWhispr Cloud"
+      "switchToCloud": "EktosWhispr Cloud",
+      "identifySpeakers": "Identificar interlocutores",
+      "identifySpeakersHint": "Rotula cada interlocutor na transcrição. Aumenta o tempo de processamento."
     },
     "meeting": {
       "title": "Notas de reunião",
@@ -2482,7 +2402,6 @@
     "upload": "Enviar",
     "dictionary": "Dicionário",
     "snippets": "Snippets",
-    "referral": "Ganhe um mês grátis",
     "settings": "Configurações",
     "support": "Suporte",
     "limitReached": "Limite semanal atingido",
@@ -2573,7 +2492,17 @@
     "retry": "Tentar novamente",
     "remove": "Remover",
     "dismiss": "Agora não",
-    "cancel": "Cancelar"
+    "cancel": "Cancelar",
+    "mode": {
+      "auto": "Auto ({{backend}})",
+      "autoDetecting": "Auto"
+    },
+    "download": "Baixar",
+    "downloadFailed": "Falha no download",
+    "cudaRequired": "Binário CUDA necessário para aceleração de GPU NVIDIA",
+    "vulkanRequired": "Binário Vulkan necessário para aceleração de GPU",
+    "cudaBinaryName": "Binário CUDA",
+    "vulkanBinaryName": "Binário Vulkan"
   },
   "app": {
     "toasts": {

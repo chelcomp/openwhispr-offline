@@ -6,13 +6,11 @@ import { updateNoteTool } from "./updateNoteTool";
 import { listFoldersTool } from "./listFoldersTool";
 import { clipboardTool } from "./clipboardTool";
 import { webSearchTool } from "./webSearchTool";
-import { calendarTool } from "./calendarTool";
 
 export { ToolRegistry } from "./ToolRegistry";
 export type { ToolDefinition, ToolResult } from "./ToolRegistry";
 
 interface ToolRegistrySettings {
-  gcalConnected: boolean;
   cloudBackupEnabled: boolean;
 }
 
@@ -26,10 +24,6 @@ export function createToolRegistry(settings: ToolRegistrySettings): ToolRegistry
   registry.register(listFoldersTool);
   registry.register(clipboardTool);
   registry.register(webSearchTool);
-
-  if (settings.gcalConnected) {
-    registry.register(calendarTool);
-  }
 
   return registry;
 }

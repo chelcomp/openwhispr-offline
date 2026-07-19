@@ -6,14 +6,12 @@ const debugLogger = require("./debugLogger");
 const { killProcess } = require("../utils/process");
 const { isPortAvailable } = require("../utils/serverUtils");
 const { getSafeTempDir } = require("./safeTempDir");
-const { app } = require("electron");
 const sidecarPidFile = require("./sidecarPidFile");
+const { getBackendChain, getAllBackends } = require("./llamaBackends");
 
 // Range kept clear of cliBridge (8200-8219) to avoid port-bind collisions.
 const PORT_RANGE_START = 8221;
 const PORT_RANGE_END = 8240;
-const STARTUP_TIMEOUT_MS = 120000;
-const VULKAN_STARTUP_TIMEOUT_MS = 120000;
 const HEALTH_CHECK_INTERVAL_MS = 5000;
 const HEALTH_CHECK_TIMEOUT_MS = 2000;
 const STARTUP_POLL_INTERVAL_MS = 500;
@@ -29,71 +27,12 @@ class LlamaServerManager {
     this.startupPromise = null;
     this.healthCheckInterval = null;
     this.healthCheckFailures = 0;
-    this.cachedServerBinaryPaths = null;
     this.activeBackend = null;
     this.idleTimer = null;
   }
 
-  getServerBinaryPaths() {
-    if (this.cachedServerBinaryPaths) return this.cachedServerBinaryPaths;
-
-    const platform = process.platform;
-    const arch = process.arch;
-    const platformArch = `${platform}-${arch}`;
-    const ext = platform === "win32" ? ".exe" : "";
-
-    const resolveBinary = (name) => {
-      const candidates = [];
-      if (process.resourcesPath) {
-        candidates.push(path.join(process.resourcesPath, "bin", name));
-      }
-      candidates.push(path.join(__dirname, "..", "..", "resources", "bin", name));
-
-      for (const candidate of candidates) {
-        try {
-          if (fs.existsSync(candidate)) {
-            fs.statSync(candidate);
-            return candidate;
-          }
-        } catch {
-          // Can't access binary
-        }
-      }
-      return null;
-    };
-
-    let paths;
-
-    if (platform === "darwin") {
-      const defaultBin =
-        resolveBinary(`llama-server-${platformArch}`) || resolveBinary(`llama-server${ext}`);
-      paths = defaultBin ? { default: defaultBin } : {};
-    } else {
-      const userBinDir = path.join(app.getPath("userData"), "bin");
-      const vulkanName = `llama-server-vulkan${ext}`;
-      let vulkanBin = null;
-      try {
-        const vulkanPath = path.join(userBinDir, vulkanName);
-        if (fs.existsSync(vulkanPath)) vulkanBin = vulkanPath;
-      } catch {}
-
-      const cpuBin =
-        resolveBinary(`llama-server-${platformArch}-cpu${ext}`) ||
-        resolveBinary(`llama-server-${platformArch}${ext}`) ||
-        resolveBinary(`llama-server${ext}`);
-
-      paths = {};
-      if (vulkanBin) paths.vulkan = vulkanBin;
-      if (cpuBin) paths.cpu = cpuBin;
-    }
-
-    this.cachedServerBinaryPaths = paths;
-    return paths;
-  }
-
   isAvailable() {
-    const paths = this.getServerBinaryPaths();
-    return Object.keys(paths).length > 0;
+    return getAllBackends().some((backend) => backend.isAvailable());
   }
 
   async findAvailablePort() {
@@ -121,8 +60,7 @@ class LlamaServerManager {
   }
 
   async _doStart(modelPath, options = {}) {
-    const binaryPaths = this.getServerBinaryPaths();
-    if (Object.keys(binaryPaths).length === 0) throw new Error("llama-server binary not found");
+    if (!this.isAvailable()) throw new Error("llama-server binary not found");
     if (!fs.existsSync(modelPath)) throw new Error(`Model file not found: ${modelPath}`);
 
     this.port = await this.findAvailablePort();
@@ -140,18 +78,35 @@ class LlamaServerManager {
       "--jinja",
     ];
 
-    if (process.platform === "darwin") {
-      const args = [...baseArgs, "--n-gpu-layers", "99"];
-      await this._startWithBinary(
-        binaryPaths.default,
-        args,
-        this._buildEnv(binaryPaths.default),
-        STARTUP_TIMEOUT_MS
-      );
-      this.activeBackend = "metal";
-    } else {
-      await this._startWithGpuFallback(binaryPaths, baseArgs, options);
+    const gpuMode = process.env.LLAMA_GPU_MODE || "auto";
+    // Each backend (CUDA / Vulkan / CPU / Metal) owns its own binary, args and
+    // env — see llamaBackends.js. We walk the chain and start the first one that
+    // has a binary and boots successfully, falling back to the next on failure.
+    const chain = getBackendChain(gpuMode).filter((backend) => backend.isAvailable());
+    if (chain.length === 0) throw new Error("llama-server binary not found");
+
+    let lastError = null;
+    let started = false;
+
+    for (const backend of chain) {
+      try {
+        await this._startBackend(backend, baseArgs, gpuMode);
+        this.activeBackend = backend.name;
+        started = true;
+        break;
+      } catch (err) {
+        lastError = err;
+        debugLogger.warn("llama-server backend failed, trying next fallback", {
+          backend: backend.name,
+          gpuMode,
+          error: err.message,
+        });
+        await this._killCurrentProcess();
+        this.port = await this.findAvailablePort();
+      }
     }
+
+    if (!started) throw lastError || new Error("llama-server failed to start");
 
     this.startHealthCheck();
     this.resetIdleTimer();
@@ -162,81 +117,24 @@ class LlamaServerManager {
     });
   }
 
-  async _startWithGpuFallback(binaryPaths, baseArgs, options) {
-    const gpuMode = process.env.LLAMA_GPU_MODE || "auto";
-    const gpuArgs = [...baseArgs, "--n-gpu-layers", "99"];
-    const cpuArgs = baseArgs;
+  async _startBackend(backend, baseArgs, gpuMode) {
+    const binaryPath = backend.getBinaryPath();
+    if (!binaryPath) throw new Error(`No ${backend.name} llama-server binary available`);
 
-    // Force CPU — skip Vulkan entirely
-    if (gpuMode === "cpu") {
-      if (!binaryPaths.cpu) throw new Error("No CPU llama-server binary available");
-      debugLogger.debug("Starting llama-server with CPU backend (explicit mode)");
-      await this._startWithBinary(
-        binaryPaths.cpu,
-        cpuArgs,
-        this._buildEnv(binaryPaths.cpu),
-        STARTUP_TIMEOUT_MS
-      );
-      this.activeBackend = "cpu";
-      return;
-    }
+    const args = backend.buildArgs(baseArgs, gpuMode);
+    const env = backend.buildEnv(binaryPath);
 
-    // GPU modes: gpu-nvidia and gpu-intel both use the Vulkan binary on llama
-    if (binaryPaths.vulkan) {
-      try {
-        debugLogger.debug("Attempting Vulkan backend startup", { gpuMode });
-        await this._startWithBinary(
-          binaryPaths.vulkan,
-          gpuArgs,
-          this._buildEnv(binaryPaths.vulkan),
-          VULKAN_STARTUP_TIMEOUT_MS
-        );
-        this.activeBackend = "vulkan";
-        return;
-      } catch (err) {
-        debugLogger.warn("Vulkan backend failed, falling back to CPU", {
-          gpuMode,
-          error: err.message,
-        });
-        await this._killCurrentProcess();
-        this.port = await this.findAvailablePort();
-      }
-    }
+    // Print the exact launch parameters so the chosen backend and every flag are
+    // visible in the logs.
+    debugLogger.info("llama-server launch parameters", {
+      backend: backend.name,
+      gpuMode,
+      gpuAccelerated: backend.gpuAccelerated,
+      binary: binaryPath,
+      args,
+    });
 
-    if (!binaryPaths.cpu) throw new Error("No CPU llama-server binary available");
-    debugLogger.debug("Starting llama-server with CPU backend");
-    await this._startWithBinary(
-      binaryPaths.cpu,
-      cpuArgs,
-      this._buildEnv(binaryPaths.cpu),
-      STARTUP_TIMEOUT_MS
-    );
-    this.activeBackend = "cpu";
-  }
-
-  _buildEnv(binaryPath) {
-    const binDir = path.dirname(binaryPath);
-    const env = { ...process.env };
-
-    if (process.platform === "darwin") {
-      env.DYLD_LIBRARY_PATH = binDir + (env.DYLD_LIBRARY_PATH ? `:${env.DYLD_LIBRARY_PATH}` : "");
-    } else if (process.platform === "linux") {
-      env.LD_LIBRARY_PATH = binDir + (env.LD_LIBRARY_PATH ? `:${env.LD_LIBRARY_PATH}` : "");
-    } else if (process.platform === "win32") {
-      env.PATH = binDir + (env.PATH ? `;${env.PATH}` : "");
-    }
-
-    // Select GPU by UUID + PCI_BUS_ID order so the device is unambiguous. See #531.
-    env.CUDA_DEVICE_ORDER = "PCI_BUS_ID";
-    if (process.env.INTELLIGENCE_GPU_UUID) {
-      env.CUDA_VISIBLE_DEVICES = process.env.INTELLIGENCE_GPU_UUID;
-    }
-
-    // Disable llama.cpp auto-fit memory probing (adds ~70s to startup). Set via env
-    // so builds without --fit ignore it instead of erroring. See LLAMA_ARG_FIT.
-    env.LLAMA_ARG_FIT = process.env.LLAMA_ARG_FIT || "off";
-
-    return env;
+    await this._startWithBinary(binaryPath, args, env, backend.startupTimeoutMs);
   }
 
   _startWithBinary(binaryPath, args, env, timeoutMs) {
@@ -459,10 +357,20 @@ class LlamaServerManager {
 
     const requestBody = {
       messages,
-      temperature: options.temperature ?? 0.7,
-      max_tokens: options.max_tokens ?? 512,
+      // Coerce with Number(): llama-server's JSON schema requires these as numbers
+      // and rejects the whole request with a 400 if any arrives as a string (e.g.
+      // a stale/corrupted settingsStore value surviving a hot-reload).
+      temperature: Number(options.temperature ?? 0.7),
+      max_tokens: Number(options.max_tokens ?? 512),
       stream: false,
     };
+
+    // llama.cpp's OpenAI-compatible endpoint accepts these sampling extensions.
+    // Only send the ones the caller provided so llama.cpp defaults apply otherwise.
+    if (options.topP != null) requestBody.top_p = Number(options.topP);
+    if (options.topK != null) requestBody.top_k = Number(options.topK);
+    if (options.minP != null) requestBody.min_p = Number(options.minP);
+    if (options.repeatPenalty != null) requestBody.repeat_penalty = Number(options.repeatPenalty);
 
     // Without this, Qwen chat templates leave `message.content` empty and
     // route output into `reasoning_content`. Non-Qwen templates ignore it.
@@ -579,13 +487,15 @@ class LlamaServerManager {
       modelPath: this.modelPath,
       modelName: this.modelPath ? path.basename(this.modelPath, ".gguf") : null,
       backend: this.activeBackend,
-      gpuAccelerated: this.activeBackend === "vulkan" || this.activeBackend === "metal",
+      gpuAccelerated:
+        this.activeBackend === "cuda" ||
+        this.activeBackend === "vulkan" ||
+        this.activeBackend === "metal",
     };
   }
 
   resetGpuDetection() {
     this.activeBackend = null;
-    this.cachedServerBinaryPaths = null;
   }
 }
 

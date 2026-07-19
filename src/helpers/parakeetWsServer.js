@@ -21,6 +21,13 @@ const HEALTH_CHECK_INTERVAL_MS = 5000;
 const TRANSCRIPTION_TIMEOUT_MS = 300000;
 const ONLINE_CHUNK_BYTES = 8000 * 4;
 const ONLINE_FINISH_TIMEOUT_MS = 10000;
+// Trailing silence appended when finalizing an online stream so the model's
+// lookahead window can decode the last word. A hotkey release provides no natural
+// trailing silence, so without this the final chunk of speech (up to one full
+// chunk_size_ms — 1120 ms for the largest Nemotron streaming variant) is never
+// emitted and the last word is dropped. 1300 ms @ 16 kHz mono float32, comfortably
+// above the largest (1120 ms) chunk window; harmless for the smaller variants.
+const TAIL_SILENCE = new Float32Array(20800);
 
 class ParakeetWsServer {
   constructor() {
@@ -39,12 +46,13 @@ class ParakeetWsServer {
     if (this.cachedBinaryPaths[runtime]) return this.cachedBinaryPaths[runtime];
 
     const platformArch = `${process.platform}-${process.arch}`;
+    const prefix = runtime === "online" ? "sherpa-onnx-online-ws" : "sherpa-onnx-ws";
 
-    if (runtime === "offline" && process.env.SHERPA_ONNX_CUDA_ENABLED === "true") {
+    if (process.env.SHERPA_ONNX_CUDA_ENABLED === "true") {
       const cudaName =
         process.platform === "win32"
-          ? `sherpa-onnx-ws-${platformArch}-cuda.exe`
-          : `sherpa-onnx-ws-${platformArch}-cuda`;
+          ? `${prefix}-${platformArch}-cuda.exe`
+          : `${prefix}-${platformArch}-cuda`;
       const cudaResolved = resolveBinaryPath(cudaName);
       if (cudaResolved) {
         this.cachedBinaryPaths[runtime] = cudaResolved;
@@ -53,7 +61,6 @@ class ParakeetWsServer {
       debugLogger.warn("CUDA binary not found, falling back to CPU binary", { cudaName });
     }
 
-    const prefix = runtime === "online" ? "sherpa-onnx-online-ws" : "sherpa-onnx-ws";
     const binaryName =
       process.platform === "win32"
         ? `${prefix}-${platformArch}.exe`
@@ -68,6 +75,38 @@ class ParakeetWsServer {
     this.cachedBinaryPaths = {};
   }
 
+  // NVIDIA (Parakeet) transcription always runs on CUDA when the hardware and the
+  // CUDA binary are both present. Unlike whisper-server there is no runtime
+  // CPU fallback, so CUDA is only switched on when an NVIDIA GPU is actually
+  // detected. Selecting CPU only ever applies to the OpenAI/Whisper engine —
+  // NVIDIA models are never downgraded to CPU while a usable GPU is available.
+  async _syncCudaSelection(runtime = "offline") {
+    const wasEnabled = process.env.SHERPA_ONNX_CUDA_ENABLED === "true";
+    const eligible = await this._isCudaEligible(runtime);
+    if (eligible) {
+      process.env.SHERPA_ONNX_CUDA_ENABLED = "true";
+    } else {
+      delete process.env.SHERPA_ONNX_CUDA_ENABLED;
+    }
+    // Binary paths are cached per runtime and depend on the CUDA flag, so drop
+    // the cache whenever the resolved selection changes.
+    if (eligible !== wasEnabled) this.invalidateBinaryCache();
+  }
+
+  async _isCudaEligible(runtime = "offline") {
+    if (!this.isCudaBinaryAvailable(runtime)) return false;
+    try {
+      const { detectNvidiaGpu } = require("../utils/gpuDetection");
+      const gpu = await detectNvidiaGpu();
+      return !!gpu?.hasNvidiaGpu;
+    } catch (err) {
+      debugLogger.warn("Parakeet CUDA eligibility check failed; falling back to CPU", {
+        error: err.message,
+      });
+      return false;
+    }
+  }
+
   isAvailable(runtime = "offline") {
     return this.getWsBinaryPath(runtime) !== null;
   }
@@ -76,12 +115,13 @@ class ParakeetWsServer {
     return this.isAvailable("offline") || this.isAvailable("online");
   }
 
-  isCudaBinaryAvailable() {
+  isCudaBinaryAvailable(runtime = "offline") {
     const platformArch = `${process.platform}-${process.arch}`;
+    const prefix = runtime === "online" ? "sherpa-onnx-online-ws" : "sherpa-onnx-ws";
     const cudaName =
       process.platform === "win32"
-        ? `sherpa-onnx-ws-${platformArch}-cuda.exe`
-        : `sherpa-onnx-ws-${platformArch}-cuda`;
+        ? `${prefix}-${platformArch}-cuda.exe`
+        : `${prefix}-${platformArch}-cuda`;
     return !!resolveBinaryPath(cudaName);
   }
 
@@ -89,6 +129,8 @@ class ParakeetWsServer {
     if (this.startupPromise) return this.startupPromise;
     if (this.ready && this.modelName === modelName) return;
     if (this.process) await this.stop();
+
+    await this._syncCudaSelection(runtime);
 
     this.startupPromise = this._doStart(modelName, modelDir, runtime);
     try {
@@ -108,7 +150,7 @@ class ParakeetWsServer {
     this.modelDir = modelDir;
     this.modelRuntime = runtime;
 
-    const useCuda = runtime === "offline" && process.env.SHERPA_ONNX_CUDA_ENABLED === "true";
+    const useCuda = process.env.SHERPA_ONNX_CUDA_ENABLED === "true";
     const threads = Math.max(1, Math.min(4, Math.floor(os.cpus().length * 0.75)));
     const args = [
       `--tokens=${path.join(modelDir, "tokens.txt")}`,
@@ -117,7 +159,7 @@ class ParakeetWsServer {
       `--joiner=${path.join(modelDir, "joiner.int8.onnx")}`,
       `--port=${this.port}`,
       ...(runtime === "online"
-        ? [`--num-work-threads=${threads}`, "--warm-up=0"]
+        ? [`--num-work-threads=${useCuda ? 1 : threads}`, "--warm-up=0"]
         : [`--num-threads=${useCuda ? 1 : threads}`]),
       ...(useCuda ? ["--provider=cuda"] : []),
     ];
@@ -194,6 +236,8 @@ class ParakeetWsServer {
 
     if (runtime === "offline") {
       await this._warmUp();
+    } else if (runtime === "online") {
+      await this._warmUpOnline();
     }
   }
 
@@ -206,6 +250,24 @@ class ParakeetWsServer {
       debugLogger.debug("parakeet-ws warm-up inference complete");
     } catch (err) {
       debugLogger.warn("parakeet-ws warm-up failed (non-fatal)", {
+        error: err.message,
+      });
+    }
+  }
+
+  // Online/streaming runtime never got a warm-up pass before, so the first
+  // real dictation after the server starts (e.g. right after app launch) paid
+  // ONNX Runtime's one-time graph optimization/session warm-up cost live —
+  // mirrors _warmUp() above, using a dummy streamed inference instead.
+  async _warmUpOnline() {
+    try {
+      const sampleRate = 16000;
+      const numSamples = sampleRate;
+      const silentSamples = Buffer.alloc(numSamples * 4);
+      await this._transcribeOnline(silentSamples);
+      debugLogger.debug("parakeet-ws online warm-up inference complete");
+    } catch (err) {
+      debugLogger.warn("parakeet-ws online warm-up failed (non-fatal)", {
         error: err.message,
       });
     }
@@ -377,13 +439,29 @@ class ParakeetWsServer {
     let finishResolve = null;
     let closed = false;
     let lastEmitted = "";
+    let sawDoneMarker = false;
 
     const ws = new WebSocket(`ws://127.0.0.1:${this.port}`);
+
+    // A result is "finalized" once the server acknowledged end-of-stream with
+    // "Done!" — that ack means it ran InputFinished and decoded every sample we
+    // sent, so results.text() is its complete answer. We intentionally do NOT
+    // also require the tail to carry is_final: streaming ASR leaves the last
+    // segment as a partial hypothesis until an endpoint (silence) fires, and on a
+    // hotkey release there is no trailing silence, so the final flush often stays
+    // "partial" even though it is the model's last word. Requiring is_final there
+    // would reject every release-terminated dictation and fall back to offline.
+    // A dirty close or the finish timeout never sets sawDoneMarker, so those still
+    // report finalized=false and callers fall back to an offline transcription.
+    const buildResult = () => ({
+      text: results.text(),
+      finalized: sawDoneMarker,
+    });
 
     const settle = () => {
       if (closed) return;
       closed = true;
-      if (finishResolve) finishResolve({ text: results.text() });
+      if (finishResolve) finishResolve(buildResult());
     };
 
     const sendFloat32 = (float32Samples) => {
@@ -408,6 +486,9 @@ class ParakeetWsServer {
     ws.on("message", (data) => {
       const message = data.toString();
       if (message === "Done!") {
+        // Server confirmed end-of-stream; ordered delivery means the final
+        // is_final result already landed in an earlier message.
+        sawDoneMarker = true;
         ws.close();
         return;
       }
@@ -418,8 +499,22 @@ class ParakeetWsServer {
       }
     });
 
-    ws.on("close", () => settle());
+    ws.on("close", () => {
+      // A close while we are not finalizing means the stream died mid-recording:
+      // the live preview freezes and the rest of the utterance is lost. The paste
+      // path stays correct — finalized=false forces the offline fallback.
+      if (!finishResolve && !closed) {
+        debugLogger.warn(
+          "parakeet-ws online stream closed mid-recording (live preview will freeze; paste falls back to offline)"
+        );
+      }
+      settle();
+    });
     ws.on("error", (error) => {
+      debugLogger.warn("parakeet-ws online stream error", {
+        error: error.message,
+        finalizing: !!finishResolve,
+      });
       onError?.(error);
       settle();
     });
@@ -430,9 +525,15 @@ class ParakeetWsServer {
       finish: () =>
         new Promise((resolve) => {
           if (closed) {
-            resolve({ text: results.text() });
+            resolve(buildResult());
             return;
           }
+          // Feed trailing silence BEFORE marking finishResolve (which gates
+          // sendFloat32) so the model's lookahead window can decode the final
+          // word. Queued if the socket hasn't opened yet — ws.on("open") replays
+          // pendingChunks and only then sends "Done".
+          if (ws.readyState === WebSocket.OPEN) ws.send(TAIL_SILENCE);
+          else pendingChunks.push(TAIL_SILENCE);
           finishResolve = resolve;
           if (ws.readyState === WebSocket.OPEN) ws.send("Done");
           setTimeout(() => {

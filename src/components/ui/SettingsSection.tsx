@@ -61,6 +61,7 @@ interface SettingsRowProps {
   label: string;
   description?: string;
   icon?: React.ReactNode;
+  badge?: string;
   trailing?: "control" | "chevron" | "summary";
   summaryValue?: string;
   onNavigate?: () => void;
@@ -72,6 +73,7 @@ export const SettingsRow: React.FC<SettingsRowProps> = ({
   label,
   description,
   icon,
+  badge,
   trailing = "control",
   summaryValue,
   onNavigate,
@@ -88,7 +90,14 @@ export const SettingsRow: React.FC<SettingsRowProps> = ({
         </div>
       )}
       <div className="min-w-0 flex-1">
-        <p className="text-xs font-medium text-foreground">{label}</p>
+        <div className="flex items-center gap-2">
+          <p className="text-xs font-medium text-foreground">{label}</p>
+          {badge && (
+            <span className="text-xs font-medium text-primary bg-primary/10 dark:bg-primary/15 px-1.5 py-px rounded-sm">
+              {badge}
+            </span>
+          )}
+        </div>
         {description && (
           <p className="text-xs text-muted-foreground/80 mt-0.5 leading-relaxed">{description}</p>
         )}

@@ -15,14 +15,19 @@ function resolveWhisperGpuMode({ mode = "auto", hasNvidia = false, cudaReady = f
   return "cpu";
 }
 
-function resolveLlamaGpuMode({ mode = "auto", hasNvidia = false, hasIntel = false, vulkanReady = false }) {
+function resolveLlamaGpuMode({
+  mode = "auto",
+  hasNvidia = false,
+  hasIntel = false,
+  vulkanReady = false,
+  cudaReady = false,
+}) {
   if (mode === "gpu-nvidia") return "gpu-nvidia";
   if (mode === "gpu-intel") return "gpu-intel";
   if (mode === "cpu") return "cpu";
-  if (vulkanReady) {
-    if (hasNvidia) return "gpu-nvidia";
-    if (hasIntel) return "gpu-intel";
-  }
+  // Auto: NVIDIA (CUDA or Vulkan) > Intel (Vulkan) > CPU.
+  if (hasNvidia && (cudaReady || vulkanReady)) return "gpu-nvidia";
+  if (hasIntel && vulkanReady) return "gpu-intel";
   return "cpu";
 }
 

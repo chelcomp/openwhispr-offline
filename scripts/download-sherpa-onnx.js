@@ -60,12 +60,16 @@ const CUDA_BINARIES = {
     archiveName: `sherpa-onnx-v${SHERPA_ONNX_VERSION}-win-x64-cuda.tar.bz2`,
     binaryPath: "sherpa-onnx-offline-websocket-server.exe",
     outputName: "sherpa-onnx-ws-win32-x64-cuda.exe",
+    onlineBinaryPath: "sherpa-onnx-online-websocket-server.exe",
+    onlineOutputName: "sherpa-onnx-online-ws-win32-x64-cuda.exe",
     libPattern: "*.dll",
   },
   "linux-x64": {
     archiveName: `sherpa-onnx-v${SHERPA_ONNX_VERSION}-cuda-12.x-cudnn-9.x-linux-x64-gpu.tar.bz2`,
     binaryPath: "sherpa-onnx-offline-websocket-server",
     outputName: "sherpa-onnx-ws-linux-x64-cuda",
+    onlineBinaryPath: "sherpa-onnx-online-websocket-server",
+    onlineOutputName: "sherpa-onnx-online-ws-linux-x64-cuda",
     libPattern: "*.so*",
   },
 };

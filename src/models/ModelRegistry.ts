@@ -1,6 +1,5 @@
 import modelDataRaw from "./modelRegistryData.json";
 import { isCloudCleanupMode, getSettings } from "../stores/settingsStore";
-import { readCachedTinfoilModels } from "./tinfoilModelCache";
 
 export interface ModelDefinition {
   id: string;
@@ -117,18 +116,6 @@ interface ModelRegistryData {
 }
 
 const modelData: ModelRegistryData = modelDataRaw as ModelRegistryData;
-
-function getTinfoilCloudProvider(): CloudProviderData | undefined {
-  return modelData.cloudProviders.find((provider) => provider.id === "tinfoil");
-}
-
-const cachedTinfoilModels = readCachedTinfoilModels().models;
-if (cachedTinfoilModels.length > 0) {
-  const tinfoilProvider = getTinfoilCloudProvider();
-  if (tinfoilProvider) {
-    tinfoilProvider.models = cachedTinfoilModels;
-  }
-}
 
 function createPromptFormatter(template: string): (text: string, systemPrompt: string) => string {
   return (text: string, systemPrompt: string) => {
@@ -283,20 +270,9 @@ function buildReasoningProviders(): ReasoningProviders {
 
 export const REASONING_PROVIDERS = buildReasoningProviders();
 
-export function getTinfoilModels(): CloudModelDefinition[] {
-  return getTinfoilCloudProvider()?.models ?? [];
-}
 
-export function applyTinfoilModels(models: CloudModelDefinition[]): void {
-  const provider = getTinfoilCloudProvider();
-  if (provider) {
-    provider.models = models;
-  }
-  const reasoningProvider = REASONING_PROVIDERS.tinfoil;
-  if (reasoningProvider) {
-    reasoningProvider.models = models.map(toReasoningModel);
-  }
-}
+
+
 
 export interface ReasoningModelWithProvider extends ReasoningModel {
   provider: string;
@@ -349,9 +325,6 @@ export function getModelProvider(modelId: string): string {
   const model = getAllReasoningModels().find((m) => m.value === modelId);
 
   if (!model) {
-    // An unknown model here is one Tinfoil retired or added since our last
-    // sync — don't let the id heuristics misroute it.
-    if (storedProvider === "tinfoil") return "tinfoil";
     if (modelId.includes("claude")) return "anthropic";
     if (modelId.includes("gemini") && !modelId.includes("gemma")) return "gemini";
     if ((modelId.includes("gpt-4") || modelId.includes("gpt-5")) && !modelId.includes("gpt-oss"))

@@ -163,6 +163,19 @@ export default function TranscriptionPreviewOverlay() {
       showFinalResult(nextText);
     });
 
+    // Streamed local-LLM cleanup text arrives as accumulated (not delta) chunks —
+    // replace rawText outright rather than appending. Ignored once the final
+    // result has already landed to avoid a late chunk flashing over it.
+    const handlePreviewCleanupUpdate = window.electronAPI?.onPreviewCleanupUpdate?.(
+      (text: string) => {
+        if (phaseRef.current === "final") return;
+        const trimmed = text?.trim?.() || "";
+        if (!trimmed) return;
+        setRawText(trimmed);
+        setIsVisible(true);
+      }
+    );
+
     const handlePreviewHide = window.electronAPI?.onPreviewHide?.(() => {
       clearLifecycleTimers();
       clearTimer(copiedTimerRef);
@@ -185,6 +198,7 @@ export default function TranscriptionPreviewOverlay() {
       handlePreviewAppend?.();
       handlePreviewHold?.();
       handlePreviewResult?.();
+      handlePreviewCleanupUpdate?.();
       handlePreviewHide?.();
     };
   }, [clearLifecycleTimers, showFinalResult]);

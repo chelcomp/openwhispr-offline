@@ -870,6 +870,11 @@ class WindowManager {
     });
   }
 
+  updateCleanupPreview(text) {
+    if (!this.transcriptionPreviewWindow || this.transcriptionPreviewWindow.isDestroyed()) return;
+    this.transcriptionPreviewWindow.webContents.send("preview-cleanup-update", text);
+  }
+
   completeTranscriptionPreview(text) {
     if (!this.transcriptionPreviewWindow || this.transcriptionPreviewWindow.isDestroyed()) return;
     this.transcriptionPreviewWindow.webContents.send("preview-result", { text });

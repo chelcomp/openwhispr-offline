@@ -1,5 +1,9 @@
 import { useState, useCallback } from "react";
-import { useSettingsStore, selectIsCloudCleanupMode } from "../stores/settingsStore";
+import {
+  useSettingsStore,
+  selectIsCloudCleanupMode,
+  selectEffectiveCleanupModel,
+} from "../stores/settingsStore";
 import { useUsage } from "./useUsage";
 
 interface UseNotesOnboardingReturn {
@@ -15,7 +19,7 @@ export function useNotesOnboarding(): UseNotesOnboardingReturn {
   const isProUser = !!(usage?.isSubscribed || usage?.isTrial);
   const isProLoading = false;
   const useCleanupModel = useSettingsStore((s) => s.useCleanupModel);
-  const effectiveModel = useSettingsStore((s) => s.cleanupModel);
+  const effectiveModel = useSettingsStore(selectEffectiveCleanupModel);
   const isCloudCleanup = useSettingsStore(selectIsCloudCleanupMode);
 
   const [isComplete, setIsComplete] = useState(

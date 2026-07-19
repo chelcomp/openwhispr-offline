@@ -6,7 +6,6 @@ import { useStreamingProvidersStore } from "./streamingProvidersStore";
 import logger from "../utils/logger";
 import whisperVadConstants from "../constants/whisperVad.json";
 import type { LocalTranscriptionProvider, InferenceMode, SelfHostedType } from "../types/electron";
-import type { GoogleCalendarAccount } from "../types/calendar";
 import { PROMPT_KIND_LIST, type PromptKind } from "../config/prompts/registry";
 import { deriveReasoningMode, buildReasoningScopePatches } from "../helpers/reasoningRouting";
 import {
@@ -64,6 +63,24 @@ function readBoolean(key: string, fallback: boolean): boolean {
   if (fallback === true) return stored !== "false";
   return stored === "true";
 }
+
+function readNumber(key: string, fallback: number): number {
+  if (!isBrowser) return fallback;
+  const stored = localStorage.getItem(key);
+  if (stored === null) return fallback;
+  const parsed = Number(stored);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+/** Default sampling parameters for local (llama.cpp) inference. */
+export const LOCAL_PARAM_DEFAULTS = {
+  temperature: 0.3,
+  topP: 0.9,
+  topK: 40,
+  minP: 0.05,
+  repeatPenalty: 1.1,
+  maxTokens: 4096,
+} as const;
 
 function readStringArray(key: string, fallback: string[]): string[] {
   if (!isBrowser) return fallback;
@@ -154,6 +171,7 @@ const BOOLEAN_SETTINGS = new Set([
   "saveDiscardedTranscriptions",
   "noteFilesEnabled",
   "showTranscriptionPreview",
+  "parakeetStreamingBeta",
   "cleanupDisableThinking",
   "dictationAgentDisableThinking",
   "noteFormattingDisableThinking",
@@ -162,13 +180,11 @@ const BOOLEAN_SETTINGS = new Set([
   "notifyMeetingDetection",
   "notifyCalendarReminders",
   "notifyUpdates",
-  "gcalPrimaryOnly",
 ]);
 
 const ARRAY_SETTINGS = new Set([
   "customDictionary",
   "snippets",
-  "gcalAccounts",
   "onboardingUseCases",
 ]);
 
@@ -430,14 +446,10 @@ export interface SettingsState
   pauseMediaOnDictation: boolean;
   floatingIconAutoHide: boolean;
   startMinimized: boolean;
-  gcalAccounts: GoogleCalendarAccount[];
-  gcalConnected: boolean;
-  gcalEmail: string;
   notificationsEnabled: boolean;
   notifyMeetingDetection: boolean;
   notifyCalendarReminders: boolean;
   notifyUpdates: boolean;
-  gcalPrimaryOnly: boolean;
   meetingProcessDetection: boolean;
   speakerDiarizationEnabled: boolean;
   dictationSileroEnabled: boolean;
@@ -452,6 +464,7 @@ export interface SettingsState
   whisperVadSamplesOverlap: number;
   panelStartPosition: "bottom-right" | "center" | "bottom-left";
   showTranscriptionPreview: boolean;
+  parakeetStreamingBeta: boolean;
   autoPasteEnabled: boolean;
   autoUnmuteMicEnabled: boolean;
   keepTranscriptionInClipboard: boolean;
@@ -512,6 +525,22 @@ export interface SettingsState
   localProvider: string;
   setLocalModel: (value: string) => void;
   setLocalProvider: (value: string) => void;
+
+  // Manual local LLM sampling parameters — applied to every local (llama.cpp)
+  // inference regardless of which local model is selected.
+  localTemperature: number;
+  localTopP: number;
+  localTopK: number;
+  localMinP: number;
+  localRepeatPenalty: number;
+  localMaxTokens: number;
+  setLocalTemperature: (value: number) => void;
+  setLocalTopP: (value: number) => void;
+  setLocalTopK: (value: number) => void;
+  setLocalMinP: (value: number) => void;
+  setLocalRepeatPenalty: (value: number) => void;
+  setLocalMaxTokens: (value: number) => void;
+  resetLocalGenerationParams: () => void;
 
   customPrompts: Record<PromptKind, string>;
   setCustomPrompt: (kind: PromptKind, value: string) => void;
@@ -601,18 +630,8 @@ export interface SettingsState
   setXaiApiKey: (key: string) => void;
   setMistralApiKey: (key: string) => void;
   setOpenrouterApiKey: (key: string) => void;
-  setCortiClientId: (key: string) => void;
-  setCortiClientSecret: (key: string) => void;
-  setCortiApiKey: (key: string) => void;
-  setTinfoilApiKey: (key: string) => void;
   setCustomTranscriptionApiKey: (key: string) => void;
   setCleanupCustomApiKey: (key: string) => void;
-
-  // Corti (BYOK)
-  cortiEnvironment: string;
-  cortiTenant: string;
-  setCortiEnvironment: (value: string) => void;
-  setCortiTenant: (value: string) => void;
 
   // Enterprise providers
   bedrockAuthMode: string;
@@ -667,12 +686,10 @@ export interface SettingsState
   setPauseMediaOnDictation: (value: boolean) => void;
   setFloatingIconAutoHide: (enabled: boolean) => void;
   setStartMinimized: (enabled: boolean) => void;
-  setGcalAccounts: (accounts: GoogleCalendarAccount[]) => void;
   setNotificationsEnabled: (value: boolean) => void;
   setNotifyMeetingDetection: (value: boolean) => void;
   setNotifyCalendarReminders: (value: boolean) => void;
   setNotifyUpdates: (value: boolean) => void;
-  setGcalPrimaryOnly: (value: boolean) => void;
   setMeetingProcessDetection: (value: boolean) => void;
   setSpeakerDiarizationEnabled: (value: boolean) => void;
   setDictationSileroEnabled: (value: boolean) => void;
@@ -685,8 +702,10 @@ export interface SettingsState
   setWhisperVadMaxSpeechDurationS: (value: number) => void;
   setWhisperVadSpeechPadMs: (value: number) => void;
   setWhisperVadSamplesOverlap: (value: number) => void;
+  resetWhisperVad: () => void;
   setPanelStartPosition: (position: "bottom-right" | "center" | "bottom-left") => void;
   setShowTranscriptionPreview: (value: boolean) => void;
+  setParakeetStreamingBeta: (value: boolean) => void;
   setAutoPasteEnabled: (value: boolean) => void;
   setAutoUnmuteMicEnabled: (value: boolean) => void;
   setKeepTranscriptionInClipboard: (value: boolean) => void;
@@ -723,6 +742,13 @@ export function setStringSetting(key: keyof SettingsState, value: string): void 
 
 function createBooleanSetter(key: string) {
   return (value: boolean) => {
+    if (isBrowser) localStorage.setItem(key, String(value));
+    useSettingsStore.setState({ [key]: value });
+  };
+}
+
+function createNumberSetter(key: string) {
+  return (value: number) => {
     if (isBrowser) localStorage.setItem(key, String(value));
     useSettingsStore.setState({ [key]: value });
   };
@@ -800,10 +826,6 @@ const SECRET_IPC_SAVERS = {
   xai: "saveXaiKey",
   mistral: "saveMistralKey",
   openrouter: "saveOpenrouterKey",
-  cortiClientId: "saveCortiClientId",
-  cortiClientSecret: "saveCortiClientSecret",
-  cortiApiKey: "saveCortiKey",
-  tinfoil: "saveTinfoilKey",
   customTranscription: "saveCustomTranscriptionKey",
   cleanupCustom: "saveCleanupCustomKey",
   bedrockAccessKeyId: "saveBedrockAccessKeyId",
@@ -842,10 +864,6 @@ const STALE_SECRET_LOCALSTORAGE_KEYS = [
   "xaiApiKey",
   "mistralApiKey",
   "openrouterApiKey",
-  "cortiClientId",
-  "cortiClientSecret",
-  "cortiApiKey",
-  "tinfoilApiKey",
   "customTranscriptionApiKey",
   "customReasoningApiKey",
   "cleanupCustomApiKey",
@@ -863,10 +881,8 @@ function invalidateApiKeyCaches(
     | "gemini"
     | "groq"
     | "mistral"
-    | "tinfoil"
     | "custom"
     | "openrouter"
-    | "corti"
 ) {
   if (provider) {
     if (_ReasoningService) {
@@ -922,8 +938,6 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
   cloudTranscriptionMode: readString("cloudTranscriptionMode", "byok"),
   cleanupCloudMode: readString("cleanupCloudMode", "byok"),
   cleanupCloudBaseUrl: readString("cleanupCloudBaseUrl", API_ENDPOINTS.OPENAI_BASE),
-  cortiEnvironment: readString("cortiEnvironment", "us"),
-  cortiTenant: readString("cortiTenant", "base"),
   customDictionary: readStringArray("customDictionary", []),
   snippets: (() => {
     try {
@@ -987,6 +1001,12 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
   cleanupProvider: readString("cleanupProvider", "openai"),
   localModel: readString("localModel", ""),
   localProvider: readString("localProvider", "qwen"),
+  localTemperature: readNumber("localTemperature", LOCAL_PARAM_DEFAULTS.temperature),
+  localTopP: readNumber("localTopP", LOCAL_PARAM_DEFAULTS.topP),
+  localTopK: readNumber("localTopK", LOCAL_PARAM_DEFAULTS.topK),
+  localMinP: readNumber("localMinP", LOCAL_PARAM_DEFAULTS.minP),
+  localRepeatPenalty: readNumber("localRepeatPenalty", LOCAL_PARAM_DEFAULTS.repeatPenalty),
+  localMaxTokens: readNumber("localMaxTokens", LOCAL_PARAM_DEFAULTS.maxTokens),
 
   // Secrets hydrate from main process in initializeSettings, never from localStorage.
   openaiApiKey: "",
@@ -996,10 +1016,6 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
   xaiApiKey: "",
   mistralApiKey: "",
   openrouterApiKey: "",
-  cortiClientId: "",
-  cortiClientSecret: "",
-  cortiApiKey: "",
-  tinfoilApiKey: "",
   customTranscriptionApiKey: "",
   cleanupCustomApiKey: "",
 
@@ -1063,21 +1079,6 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
   notifyMeetingDetection: readBoolean("notifyMeetingDetection", false),
   notifyCalendarReminders: readBoolean("notifyCalendarReminders", true),
   notifyUpdates: readBoolean("notifyUpdates", true),
-  ...(() => {
-    let accounts: GoogleCalendarAccount[] = [];
-    try {
-      const parsed = JSON.parse(readString("gcalAccounts", "[]"));
-      if (Array.isArray(parsed)) accounts = parsed;
-    } catch {
-      /* use empty default */
-    }
-    return {
-      gcalAccounts: accounts,
-      gcalConnected: accounts.length > 0,
-      gcalEmail: accounts[0]?.email ?? "",
-    };
-  })(),
-  gcalPrimaryOnly: readBoolean("gcalPrimaryOnly", true),
   meetingProcessDetection: readBoolean("meetingProcessDetection", false),
   speakerDiarizationEnabled: readBoolean("speakerDiarizationEnabled", true),
   dictationSileroEnabled: readBoolean("dictationSileroEnabled", true),
@@ -1109,6 +1110,7 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
     return "center" as const;
   })(),
   showTranscriptionPreview: readBoolean("showTranscriptionPreview", false),
+  parakeetStreamingBeta: readBoolean("parakeetStreamingBeta", false),
   autoPasteEnabled: readBoolean("autoPasteEnabled", true),
   autoUnmuteMicEnabled: readBoolean("autoUnmuteMicEnabled", false),
   keepTranscriptionInClipboard: readBoolean("keepTranscriptionInClipboard", false),
@@ -1314,6 +1316,26 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
   setCleanupModel: createStringSetter("cleanupModel"),
   setLocalModel: createStringSetter("localModel"),
   setLocalProvider: createStringSetter("localProvider"),
+  setLocalTemperature: createNumberSetter("localTemperature"),
+  setLocalTopP: createNumberSetter("localTopP"),
+  setLocalTopK: createNumberSetter("localTopK"),
+  setLocalMinP: createNumberSetter("localMinP"),
+  setLocalRepeatPenalty: createNumberSetter("localRepeatPenalty"),
+  setLocalMaxTokens: createNumberSetter("localMaxTokens"),
+  resetLocalGenerationParams: () => {
+    const entries: Array<[string, number]> = [
+      ["localTemperature", LOCAL_PARAM_DEFAULTS.temperature],
+      ["localTopP", LOCAL_PARAM_DEFAULTS.topP],
+      ["localTopK", LOCAL_PARAM_DEFAULTS.topK],
+      ["localMinP", LOCAL_PARAM_DEFAULTS.minP],
+      ["localRepeatPenalty", LOCAL_PARAM_DEFAULTS.repeatPenalty],
+      ["localMaxTokens", LOCAL_PARAM_DEFAULTS.maxTokens],
+    ];
+    if (isBrowser) {
+      for (const [key, value] of entries) localStorage.setItem(key, String(value));
+    }
+    useSettingsStore.setState(Object.fromEntries(entries));
+  },
 
   setCustomDictionary: (words: string[]) => {
     if (isBrowser) localStorage.setItem("customDictionary", JSON.stringify(words));
@@ -1394,20 +1416,6 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
   setXaiApiKey: createSecretSetter("xaiApiKey", "xai"),
   setMistralApiKey: createSecretSetter("mistralApiKey", "mistral", "mistral"),
   setOpenrouterApiKey: createSecretSetter("openrouterApiKey", "openrouter", "openrouter"),
-  setCortiClientId: (key: string) => {
-    set({ cortiClientId: key });
-    debouncedSaveSecret("cortiClientId", key);
-    invalidateApiKeyCaches("corti");
-  },
-  setCortiClientSecret: (key: string) => {
-    set({ cortiClientSecret: key });
-    debouncedSaveSecret("cortiClientSecret", key);
-    invalidateApiKeyCaches("corti");
-  },
-  setCortiApiKey: createSecretSetter("cortiApiKey", "cortiApiKey", "corti"),
-  setCortiEnvironment: createStringSetter("cortiEnvironment"),
-  setCortiTenant: createStringSetter("cortiTenant"),
-  setTinfoilApiKey: createSecretSetter("tinfoilApiKey", "tinfoil", "tinfoil"),
   setCustomTranscriptionApiKey: (key: string) => {
     set({ customTranscriptionApiKey: key });
     debouncedSaveSecret("customTranscription", key);
@@ -1587,22 +1595,10 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
     }
   },
 
-  setGcalAccounts: (accounts: GoogleCalendarAccount[]) => {
-    if (isBrowser) localStorage.setItem("gcalAccounts", JSON.stringify(accounts));
-    useSettingsStore.setState({
-      gcalAccounts: accounts,
-      gcalConnected: accounts.length > 0,
-      gcalEmail: accounts[0]?.email ?? "",
-    });
-  },
   setNotificationsEnabled: createBooleanSetter("notificationsEnabled"),
   setNotifyMeetingDetection: createBooleanSetter("notifyMeetingDetection"),
   setNotifyCalendarReminders: createBooleanSetter("notifyCalendarReminders"),
   setNotifyUpdates: createBooleanSetter("notifyUpdates"),
-  setGcalPrimaryOnly: (value: boolean) => {
-    if (isBrowser) localStorage.setItem("gcalPrimaryOnly", String(value));
-    useSettingsStore.setState({ gcalPrimaryOnly: value });
-  },
   setMeetingProcessDetection: createBooleanSetter("meetingProcessDetection"),
   setSpeakerDiarizationEnabled: (value: boolean) => {
     if (isBrowser) localStorage.setItem("speakerDiarizationEnabled", String(value));
@@ -1685,6 +1681,33 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
       window.electronAPI?.setWhisperVadConfig?.({ samplesOverlap: next });
     }
   },
+  resetWhisperVad: () => {
+    const d = WHISPER_VAD_DEFAULTS;
+    const next = {
+      whisperVadThreshold: d.threshold,
+      whisperVadMinSpeechDurationMs: d.minSpeechDurationMs,
+      whisperVadMinSilenceDurationMs: d.minSilenceDurationMs,
+      whisperVadMaxSpeechDurationS: d.maxSpeechDurationS,
+      whisperVadSpeechPadMs: d.speechPadMs,
+      whisperVadSamplesOverlap: d.samplesOverlap,
+    };
+    if (isBrowser) {
+      for (const [key, value] of Object.entries(next)) {
+        localStorage.setItem(key, String(value));
+      }
+    }
+    useSettingsStore.setState(next);
+    if (isBrowser) {
+      window.electronAPI?.setWhisperVadConfig?.({
+        threshold: d.threshold,
+        minSpeechDurationMs: d.minSpeechDurationMs,
+        minSilenceDurationMs: d.minSilenceDurationMs,
+        maxSpeechDurationS: d.maxSpeechDurationS,
+        speechPadMs: d.speechPadMs,
+        samplesOverlap: d.samplesOverlap,
+      });
+    }
+  },
   setPanelStartPosition: (position: "bottom-right" | "center" | "bottom-left") => {
     if (get().panelStartPosition === position) return;
     if (isBrowser) localStorage.setItem("panelStartPosition", position);
@@ -1695,6 +1718,7 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
   },
 
   setShowTranscriptionPreview: createBooleanSetter("showTranscriptionPreview"),
+  setParakeetStreamingBeta: createBooleanSetter("parakeetStreamingBeta"),
   setAutoPasteEnabled: createBooleanSetter("autoPasteEnabled"),
   setAutoUnmuteMicEnabled: createBooleanSetter("autoUnmuteMicEnabled"),
   setKeepTranscriptionInClipboard: createBooleanSetter("keepTranscriptionInClipboard"),
@@ -1745,11 +1769,13 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
       s.setAssemblyAiStreaming(settings.assemblyAiStreaming);
     if (settings.showTranscriptionPreview !== undefined)
       s.setShowTranscriptionPreview(settings.showTranscriptionPreview);
+    if (settings.parakeetStreamingBeta !== undefined)
+      s.setParakeetStreamingBeta(settings.parakeetStreamingBeta);
   },
 
   // Apply a transcription config to dictation, then mirror its cloud routing to
   // note recording and audio upload — used when onboarding picks one provider
-  // for everything (e.g. Corti for medical providers).
+  // for everything.
   setCloudTranscriptionForAllScopes: (settings: Partial<TranscriptionSettings>) => {
     const s = useSettingsStore.getState();
     s.updateTranscriptionSettings(settings);
@@ -1794,7 +1820,7 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
 
   // Apply a cleanup config to dictation, then mirror its cloud routing to the
   // other three LLM scopes — used when onboarding routes every reasoning scope to
-  // one provider so PHI never reaches a second LLM (e.g. Corti for medical providers).
+  // one provider so PHI never reaches a second LLM.
   setCloudReasoningForAllScopes: (settings: Partial<CleanupSettings>) => {
     const s = useSettingsStore.getState();
     // Derive the mode from the incoming patch (falling back to current state) so
@@ -1836,10 +1862,6 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
     if (keys.xaiApiKey !== undefined) s.setXaiApiKey(keys.xaiApiKey);
     if (keys.mistralApiKey !== undefined) s.setMistralApiKey(keys.mistralApiKey);
     if (keys.openrouterApiKey !== undefined) s.setOpenrouterApiKey(keys.openrouterApiKey);
-    if (keys.cortiClientId !== undefined) s.setCortiClientId(keys.cortiClientId);
-    if (keys.cortiClientSecret !== undefined) s.setCortiClientSecret(keys.cortiClientSecret);
-    if (keys.cortiApiKey !== undefined) s.setCortiApiKey(keys.cortiApiKey);
-    if (keys.tinfoilApiKey !== undefined) s.setTinfoilApiKey(keys.tinfoilApiKey);
     if (keys.customTranscriptionApiKey !== undefined)
       s.setCustomTranscriptionApiKey(keys.customTranscriptionApiKey);
     if (keys.cleanupCustomApiKey !== undefined) s.setCleanupCustomApiKey(keys.cleanupCustomApiKey);
@@ -1859,6 +1881,16 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
 // --- Selectors (derived state, not stored) ---
 
 export const selectIsCloudCleanupMode = (_state: SettingsState) => false;
+
+// The cleanup model actually in effect: local mode keeps it in localModel (cleanupModel
+// stays empty), every other mode uses cleanupModel. Use this everywhere the selected
+// cleanup model is read reactively so local mode isn't mistaken for "no model".
+export const selectEffectiveCleanupModel = (state: SettingsState) =>
+  selectIsCloudCleanupMode(state)
+    ? ""
+    : state.cleanupMode === "local"
+      ? state.localModel
+      : state.cleanupModel;
 
 export const selectEffectiveCleanupProvider = (state: SettingsState) => state.cleanupProvider;
 
@@ -2041,12 +2073,26 @@ export function getSettings() {
   return useSettingsStore.getState();
 }
 
+/**
+ * The user-configured sampling parameters applied to every local (llama.cpp)
+ * inference, regardless of which local model is selected. Read this at request
+ * build time so the values are always honored across streaming and
+ * non-streaming code paths.
+ */
+export function getLocalGenerationParams() {
+  const s = useSettingsStore.getState();
+  return {
+    temperature: s.localTemperature,
+    topP: s.localTopP,
+    topK: s.localTopK,
+    minP: s.localMinP,
+    repeatPenalty: s.localRepeatPenalty,
+    maxTokens: s.localMaxTokens,
+  };
+}
+
 export function getEffectiveCleanupModel() {
-  const state = useSettingsStore.getState();
-  if (selectIsCloudCleanupMode(state)) {
-    return "";
-  }
-  return state.cleanupMode === "local" ? state.localModel : state.cleanupModel;
+  return selectEffectiveCleanupModel(useSettingsStore.getState());
 }
 
 export function isCloudCleanupMode() {
@@ -2141,6 +2187,29 @@ export async function initializeSettings(): Promise<void> {
     } catch (err) {
       logger.warn(
         "Failed to hydrate secrets from main process",
+        { error: (err as Error).message },
+        "settings"
+      );
+    }
+
+    // Reflect the authoritative persisted "start minimized" flag. The main
+    // process reads START_MINIMIZED from its .env at launch to decide whether to
+    // open the control panel; the renderer's localStorage copy can drift from it
+    // (e.g. after a data reset or a stale .env), which left the toggle showing OFF
+    // while the app still launched to the tray only. Hydrate from the main process
+    // so the toggle mirrors real startup behavior and toggling it always persists.
+    try {
+      const envStartMinimized = await window.electronAPI.getStartMinimized?.();
+      if (
+        typeof envStartMinimized === "boolean" &&
+        envStartMinimized !== state.startMinimized
+      ) {
+        localStorage.setItem("startMinimized", String(envStartMinimized));
+        useSettingsStore.setState({ startMinimized: envStartMinimized });
+      }
+    } catch (err) {
+      logger.warn(
+        "Failed to sync start-minimized from main process",
         { error: (err as Error).message },
         "settings"
       );
@@ -2417,14 +2486,6 @@ export async function initializeSettings(): Promise<void> {
     }
 
     useSettingsStore.setState({ [key]: value });
-
-    if (key === "gcalAccounts" && Array.isArray(value)) {
-      const accounts = value as GoogleCalendarAccount[];
-      useSettingsStore.setState({
-        gcalConnected: accounts.length > 0,
-        gcalEmail: accounts[0]?.email ?? "",
-      });
-    }
 
     if (key === "uiLanguage" && typeof value === "string") {
       void i18n.changeLanguage(value);

@@ -279,7 +279,6 @@ function initializeCoreManagers() {
   diarizationManager = new DiarizationManager();
 
   meetingDetectionEngine = new MeetingDetectionEngine(
-    null,
     new MeetingProcessDetector(),
     new AudioActivityDetector(),
     windowManager,
@@ -338,6 +337,8 @@ function registerSidecars() {
   sidecarRegistry.register("llama", () => modelManager.stopServer());
   const onnxWorkerClient = require("./src/helpers/onnxWorkerClient");
   sidecarRegistry.register("onnx", () => onnxWorkerClient.stop());
+  const micMuteManager = require("./src/helpers/micMuteManager");
+  sidecarRegistry.register("mic-mute-helper", () => micMuteManager.stop());
 }
 
 // Phase 2: Non-critical setup after windows are visible
@@ -442,12 +443,15 @@ async function startApp() {
   const startMinimized = environmentManager.getStartMinimized() && !needsPostMigrationOnboarding;
   if (debugLogger) debugLogger.info("Start minimized", { enabled: startMinimized, needsPostMigrationOnboarding });
   await windowManager.createMainWindow();
-  if (startMinimized && windowManager.mainWindow && !windowManager.mainWindow.isDestroyed()) {
-    windowManager.mainWindow.minimize();
+  // "Start minimized" means: launch without the control panel window — the app
+  // lives in the tray plus the floating dictation panel. When it's off, open the
+  // control panel on launch. The floating dictation panel is always shown by
+  // createMainWindow(), independent of this setting.
+  if (!startMinimized) {
+    await windowManager.createControlPanelWindow();
   }
-  // Control panel and agent window are created on first use (lazy) to reduce startup RAM.
-  // All tray / hotkey / second-instance code paths already call createControlPanelWindow()
-  // and toggleAgentOverlay() handles lazy creation internally.
+  // The agent window is created on first use (lazy) to reduce startup RAM.
+  // toggleAgentOverlay() handles lazy creation internally.
 
   const agentHotkeyCallback = () => {
     if (hotkeyManager.isInListeningMode()) return;

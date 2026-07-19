@@ -123,9 +123,7 @@ export function useChatStreaming({
           "custom",
           "anthropic",
           "gemini",
-          "tinfoil",
           "openrouter",
-          "corti",
         ].includes(settings.chatAgentProvider);
       const localModelCanUseTool =
         isLocalProvider && estimateModelSizeB(settings.chatAgentModel) >= LOCAL_TOOL_MIN_PARAMS_B;
@@ -133,12 +131,11 @@ export function useChatStreaming({
 
       let registry: ToolRegistry | null = null;
       if (supportsTools) {
-        const cacheKey = `${settings.gcalConnected}-${settings.cloudBackupEnabled}`;
+        const cacheKey = `${settings.cloudBackupEnabled}`;
         if (toolRegistryRef.current?.key === cacheKey) {
           registry = toolRegistryRef.current.registry;
         } else {
           registry = createToolRegistry({
-            gcalConnected: settings.gcalConnected,
             cloudBackupEnabled: settings.cloudBackupEnabled,
           });
           toolRegistryRef.current = { key: cacheKey, registry };

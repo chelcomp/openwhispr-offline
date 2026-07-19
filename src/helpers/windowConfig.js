@@ -201,8 +201,18 @@ class WindowPositionUtil {
     const GAP = 8;
     const workArea = display.workArea || display.bounds;
 
-    let x = Math.round(mainWindowBounds.x + (mainWindowBounds.width - width) / 2);
-    let y = mainWindowBounds.y - height - GAP;
+    const spaceLeft = mainWindowBounds.x - workArea.x;
+    const spaceRight =
+      workArea.x + workArea.width - (mainWindowBounds.x + mainWindowBounds.width);
+
+    // Sit beside the floating icon, on whichever side has more room.
+    const side = spaceRight >= width + GAP || spaceRight >= spaceLeft ? "right" : "left";
+
+    let x =
+      side === "right"
+        ? mainWindowBounds.x + mainWindowBounds.width + GAP
+        : mainWindowBounds.x - width - GAP;
+    let y = mainWindowBounds.y + mainWindowBounds.height - height;
 
     x = Math.max(workArea.x, Math.min(x, workArea.x + workArea.width - width));
     y = Math.max(workArea.y, Math.min(y, workArea.y + workArea.height - height));

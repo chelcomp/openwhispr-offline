@@ -5,6 +5,10 @@ import { getDictionaryHintWords } from "../utils/snippets";
 export interface ReasoningConfig {
   maxTokens?: number;
   temperature?: number;
+  topP?: number;
+  topK?: number;
+  minP?: number;
+  repeatPenalty?: number;
   contextSize?: number;
   systemPrompt?: string;
   lanUrl?: string;

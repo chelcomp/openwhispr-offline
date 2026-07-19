@@ -44,6 +44,8 @@ const registerListener = (channel, handlerFactory) => {
 contextBridge.exposeInMainWorld("electronAPI", {
   pasteText: (text, options) => ipcRenderer.invoke("paste-text", text, options),
   setMicMuted: (muted) => ipcRenderer.invoke("set-mic-muted", muted),
+  getMicMuted: () => ipcRenderer.invoke("get-mic-muted"),
+  warmupMicMuteHelper: () => ipcRenderer.invoke("warmup-mic-mute-helper"),
   hideWindow: () => ipcRenderer.invoke("hide-window"),
   showDictationPanel: () => ipcRenderer.invoke("show-dictation-panel"),
   onToggleDictation: registerListener("toggle-dictation", (callback) => () => callback()),
@@ -485,6 +487,15 @@ contextBridge.exposeInMainWorld("electronAPI", {
     (callback) => (_event, data) => callback(data)
   ),
 
+  getLlamaCudaStatus: () => ipcRenderer.invoke("get-llama-cuda-status"),
+  downloadLlamaCudaBinary: () => ipcRenderer.invoke("download-llama-cuda-binary"),
+  cancelLlamaCudaDownload: () => ipcRenderer.invoke("cancel-llama-cuda-download"),
+  deleteLlamaCudaBinary: () => ipcRenderer.invoke("delete-llama-cuda-binary"),
+  onLlamaCudaDownloadProgress: registerListener(
+    "llama-cuda-download-progress",
+    (callback) => (_event, data) => callback(data)
+  ),
+
   getLogLevel: () => ipcRenderer.invoke("get-log-level"),
   log: (entry) => ipcRenderer.invoke("app-log", entry),
 
@@ -632,6 +643,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
 
   // Start minimized
   notifyStartMinimizedChanged: (enabled) => ipcRenderer.send("start-minimized-changed", enabled),
+  getStartMinimized: () => ipcRenderer.invoke("get-start-minimized"),
 
   // Open control panel window from renderer
   openControlPanel: () => ipcRenderer.send("open-control-panel"),
@@ -671,11 +683,16 @@ contextBridge.exposeInMainWorld("electronAPI", {
     "preview-result",
     (callback) => (_event, payload) => callback(payload)
   ),
+  onPreviewCleanupUpdate: registerListener(
+    "preview-cleanup-update",
+    (callback) => (_event, text) => callback(text)
+  ),
   onPreviewHide: registerListener("preview-hide", (callback) => () => callback()),
   startDictationPreview: (opts) => ipcRenderer.invoke("start-dictation-preview", opts),
   stopDictationPreview: (opts) => ipcRenderer.invoke("stop-dictation-preview", opts),
   dismissDictationPreview: () => ipcRenderer.invoke("dismiss-dictation-preview"),
   completeDictationPreview: (payload) => ipcRenderer.invoke("complete-dictation-preview", payload),
+  updateCleanupPreview: (text) => ipcRenderer.invoke("update-cleanup-preview", { text }),
   hideDictationPreview: () => ipcRenderer.invoke("hide-dictation-preview"),
   resizeTranscriptionPreviewWindow: (width, height) =>
     ipcRenderer.invoke("resize-transcription-preview-window", width, height),

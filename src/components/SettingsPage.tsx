@@ -29,7 +29,6 @@ import {
   Upload,
   Download,
 } from "lucide-react";
-import { useAuth } from "../hooks/useAuth";
 import { signOut } from "../lib/auth";
 import MicPermissionWarning from "./ui/MicPermissionWarning";
 import MicrophoneSettings from "./ui/MicrophoneSettings";
@@ -125,8 +124,6 @@ const UI_LANGUAGE_OPTIONS: import("./ui/LanguageSelector").LanguageOption[] = [
 const noop = () => {};
 
 interface TranscriptionSectionProps {
-  isSignedIn: boolean;
-  startOnboarding: () => void;
   cloudTranscriptionMode: string;
   setCloudTranscriptionMode: (mode: string) => void;
   useLocalWhisper: boolean;
@@ -152,6 +149,8 @@ interface TranscriptionSectionProps {
   setRemoteTranscriptionModel: (model: string) => void;
   showTranscriptionPreview: boolean;
   setShowTranscriptionPreview: (value: boolean) => void;
+  parakeetStreamingBeta: boolean;
+  setParakeetStreamingBeta: (value: boolean) => void;
   toast: (opts: {
     title: string;
     description: string;
@@ -161,8 +160,6 @@ interface TranscriptionSectionProps {
 }
 
 function TranscriptionSection({
-  isSignedIn,
-  startOnboarding,
   cloudTranscriptionMode,
   setCloudTranscriptionMode,
   useLocalWhisper,
@@ -188,6 +185,8 @@ function TranscriptionSection({
   setRemoteTranscriptionModel,
   showTranscriptionPreview,
   setShowTranscriptionPreview,
+  parakeetStreamingBeta,
+  setParakeetStreamingBeta,
   toast,
 }: TranscriptionSectionProps) {
   const { t } = useTranslation();
@@ -199,6 +198,24 @@ function TranscriptionSection({
         ? PARAKEET_MODEL_INFO[selectedLocalTranscriptionModelId]?.name
         : WHISPER_MODEL_INFO[selectedLocalTranscriptionModelId]?.name) ?? selectedLocalTranscriptionModelId
     : undefined;
+
+  const selectedParakeetModelSupportsStreaming =
+    PARAKEET_MODEL_INFO[parakeetModel]?.runtime === "online";
+
+  useEffect(() => {
+    if (
+      localTranscriptionProvider === "nvidia" &&
+      parakeetStreamingBeta &&
+      !selectedParakeetModelSupportsStreaming
+    ) {
+      setParakeetStreamingBeta(false);
+    }
+  }, [
+    localTranscriptionProvider,
+    parakeetStreamingBeta,
+    selectedParakeetModelSupportsStreaming,
+    setParakeetStreamingBeta,
+  ]);
 
   const transcriptionModes: InferenceModeOption[] = [
     {
@@ -266,6 +283,20 @@ function TranscriptionSection({
     </SettingsPanel>
   );
 
+  const renderParakeetStreamingToggle = () => (
+    <SettingsPanel>
+      <SettingsPanelRow>
+        <SettingsRow
+          label={t("settingsPage.transcription.parakeetStreamingBeta")}
+          description={t("settingsPage.transcription.parakeetStreamingBetaDescription")}
+          badge={t("common.beta")}
+        >
+          <Toggle checked={parakeetStreamingBeta} onChange={setParakeetStreamingBeta} />
+        </SettingsRow>
+      </SettingsPanelRow>
+    </SettingsPanel>
+  );
+
   const renderTranscriptionPicker = (mode?: "cloud" | "local") => (
     <TranscriptionModelPicker
       selectedCloudProvider={cloudTranscriptionProvider}
@@ -305,6 +336,9 @@ function TranscriptionSection({
       {transcriptionMode === "local" && (
         <>
           {renderTranscriptionPicker("local")}
+          {localTranscriptionProvider === "nvidia" &&
+            selectedParakeetModelSupportsStreaming &&
+            renderParakeetStreamingToggle()}
           {renderPreviewToggle()}
         </>
       )}
@@ -678,6 +712,8 @@ export default function SettingsPage({
     setPauseMediaOnDictation,
     showTranscriptionPreview,
     setShowTranscriptionPreview,
+    parakeetStreamingBeta,
+    setParakeetStreamingBeta,
     autoPasteEnabled,
     setAutoPasteEnabled,
     keepTranscriptionInClipboard,
@@ -724,6 +760,7 @@ export default function SettingsPage({
 
   const voiceAgentKey = useSettingsStore((s) => s.voiceAgentKey);
   const setVoiceAgentKey = useSettingsStore((s) => s.setVoiceAgentKey);
+  const resetWhisperVad = useSettingsStore((s) => s.resetWhisperVad);
 
   const { t, i18n } = useTranslation();
   const { toast } = useToast();
@@ -746,12 +783,19 @@ export default function SettingsPage({
 
   useEffect(() => {
     if (activeSection !== "privacyData") return;
-    window.electronAPI
-      ?.getAudioStorageUsage?.()
-      .then((usage: { fileCount: number; totalBytes: number }) => {
-        if (usage) setAudioStorageUsage(usage);
-      })
-      .catch(() => {});
+    const refreshAudioStorageUsage = () => {
+      window.electronAPI
+        ?.getAudioStorageUsage?.()
+        .then((usage: { fileCount: number; totalBytes: number }) => {
+          if (usage) setAudioStorageUsage(usage);
+        })
+        .catch(() => {});
+    };
+    refreshAudioStorageUsage();
+    // Re-fetch whenever a recording finishes saving its audio, so the count
+    // doesn't stay stale if this section is already open while dictating.
+    const dispose = window.electronAPI?.onTranscriptionUpdated?.(refreshAudioStorageUsage);
+    return () => dispose?.();
   }, [activeSection]);
 
   // Lazy keep-alive: mount AI sections only after the user has visited them once,
@@ -1172,14 +1216,6 @@ export default function SettingsPage({
     });
   }, [isRestoringBackup, showConfirmDialog, showAlertDialog, t]);
 
-  const { isSignedIn } = useAuth();
-  const startOnboarding = useCallback(() => {
-    localStorage.setItem("pendingCloudMigration", "true");
-    localStorage.setItem("onboardingCurrentStep", "0");
-    localStorage.removeItem("onboardingCompleted");
-    window.location.reload();
-  }, []);
-
   const renderWhisperVadSettings = () => (
     <div>
       <SectionHeader
@@ -1305,6 +1341,14 @@ export default function SettingsPage({
                 onChange={(e) => setWhisperVadSamplesOverlap(Number(e.target.value))}
               />
             </div>
+          </div>
+        </SettingsPanelRow>
+        <SettingsPanelRow>
+          <div className="flex justify-end w-full">
+            <Button variant="ghost" size="sm" onClick={resetWhisperVad}>
+              <RotateCw className="mr-1.5 h-3.5 w-3.5" />
+              {t("settingsPage.transcription.vad.resetDefaults")}
+            </Button>
           </div>
         </SettingsPanelRow>
       </SettingsPanel>
@@ -2653,8 +2697,6 @@ EOF`,
             renderDictation={() => (
               <div className="space-y-6">
                 <TranscriptionSection
-                  isSignedIn={isSignedIn ?? false}
-                  startOnboarding={startOnboarding}
                   cloudTranscriptionMode={cloudTranscriptionMode}
                   setCloudTranscriptionMode={setCloudTranscriptionMode}
                   useLocalWhisper={useLocalWhisper}
@@ -2680,6 +2722,8 @@ EOF`,
                   setRemoteTranscriptionModel={setRemoteTranscriptionModel}
                   showTranscriptionPreview={showTranscriptionPreview}
                   setShowTranscriptionPreview={setShowTranscriptionPreview}
+                  parakeetStreamingBeta={parakeetStreamingBeta}
+                  setParakeetStreamingBeta={setParakeetStreamingBeta}
                   toast={toast}
                 />
                 {transcriptionMode === "local" &&

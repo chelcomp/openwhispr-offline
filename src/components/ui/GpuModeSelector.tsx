@@ -39,13 +39,19 @@ export function GpuModeSelector({ type }: GpuModeSelectorProps) {
     return () => cleanup?.();
   }, [type]);
 
-  // Listen for Vulkan download progress
+  // Listen for llama GPU download progress (Vulkan for Intel, CUDA for NVIDIA)
   useEffect(() => {
     if (type !== "llama") return;
-    const cleanup = window.electronAPI?.onLlamaVulkanDownloadProgress?.((data) => {
+    const cleanupVulkan = window.electronAPI?.onLlamaVulkanDownloadProgress?.((data) => {
       setDownloadPct(data.percentage ?? 0);
     });
-    return () => cleanup?.();
+    const cleanupCuda = window.electronAPI?.onLlamaCudaDownloadProgress?.((data) => {
+      setDownloadPct(data.percentage ?? 0);
+    });
+    return () => {
+      cleanupVulkan?.();
+      cleanupCuda?.();
+    };
   }, [type]);
 
   if (platform === "darwin") return null;
@@ -75,14 +81,14 @@ export function GpuModeSelector({ type }: GpuModeSelectorProps) {
     options.push({ id: "gpu-nvidia", label: "GPU NVIDIA", available: !!info?.hasNvidia });
   }
 
-  // Determine if current GPU selection needs a binary download
+  // Determine if current GPU selection needs a binary download.
+  // NVIDIA uses CUDA (whisper + llama); Intel (llama only) uses Vulkan.
   const needsCudaDownload =
-    type === "whisper" && currentMode === "gpu-nvidia" && info !== null && !info.cudaReady;
-  const needsVulkanDownload =
-    type === "llama" &&
-    (currentMode === "gpu-nvidia" || currentMode === "gpu-intel") &&
+    currentMode === "gpu-nvidia" &&
     info !== null &&
-    !info.vulkanReady;
+    (type === "whisper" ? !info.cudaReady : !info.llamaCudaReady);
+  const needsVulkanDownload =
+    type === "llama" && currentMode === "gpu-intel" && info !== null && !info.vulkanReady;
 
   const handleSelect = async (mode: GpuMode) => {
     if (type === "whisper") {
@@ -98,7 +104,10 @@ export function GpuModeSelector({ type }: GpuModeSelectorProps) {
     setDownloadError(null);
     setDownloadPct(0);
     try {
-      const result = await window.electronAPI?.downloadCudaWhisperBinary?.();
+      const result =
+        type === "whisper"
+          ? await window.electronAPI?.downloadCudaWhisperBinary?.()
+          : await window.electronAPI?.downloadLlamaCudaBinary?.();
       if (result?.success) {
         await fetchInfo();
       } else {
@@ -132,6 +141,8 @@ export function GpuModeSelector({ type }: GpuModeSelectorProps) {
   const handleCancelDownload = async () => {
     if (type === "whisper") {
       await window.electronAPI?.cancelCudaWhisperDownload?.();
+    } else if (currentMode === "gpu-nvidia") {
+      await window.electronAPI?.cancelLlamaCudaDownload?.();
     } else {
       await window.electronAPI?.cancelLlamaVulkanDownload?.();
     }
@@ -200,7 +211,11 @@ export function GpuModeSelector({ type }: GpuModeSelectorProps) {
       {downloading && (
         <div className="space-y-1">
           <DownloadProgressBar
-            modelName={type === "whisper" ? t("gpu.cudaBinaryName") : t("gpu.vulkanBinaryName")}
+            modelName={
+              type === "whisper" || currentMode === "gpu-nvidia"
+                ? t("gpu.cudaBinaryName")
+                : t("gpu.vulkanBinaryName")
+            }
             progress={{ downloadedBytes: 0, totalBytes: 0, percentage: downloadPct }}
           />
           <div className="flex justify-end">

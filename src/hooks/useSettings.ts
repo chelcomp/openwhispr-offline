@@ -27,6 +27,7 @@ export interface TranscriptionSettings {
   snippets: Snippet[];
   assemblyAiStreaming: boolean;
   showTranscriptionPreview: boolean;
+  parakeetStreamingBeta: boolean;
 }
 
 export interface CleanupSettings {
@@ -73,10 +74,6 @@ export interface ApiKeySettings {
   xaiApiKey: string;
   mistralApiKey: string;
   openrouterApiKey: string;
-  cortiClientId: string;
-  cortiClientSecret: string;
-  cortiApiKey: string;
-  tinfoilApiKey: string;
   customTranscriptionApiKey: string;
   cleanupCustomApiKey: string;
 }
@@ -177,9 +174,11 @@ function useSettingsInternal() {
     localTranscriptionProvider,
     whisperModel,
     parakeetModel,
-    cleanupProvider,
-    cleanupModel,
-    dictationAgentProvider,
+    useCleanupModel,
+    cleanupMode,
+    localModel,
+    useDictationAgent,
+    dictationAgentMode,
     dictationAgentModel,
   } = store;
 
@@ -187,15 +186,27 @@ function useSettingsInternal() {
     if (typeof window === "undefined" || !window.electronAPI?.syncStartupPreferences) return;
 
     const model = localTranscriptionProvider === "nvidia" ? parakeetModel : whisperModel;
+    // Local cleanup uses the shared Local Model (localModel); cleanupModel stays empty and
+    // the resolved provider is the model family (e.g. "qwen"), never "local" — so key the
+    // local-cleanup pre-warm off cleanupMode, not the provider. Mirrors getEffectiveCleanupModel().
+    // useCleanupModel gates all of it: when "Enable Text Cleanup" is off, no cleanup model should
+    // ever be pre-warmed or kept loaded, regardless of the last-selected mode/model.
     window.electronAPI
       .syncStartupPreferences({
         useLocalWhisper,
         localTranscriptionProvider,
         model: model || undefined,
-        cleanupProvider,
-        cleanupModel: cleanupProvider === "local" ? cleanupModel : undefined,
-        dictationAgentProvider,
-        dictationAgentModel: dictationAgentProvider === "local" ? dictationAgentModel : undefined,
+        useCleanupModel,
+        cleanupMode,
+        cleanupModel:
+          useCleanupModel && cleanupMode === "local" ? localModel || undefined : undefined,
+        useDictationAgent,
+        dictationAgentMode,
+        // Local dictation agent also uses the shared Local Model (dictationAgentModel stays
+        // empty); gate on the mode, same as cleanup above. useDictationAgent (the agent's own
+        // enable toggle) gates it too: a disabled agent must never pre-warm or keep a model loaded.
+        dictationAgentModel:
+          useDictationAgent && dictationAgentMode === "local" ? localModel || undefined : undefined,
       })
       .catch((err) =>
         logger.warn(
@@ -209,9 +220,11 @@ function useSettingsInternal() {
     localTranscriptionProvider,
     whisperModel,
     parakeetModel,
-    cleanupProvider,
-    cleanupModel,
-    dictationAgentProvider,
+    useCleanupModel,
+    cleanupMode,
+    localModel,
+    useDictationAgent,
+    dictationAgentMode,
     dictationAgentModel,
   ]);
 
@@ -257,7 +270,6 @@ function useSettingsInternal() {
     xaiApiKey: store.xaiApiKey,
     mistralApiKey: store.mistralApiKey,
     openrouterApiKey: store.openrouterApiKey,
-    tinfoilApiKey: store.tinfoilApiKey,
     dictationKey: store.dictationKey,
     meetingKey: store.meetingKey,
     voiceAgentKey: store.voiceAgentKey,
@@ -341,6 +353,8 @@ function useSettingsInternal() {
     setAutoLearnCorrections,
     showTranscriptionPreview: store.showTranscriptionPreview,
     setShowTranscriptionPreview: store.setShowTranscriptionPreview,
+    parakeetStreamingBeta: store.parakeetStreamingBeta,
+    setParakeetStreamingBeta: store.setParakeetStreamingBeta,
     autoPasteEnabled: store.autoPasteEnabled,
     setAutoPasteEnabled: store.setAutoPasteEnabled,
     keepTranscriptionInClipboard: store.keepTranscriptionInClipboard,

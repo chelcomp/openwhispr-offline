@@ -4,6 +4,7 @@ const fs = require("fs");
 const os = require("os");
 const crypto = require("crypto");
 const debugLogger = require("./debugLogger");
+const { filterFillerWords } = require("./fillerWordFilter");
 const { BYOK_API_KEYS } = require("../config/secretKeys");
 const { classifyAndLog } = require("./networkErrors");
 const GnomeShortcutManager = require("./gnomeShortcut");
@@ -12,9 +13,6 @@ const { i18nMain, changeLanguage } = require("./i18nMain");
 const AudioStorageManager = require("./audioStorage");
 const OpenAIRealtimeStreaming = require("./openaiRealtimeStreaming");
 const micMuteManager = require("./micMuteManager");
-
-// Tinfoil's only realtime STT model — fallback when the renderer omits one.
-const TINFOIL_REALTIME_MODEL = "voxtral-mini-4b-realtime";
 const liveSpeakerIdentifier = require("./liveSpeakerIdentifier");
 const MeetingEchoLeakDetector = require("./meetingEchoLeakDetector");
 const { partitionPendingMicFinals, isWithinRetractWindow } = require("./meetingMicHoldback");
@@ -43,6 +41,7 @@ const {
   sanitizeWhisperVadConfig,
   resolveContextSileroEnabled,
 } = require("./whisperVadConfig");
+const { createWhisperVadStreamingSession } = require("./whisperStreamingSession");
 
 /**
  * Plain-JS snippet expansion for use in the main process.
@@ -599,12 +598,7 @@ class IPCHandlers {
       return [];
     }
     if (!Array.isArray(participants) || participants.length === 0) return [];
-    const googleEmails = new Set(
-      this.databaseManager.getGoogleAccounts().map((a) => a.email.toLowerCase())
-    );
-    return participants.filter(
-      (p) => p && p.self !== true && !googleEmails.has((p.email || "").toLowerCase())
-    );
+    return participants.filter((p) => p && p.self !== true);
   }
 
   _getNoteNonSelfParticipants(noteId) {
@@ -1910,6 +1904,15 @@ class IPCHandlers {
       try {
         const audioBuffer = fs.readFileSync(filePath);
         if (options.provider === "nvidia") {
+          if (options.diarize && this.diarizationManager?.isAvailable()) {
+            const speakerLabelPrefix =
+              this.environmentManager.getUiLanguage() === "pt" ? "Falante" : "Speaker";
+            return await this.parakeetManager.transcribeLocalParakeetWithDiarization(
+              audioBuffer,
+              { ...options, speakerLabelPrefix },
+              this.diarizationManager
+            );
+          }
           const result = await this.parakeetManager.transcribeLocalParakeet(audioBuffer, options);
           return result;
         }
@@ -2022,6 +2025,15 @@ class IPCHandlers {
 
     ipcMain.handle("set-mic-muted", async (_event, muted) => {
       return micMuteManager.setMuted(!!muted);
+    });
+
+    ipcMain.handle("get-mic-muted", async () => {
+      return micMuteManager.getMuted();
+    });
+
+    ipcMain.handle("warmup-mic-mute-helper", async () => {
+      await micMuteManager.warmUp();
+      return { success: true };
     });
 
     ipcMain.handle("get-last-target-app-name", () => {
@@ -2355,11 +2367,23 @@ class IPCHandlers {
         const vulkanStatus = this._llamaVulkanManager.getStatus();
         const vulkanReady = !!vulkanStatus.downloaded;
 
+        if (!this._llamaCudaManager) {
+          const LlamaCudaManager = require("./llamaCudaManager");
+          this._llamaCudaManager = new LlamaCudaManager();
+        }
+        const llamaCudaReady = !!this._llamaCudaManager.isDownloaded();
+
         const whisperMode = process.env.WHISPER_GPU_MODE || "auto";
         const llamaMode = process.env.LLAMA_GPU_MODE || "auto";
 
         const resolvedWhisper = resolveWhisperGpuMode({ mode: whisperMode, hasNvidia, cudaReady });
-        const resolvedLlama = resolveLlamaGpuMode({ mode: llamaMode, hasNvidia, hasIntel, vulkanReady });
+        const resolvedLlama = resolveLlamaGpuMode({
+          mode: llamaMode,
+          hasNvidia,
+          hasIntel,
+          vulkanReady,
+          cudaReady: llamaCudaReady,
+        });
 
         return {
           whisperMode,
@@ -2372,6 +2396,7 @@ class IPCHandlers {
           hasIntel,
           cudaReady,
           vulkanReady,
+          llamaCudaReady,
           nvidiaName: nvidiaInfo.gpuName || null,
           intelName: intelInfo.gpuName || null,
         };
@@ -2388,6 +2413,7 @@ class IPCHandlers {
           hasIntel: false,
           cudaReady: false,
           vulkanReady: false,
+          llamaCudaReady: false,
           nvidiaName: null,
           intelName: null,
         };
@@ -2418,7 +2444,6 @@ class IPCHandlers {
       await this.environmentManager.saveAllKeysToEnvFile().catch(() => {});
 
       const modelManager = require("./modelManagerBridge").default;
-      modelManager.serverManager.cachedServerBinaryPaths = null;
       await modelManager.stopServer().catch(() => {});
       return { success: true };
     });
@@ -2678,7 +2703,12 @@ class IPCHandlers {
       const gpuInfo = await detectNvidiaGpu();
       const ws = this.parakeetManager?.serverManager?.wsServer;
       return {
-        cudaAvailable: ws ? ws.isCudaBinaryAvailable() : false,
+        // Not model-specific: true if CUDA is available for either runtime.
+        // Missing per-model CUDA binaries fall back to CPU transparently
+        // (see ParakeetWsServer.getWsBinaryPath).
+        cudaAvailable: ws
+          ? ws.isCudaBinaryAvailable("offline") || ws.isCudaBinaryAvailable("online")
+          : false,
         cudaEnabled: process.env.SHERPA_ONNX_CUDA_ENABLED === "true",
         gpuInfo,
       };
@@ -2686,7 +2716,7 @@ class IPCHandlers {
 
     ipcMain.handle("enable-cuda-parakeet", async () => {
       const ws = this.parakeetManager?.serverManager?.wsServer;
-      if (!ws?.isCudaBinaryAvailable()) {
+      if (!ws?.isCudaBinaryAvailable("offline") && !ws?.isCudaBinaryAvailable("online")) {
         return {
           success: false,
           error: "CUDA binary not found. Run: npm run download:sherpa-onnx:cuda",
@@ -3561,6 +3591,13 @@ class IPCHandlers {
       return this.environmentManager.saveActivationMode(mode);
     });
 
+    // The renderer's localStorage copy of this flag can drift from the value the
+    // main process actually reads at launch; expose the authoritative value so the
+    // settings toggle can hydrate from it and reflect real startup behavior.
+    ipcMain.handle("get-start-minimized", async () => {
+      return this.environmentManager.getStartMinimized();
+    });
+
     ipcMain.handle("get-ui-language", async () => {
       return this.environmentManager.getUiLanguage();
     });
@@ -3624,13 +3661,20 @@ class IPCHandlers {
         });
       }
 
-      // TODO: drop legacy REASONING_PROVIDER / LOCAL_REASONING_MODEL clears once
-      // the read fallback is removed (~2 releases after this lands).
-      if (prefs.cleanupProvider === "local" && prefs.cleanupModel) {
+      // Local cleanup mode keeps its model in the shared localModel (the renderer sends it as
+      // prefs.cleanupModel); its resolved provider is the model family, never "local", so gate on
+      // the mode. TODO: drop legacy REASONING_PROVIDER / LOCAL_REASONING_MODEL clears once the
+      // read fallback is removed (~2 releases after this lands).
+      // useCleanupModel (the "Enable Text Cleanup" toggle) gates all of it: disabling it must
+      // clear the pre-warm vars and stop the llama-server below, even if cleanupMode is still
+      // "local" from before — the model should never sit loaded in memory while cleanup is off.
+      const cleanupUsesLocal =
+        !!prefs.useCleanupModel && prefs.cleanupMode === "local" && !!prefs.cleanupModel;
+      if (cleanupUsesLocal) {
         setVars.CLEANUP_PROVIDER = "local";
         setVars.LOCAL_CLEANUP_MODEL = prefs.cleanupModel;
         clearVars.push("REASONING_PROVIDER", "LOCAL_REASONING_MODEL");
-      } else if (prefs.cleanupProvider && prefs.cleanupProvider !== "local") {
+      } else if (!prefs.useCleanupModel || (prefs.cleanupMode && prefs.cleanupMode !== "local")) {
         clearVars.push(
           "CLEANUP_PROVIDER",
           "LOCAL_CLEANUP_MODEL",
@@ -3639,26 +3683,28 @@ class IPCHandlers {
         );
       }
 
+      // Same as cleanup: local dictation agent resolves to the shared localModel (the renderer
+      // sends it as prefs.dictationAgentModel) and its provider is the model family, so gate on mode.
+      // useDictationAgent (the agent's own enable toggle) gates all of it too: a disabled agent must
+      // clear the pre-warm vars and let the llama-server stop below, even if dictationAgentMode is
+      // still "local" from before — the model should never sit loaded in memory while the agent is off.
       const dictationAgentLocal =
-        prefs.dictationAgentProvider === "local" && prefs.dictationAgentModel;
+        !!prefs.useDictationAgent && prefs.dictationAgentMode === "local" && !!prefs.dictationAgentModel;
       if (dictationAgentLocal) {
         setVars.DICTATION_AGENT_PROVIDER = "local";
         setVars.LOCAL_DICTATION_AGENT_MODEL = prefs.dictationAgentModel;
-      } else if (prefs.dictationAgentProvider && prefs.dictationAgentProvider !== "local") {
+      } else if (!prefs.useDictationAgent || (prefs.dictationAgentMode && prefs.dictationAgentMode !== "local")) {
         clearVars.push("DICTATION_AGENT_PROVIDER", "LOCAL_DICTATION_AGENT_MODEL");
       }
 
       // Stop the local llama-server only when neither cleanup nor dictation-agent
       // still need a local model. Otherwise the still-active scope would lose
-      // its server on the next provider switch of the other scope.
-      const cleanupNeedsLocal = setVars.CLEANUP_PROVIDER === "local";
+      // its server on the next provider switch of the other scope. This also covers
+      // "Enable Text Cleanup" being turned off outright (cleanupUsesLocal false even
+      // though cleanupMode is still "local") — the model must not stay loaded while
+      // cleanup itself is disabled.
       const dictationAgentNeedsLocal = setVars.DICTATION_AGENT_PROVIDER === "local";
-      if (
-        prefs.cleanupProvider &&
-        prefs.cleanupProvider !== "local" &&
-        !cleanupNeedsLocal &&
-        !dictationAgentNeedsLocal
-      ) {
+      if (!cleanupUsesLocal && !dictationAgentNeedsLocal) {
         const modelManager = require("./modelManagerBridge").default;
         modelManager.stopServer().catch((err) => {
           debugLogger.error("Failed to stop llama-server on provider switch", {
@@ -3829,7 +3875,6 @@ class IPCHandlers {
         if (result.success) {
           process.env.LLAMA_VULKAN_ENABLED = "true";
           delete process.env.LLAMA_GPU_BACKEND;
-          modelManager.serverManager.cachedServerBinaryPaths = null;
           await this.environmentManager.saveAllKeysToEnvFile().catch(() => {});
           // Stop server so next inference picks up the new Vulkan binary
           await modelManager.stopServer().catch(() => {});
@@ -3868,7 +3913,88 @@ class IPCHandlers {
 
         delete process.env.LLAMA_VULKAN_ENABLED;
         delete process.env.LLAMA_GPU_BACKEND;
-        modelManager.serverManager.cachedServerBinaryPaths = null;
+        this.environmentManager.saveAllKeysToEnvFile().catch(() => {});
+
+        return result;
+      } catch (error) {
+        return { success: false, error: error.message };
+      }
+    });
+
+    ipcMain.handle("get-llama-cuda-status", async () => {
+      try {
+        if (!this._llamaCudaManager) {
+          const LlamaCudaManager = require("./llamaCudaManager");
+          this._llamaCudaManager = new LlamaCudaManager();
+        }
+        return this._llamaCudaManager.getStatus();
+      } catch (error) {
+        return { supported: false, downloaded: false, error: error.message };
+      }
+    });
+
+    ipcMain.handle("download-llama-cuda-binary", async (event) => {
+      try {
+        if (!this._llamaCudaManager) {
+          const LlamaCudaManager = require("./llamaCudaManager");
+          this._llamaCudaManager = new LlamaCudaManager();
+        }
+
+        // Stop the CUDA server before downloading to release file locks on DLLs (Windows EBUSY)
+        const modelManager = require("./modelManagerBridge").default;
+        if (modelManager.serverManager.activeBackend === "cuda") {
+          await modelManager.stopServer().catch((err) => {
+            debugLogger.warn("Failed to stop CUDA server before download", { error: err.message });
+          });
+        }
+
+        const result = await this._llamaCudaManager.download((downloaded, total) => {
+          if (!event.sender.isDestroyed()) {
+            event.sender.send("llama-cuda-download-progress", {
+              downloaded,
+              total,
+              percentage: total > 0 ? Math.round((downloaded / total) * 100) : 0,
+            });
+          }
+        });
+
+        if (result.success) {
+          await this.environmentManager.saveAllKeysToEnvFile().catch(() => {});
+          // Stop server so next inference picks up the new CUDA binary
+          await modelManager.stopServer().catch(() => {});
+        }
+
+        return result;
+      } catch (error) {
+        debugLogger.error("CUDA llama binary download failed", {
+          error: error.message,
+          stack: error.stack,
+        });
+        return { success: false, error: error.message };
+      }
+    });
+
+    ipcMain.handle("cancel-llama-cuda-download", async () => {
+      if (this._llamaCudaManager) {
+        return { success: this._llamaCudaManager.cancelDownload() };
+      }
+      return { success: false };
+    });
+
+    ipcMain.handle("delete-llama-cuda-binary", async () => {
+      try {
+        if (!this._llamaCudaManager) {
+          const LlamaCudaManager = require("./llamaCudaManager");
+          this._llamaCudaManager = new LlamaCudaManager();
+        }
+
+        const modelManager = require("./modelManagerBridge").default;
+        if (modelManager.serverManager.activeBackend === "cuda") {
+          await modelManager.stopServer();
+        }
+
+        const result = await this._llamaCudaManager.deleteBinary();
+
         this.environmentManager.saveAllKeysToEnvFile().catch(() => {});
 
         return result;
@@ -6155,6 +6281,25 @@ class IPCHandlers {
     // ── Local dictation preview (whisper.cpp / parakeet) ─────────────────────
     // Max audio retained for whisper re-transcription: 29s (whisper's hard limit is 30s)
     const MAX_PREVIEW_ACCUM_BYTES = 29 * 16000 * 2; // 29s × 16 kHz × 2 bytes (Int16)
+    // Parakeet (offline/non-streaming) re-transcribes this same growing buffer every
+    // preview cycle, but unlike whisper it shares a single sherpa-onnx server process
+    // with the real end-of-dictation transcription. A 29s buffer crosses parakeetServer's
+    // 15s single-segment limit and forces multi-round-trip decoding, which competes for
+    // the same server right when the user stops talking. Keep it under 15s so preview
+    // cycles stay cheap and don't delay the real transcription.
+    const MAX_PARAKEET_PREVIEW_ACCUM_BYTES = 14 * 16000 * 2; // 14s × 16 kHz × 2 bytes (Int16)
+    // Whisper streaming fast-path: if more than this fraction of committed audio
+    // stayed low confidence, discard the streamed transcript and re-transcribe the
+    // whole clip offline with full context instead.
+    const MAX_STREAM_LOW_QUALITY_RATIO = 0.5;
+    // Second, independent gate: lowQualityRatio only scores what the VAD actually
+    // committed. If the VAD missed most of the recording (never triggered, or
+    // flushed segments too quiet to clear minSegmentRms) but transcribed the one
+    // sliver it did catch with perfect confidence, lowQualityRatio reads as 0 even
+    // though most of what the user said never reached whisper at all. Requiring a
+    // minimum fraction of the session's total audio to have been committed catches
+    // that under-coverage case and falls back to the authoritative offline pass.
+    const MIN_STREAM_COVERAGE_RATIO = 0.4;
 
     let dictationPreviewMode = false;
     let dictationPreviewBuffer = [];     // Nvidia startup temp buffer only
@@ -6170,6 +6315,12 @@ class IPCHandlers {
     let dictationPreviewInitialPrompt = null;
     let dictationPreviewSessionActive = false;
     let dictationPreviewChunkCount = 0;
+    // Whisper VAD endpoint-commit streaming (option 2). Replaces the fixed-timer
+    // "re-transcribe the whole clip" preview: commits stable text per utterance
+    // and re-transcribes only the open utterance for volatile partials.
+    let dictationPreviewWhisperSession = null;
+    let dictationPreviewCommitted = "";
+    let dictationPreviewPartial = "";
 
     const resetDictationPreviewState = ({ preserveSession = false } = {}) => {
       dictationPreviewGen++;
@@ -6181,6 +6332,12 @@ class IPCHandlers {
         dictationPreviewStream.abort();
         dictationPreviewStream = null;
       }
+      if (dictationPreviewWhisperSession) {
+        dictationPreviewWhisperSession.abort();
+        dictationPreviewWhisperSession = null;
+      }
+      dictationPreviewCommitted = "";
+      dictationPreviewPartial = "";
       dictationPreviewMode = false;
       if (!preserveSession) dictationPreviewSessionActive = false;
       dictationPreviewBuffer = [];
@@ -6198,9 +6355,9 @@ class IPCHandlers {
       if (!dictationPreviewAccumBuffer.length) return;
       dictationPreviewTranscribing = true;
       try {
-        // Whisper path: re-transcribe ALL accumulated audio from the start.
-        // This overwrites (not appends) the preview, giving whisper full context
-        // and allowing early hallucinations to be self-corrected over time.
+        // Re-transcribe ALL accumulated audio from the start each cycle.
+        // This overwrites (not appends) the preview, giving the model full
+        // context and allowing early hallucinations/mistakes to self-correct.
         const pcm = Buffer.concat(dictationPreviewAccumBuffer);
         // Skip if essentially silent (RMS check on full buffer)
         const samples = new Int16Array(pcm.buffer, pcm.byteOffset, pcm.length / 2);
@@ -6212,40 +6369,143 @@ class IPCHandlers {
         if (Math.sqrt(sumSq / samples.length) < 0.001) return;
 
         const wav = pcm16ToWav(pcm);
-        const vadOptions = this._resolveWhisperVadOptions("dictation");
-        const result = await this.whisperManager.transcribeLocalWhisper(wav, {
-          model: dictationPreviewModel,
-          language: dictationPreviewLanguage || undefined,
-          initialPrompt: dictationPreviewInitialPrompt || undefined,
-          verboseJson: true,
-          ...vadOptions,
-        });
+        let text = "";
 
-        if (result?.success) {
-          const NO_SPEECH_THRESHOLD = 0.6;
-          let text;
-          if (Array.isArray(result.segments) && result.segments.length > 0) {
-            text = result.segments
-              .filter((s) => (s.no_speech_prob ?? 0) < NO_SPEECH_THRESHOLD)
-              .map((s) => s.text)
-              .join(" ")
-              .trim();
-          } else {
+        if (dictationPreviewProvider === "nvidia") {
+          const result = await this.parakeetManager.transcribeLocalParakeet(wav, {
+            model: dictationPreviewModel,
+          });
+          if (result?.success) {
             text = result.text?.trim() || "";
           }
-          if (text && !this.whisperManager.isHallucinatedText(text, dictationPreviewLanguage)) {
-            // Replace the entire preview (not append) — full retranscription result
-            this.windowManager.showTranscriptionPreview(text);
+        } else {
+          const vadOptions = this._resolveWhisperVadOptions("dictation");
+          const result = await this.whisperManager.transcribeLocalWhisper(wav, {
+            model: dictationPreviewModel,
+            language: dictationPreviewLanguage || undefined,
+            initialPrompt: dictationPreviewInitialPrompt || undefined,
+            verboseJson: true,
+            ...vadOptions,
+          });
+
+          if (result?.success) {
+            const NO_SPEECH_THRESHOLD = 0.6;
+            if (Array.isArray(result.segments) && result.segments.length > 0) {
+              text = result.segments
+                .filter((s) => (s.no_speech_prob ?? 0) < NO_SPEECH_THRESHOLD)
+                .map((s) => s.text)
+                .join(" ")
+                .trim();
+            } else {
+              text = result.text?.trim() || "";
+            }
           }
+        }
+
+        if (text && !this.whisperManager.isHallucinatedText(text, dictationPreviewLanguage)) {
+          // Replace the entire preview (not append) — full retranscription result
+          this.windowManager.showTranscriptionPreview(text);
         }
       } catch (error) {
         debugLogger.error("Dictation preview retranscription failed", { error: error.message }, "audio");
       } finally {
         dictationPreviewTranscribing = false;
       }
+    };;
+
+    // Aggregate whisper's per-segment confidence proxies into one quality view.
+    // Fields degrade gracefully — whatever this whisper-server build doesn't
+    // populate (avg_logprob / compression_ratio) is left null and simply ignored
+    // by the low-quality predicate below.
+    const summarizeWhisperQuality = (segments) => {
+      let durSum = 0;
+      let logprobWeighted = 0;
+      let maxComp = 0;
+      let maxNoSpeech = 0;
+      let haveLogprob = false;
+      let haveComp = false;
+      for (const s of segments) {
+        const dur = Math.max(0, (Number(s.end) || 0) - (Number(s.start) || 0)) || 1;
+        if (Number.isFinite(s.avg_logprob)) {
+          logprobWeighted += s.avg_logprob * dur;
+          durSum += dur;
+          haveLogprob = true;
+        }
+        if (Number.isFinite(s.compression_ratio)) {
+          maxComp = Math.max(maxComp, s.compression_ratio);
+          haveComp = true;
+        }
+        if (Number.isFinite(s.no_speech_prob)) maxNoSpeech = Math.max(maxNoSpeech, s.no_speech_prob);
+      }
+      return {
+        avgLogprob: haveLogprob && durSum > 0 ? logprobWeighted / durSum : null,
+        compressionRatio: haveComp ? maxComp : null,
+        noSpeechProb: maxNoSpeech,
+      };
     };
 
-    ipcMain.handle("start-dictation-preview", async (_event, { provider, model, language, initialPrompt }) => {
+    // Classic Whisper decode-failure thresholds (logprob_threshold=-1.0,
+    // compression_ratio_threshold=2.4). An empty result gets one merge chance.
+    const WHISPER_LOGPROB_FLOOR = -1.0;
+    const WHISPER_COMPRESSION_CEIL = 2.4;
+    const isWhisperSegmentLowQuality = (quality, ctx) => {
+      if (!ctx?.text) return true;
+      if (!quality) return false;
+      if (Number.isFinite(quality.avgLogprob) && quality.avgLogprob < WHISPER_LOGPROB_FLOOR) {
+        return true;
+      }
+      if (
+        Number.isFinite(quality.compressionRatio) &&
+        quality.compressionRatio > WHISPER_COMPRESSION_CEIL
+      ) {
+        return true;
+      }
+      return false;
+    };
+
+    // Transcribe one already-endpointed utterance (VAD closed it). No
+    // whisper-server VAD here — the segment is already isolated speech, so a
+    // second VAD pass would only add cost. Returns { text, quality }; a
+    // hallucinated/empty result collapses to text "" so the session can defer it.
+    const transcribeWhisperPreviewSegment = async (pcmBuffer) => {
+      const wav = pcm16ToWav(pcmBuffer);
+      const result = await this.whisperManager.transcribeLocalWhisper(wav, {
+        model: dictationPreviewModel,
+        language: dictationPreviewLanguage || undefined,
+        initialPrompt: dictationPreviewInitialPrompt || undefined,
+        verboseJson: true,
+      });
+      if (!result?.success) return { text: "", quality: null };
+      const NO_SPEECH_THRESHOLD = 0.6;
+      const allSegments = Array.isArray(result.segments) ? result.segments : [];
+      let text = "";
+      let quality = null;
+      if (allSegments.length > 0) {
+        const kept = allSegments.filter((s) => (s.no_speech_prob ?? 0) < NO_SPEECH_THRESHOLD);
+        text = kept
+          .map((s) => s.text)
+          .join(" ")
+          .trim();
+        quality = summarizeWhisperQuality(kept.length ? kept : allSegments);
+      } else {
+        text = result.text?.trim() || "";
+      }
+      if (!text || this.whisperManager.isHallucinatedText(text, dictationPreviewLanguage)) {
+        return { text: "", quality };
+      }
+      return { text, quality };
+    };
+
+    const renderWhisperPreview = (gen) => {
+      if (gen !== dictationPreviewGen) return;
+      const merged = [dictationPreviewCommitted, dictationPreviewPartial]
+        .filter(Boolean)
+        .join(" ")
+        .trim();
+      this.windowManager.showTranscriptionPreview(merged);
+    };
+
+    ipcMain.handle("start-dictation-preview", async (_event, { provider, model, language, initialPrompt, streamingBeta }) => {
       resetDictationPreviewState();
       dictationPreviewMode = true;
       dictationPreviewSessionActive = true;
@@ -6256,12 +6516,12 @@ class IPCHandlers {
       dictationPreviewChunkCount = 0;
       this.windowManager.showTranscriptionPreview("");
       const gen = dictationPreviewGen;
-      if (provider === "nvidia" && this.parakeetManager?.supportsOnlineStreaming(model)) {
+      if (provider === "nvidia" && streamingBeta && this.parakeetManager?.supportsOnlineStreaming(model)) {
         try {
           const stream = await this.parakeetManager.createOnlineStream(model, {
             onUpdate: (text) => {
               if (gen === dictationPreviewGen && text) {
-                this.windowManager.showTranscriptionPreview(text);
+                this.windowManager.showTranscriptionPreview(filterFillerWords(text, language));
               }
             },
           });
@@ -6283,6 +6543,60 @@ class IPCHandlers {
         }
       }
       if (gen !== dictationPreviewGen) return { success: true };
+
+      if (provider !== "nvidia") {
+        // Whisper: VAD endpoint-commit streaming. Each closed utterance is
+        // transcribed once and appended; the open utterance is re-transcribed on
+        // a timer as a volatile partial so continuous speech still shows text
+        // before the first pause. Cost is bounded to one utterance, never the
+        // whole accumulated clip.
+        // The streaming session's endpointing is a crude RMS/energy detector, not
+        // the neural Silero model these min-silence/min-speech values were tuned
+        // for. Silero can tell a genuine pause from a brief unvoiced consonant or
+        // breath; energy-only detection can't, so reusing Silero's short default
+        // silence window chops real speech into 1-2 word fragments — many too
+        // quiet to clear minSegmentRms and so silently dropped, which reads as the
+        // preview losing text or "freezing" after the first couple of words. Floor
+        // it higher for endpoint stability; still respect a longer user setting.
+        const sileroVadConfig = this._resolveWhisperVadOptions("dictation")?.vadConfig;
+        const energyVadConfig = {
+          ...sileroVadConfig,
+          minSilenceDurationMs: Math.max(sileroVadConfig?.minSilenceDurationMs || 0, 500),
+        };
+        dictationPreviewWhisperSession = createWhisperVadStreamingSession({
+          vadConfig: energyVadConfig,
+          transcribe: transcribeWhisperPreviewSegment,
+          // A silence boundary is only a hint: if an utterance transcribes with
+          // low confidence, hold its audio and re-transcribe it merged with the
+          // next one (bounded by maxMerges) for more acoustic context.
+          isLowQuality: isWhisperSegmentLowQuality,
+          onCommit: (text) => {
+            if (gen !== dictationPreviewGen) return;
+            dictationPreviewCommitted = [dictationPreviewCommitted, text]
+              .filter(Boolean)
+              .join(" ")
+              .trim();
+            dictationPreviewPartial = "";
+            renderWhisperPreview(gen);
+          },
+          onPartial: (text) => {
+            if (gen !== dictationPreviewGen) return;
+            dictationPreviewPartial = text;
+            renderWhisperPreview(gen);
+          },
+          onError: (error) => {
+            debugLogger.debug("Whisper streaming preview segment failed", {
+              error: error.message,
+            });
+          },
+        });
+        dictationPreviewTimer = setInterval(() => {
+          dictationPreviewWhisperSession?.requestPartial();
+        }, 1500);
+        return { success: true };
+      }
+
+      // Nvidia (offline, non-streaming): fixed-timer full re-transcription.
       dictationPreviewTimer = setInterval(() => transcribeDictationPreviewChunk(), 3000);
       return { success: true };
     });
@@ -6295,13 +6609,20 @@ class IPCHandlers {
         dictationPreviewStream.sendPcm16(pcm);
         return;
       }
+      if (dictationPreviewWhisperSession) {
+        dictationPreviewWhisperSession.pushPcm16(pcm);
+        return;
+      }
       dictationPreviewBuffer.push(pcm);
 
-      // Whisper path: accumulate all audio for full retranscription.
-      // Trim oldest chunks when total exceeds 29s (whisper's limit is 30s).
+      // Accumulate all audio for full retranscription, trimming oldest chunks once
+      // the buffer exceeds the provider's cap (whisper: 29s: parakeet: 14s — see
+      // MAX_PARAKEET_PREVIEW_ACCUM_BYTES above).
       dictationPreviewAccumBuffer.push(pcm);
       dictationPreviewAccumBytes += pcm.length;
-      while (dictationPreviewAccumBytes > MAX_PREVIEW_ACCUM_BYTES && dictationPreviewAccumBuffer.length > 1) {
+      const previewAccumCap =
+        dictationPreviewProvider === "nvidia" ? MAX_PARAKEET_PREVIEW_ACCUM_BYTES : MAX_PREVIEW_ACCUM_BYTES;
+      while (dictationPreviewAccumBytes > previewAccumCap && dictationPreviewAccumBuffer.length > 1) {
         dictationPreviewAccumBytes -= dictationPreviewAccumBuffer[0].length;
         dictationPreviewAccumBuffer.shift();
       }
@@ -6324,6 +6645,14 @@ class IPCHandlers {
       return { success: true };
     });
 
+    ipcMain.handle("update-cleanup-preview", async (_event, { text } = {}) => {
+      if (!dictationPreviewSessionActive) return { success: true };
+      if (typeof text === "string" && text.trim()) {
+        this.windowManager.updateCleanupPreview(text);
+      }
+      return { success: true };
+    });
+
     ipcMain.handle("hide-dictation-preview", async () => {
       resetDictationPreviewState();
       this.windowManager.hideTranscriptionPreview();
@@ -6339,20 +6668,94 @@ class IPCHandlers {
       if (!dictationPreviewMode && !dictationPreviewSessionActive) return { success: true };
       clearInterval(dictationPreviewTimer);
       dictationPreviewTimer = null;
+      // When an online (streaming) parakeet stream is running its accumulated
+      // transcript is finalized here and returned to the renderer, which can then
+      // paste it directly instead of paying a full offline re-transcription of the
+      // whole clip. Empty string when there is no live stream (renderer falls back).
+      let streamingText = "";
       if (dictationPreviewStream) {
+        // Capture and clear the shared reference BEFORE awaiting the flush delay
+        // below — otherwise a concurrent reset (dismiss/hide/new start racing in
+        // during the 120ms wait) can null it out from under us and crash this
+        // handler with "Cannot read properties of null (reading 'finish')".
         const stream = dictationPreviewStream;
         dictationPreviewStream = null;
-        const { text } = await stream.finish().catch(() => ({ text: "" }));
-        if (text && dictationPreviewSessionActive) {
-          this.windowManager.showTranscriptionPreview(text);
+        // Let the last preview audio chunk — flushed by the renderer worklet on
+        // "stop" — reach dictation-preview-audio before we finalize, so the final
+        // word isn't dropped. Mirrors the flush wait in cleanupStreamingAudio().
+        await new Promise((resolve) => setTimeout(resolve, 120));
+        const { text, finalized } = await stream
+          .finish()
+          .catch(() => ({ text: "", finalized: false }));
+        const filtered = filterFillerWords(text || "", dictationPreviewLanguage) || "";
+        // finalized=false here means the renderer will re-transcribe offline —
+        // the single biggest thing to watch if release latency scales with length.
+        debugLogger.debug("Streaming dictation finalize", {
+          finalized,
+          textLength: filtered.length,
+          fastPath: finalized && filtered.length > 0,
+        });
+        // Show whatever the stream produced in the preview overlay...
+        if (filtered && dictationPreviewSessionActive) {
+          this.windowManager.showTranscriptionPreview(filtered);
         }
-      } else {
-        await transcribeDictationPreviewChunk();
+        // ...but only hand it back for pasting once the server acknowledged
+        // end-of-stream ("Done!"), meaning it decoded every sample we sent. On a
+        // dirty close/timeout (finalized=false) the renderer falls back to the
+        // authoritative offline transcription instead.
+        streamingText = finalized ? filtered : "";
+      } else if (dictationPreviewWhisperSession) {
+        // Capture and clear the shared reference BEFORE awaiting the flush delay
+        // below — see the matching comment in the streaming-provider branch above.
+        const session = dictationPreviewWhisperSession;
+        dictationPreviewWhisperSession = null;
+        // Whisper VAD session: let the renderer worklet's final flushed chunk
+        // land, then close the open utterance and drain the last inference so the
+        // committed transcript is complete.
+        await new Promise((resolve) => setTimeout(resolve, 120));
+        const { text, finalized, quality } = await session.finish().catch((error) => {
+          debugLogger.debug("Whisper streaming preview finalize failed", {
+            error: error.message,
+          });
+          return { text: "", finalized: false, quality: { lowQualityRatio: 1 } };
+        });
+        // dictationPreviewCommitted is the shown text (assembled via onCommit);
+        // fall back to the session's own join if they somehow diverge.
+        const finalText = (dictationPreviewCommitted || text || "").trim();
+        if (finalText && dictationPreviewSessionActive) {
+          this.windowManager.showTranscriptionPreview(finalText);
+        }
+        // Hand the streamed transcript back for direct paste ONLY when the session
+        // finalized cleanly (every utterance transcribed, no error/abort) AND the
+        // stream isn't globally low quality. If too much committed audio stayed low
+        // confidence, "" — the renderer re-transcribes the whole clip offline with
+        // full context (the authoritative fallback).
+        const lowQualityRatio = quality?.lowQualityRatio ?? 0;
+        const qualityTooLow = lowQualityRatio > MAX_STREAM_LOW_QUALITY_RATIO;
+        // coverageRatio is only meaningful once some audio was actually pushed in;
+        // treat a session with no tracked input (e.g. an old caller/test without
+        // the field) as fully covered rather than penalizing it.
+        const coverageRatio = quality?.totalInputMs ? (quality?.coverageRatio ?? 1) : 1;
+        const coverageTooLow = coverageRatio < MIN_STREAM_COVERAGE_RATIO;
+        streamingText = finalized && !qualityTooLow && !coverageTooLow ? finalText : "";
+        debugLogger.debug("Whisper streaming finalize", {
+          finalized,
+          coverageRatio: Number(coverageRatio.toFixed(2)),
+          coverageTooLow,
+          textLength: finalText.length,
+          lowQualityRatio: Number(lowQualityRatio.toFixed(2)),
+          qualityTooLow,
+          fastPath: finalized && !qualityTooLow && !coverageTooLow && finalText.length > 0,
+        });
       }
+      // Parakeet (offline, non-streaming): skip that extra pass — it shares a single
+      // sherpa-onnx server with the real end-of-dictation transcription, so re-running
+      // it here would delay the real result for a preview that's about to be replaced
+      // anyway.
       resetDictationPreviewState({ preserveSession: true });
-      if (!dictationPreviewSessionActive) return { success: true };
+      if (!dictationPreviewSessionActive) return { success: true, streamingText };
       this.windowManager.holdTranscriptionPreview(options);
-      return { success: true };
+      return { success: true, streamingText };
     });
   }
 

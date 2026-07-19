@@ -19,6 +19,9 @@ export const useAudioRecording = (toast, options = {}) => {
   const startLockRef = useRef(false);
   const stopLockRef = useRef(false);
   const wasRecordingRef = useRef(false);
+  // Whether the system mic was already muted before we auto-unmuted it for this
+  // recording — only restore the mute afterward if it actually was.
+  const micWasMutedRef = useRef(false);
   const lastPasteRef = useRef({ text: "", atMs: 0 });
   const { onToggle } = options;
 
@@ -33,8 +36,20 @@ export const useAudioRecording = (toast, options = {}) => {
 
       audioManagerRef.current.setVoiceAgentRequested(voiceAgentRequested);
 
+      // Load the local cleanup/agent model now so its ~4s cold start overlaps
+      // with the user speaking instead of blocking the paste after they release.
+      audioManagerRef.current.warmupReasoningServer();
+
       const autoUnmuteMic = getSettings().autoUnmuteMicEnabled;
       if (autoUnmuteMic) {
+        // Querying prior mute state always goes through a slow PowerShell/COM
+        // round trip (nircmd can't query) — don't block the start of capture
+        // on it. Default to "was muted" (safe fallback, matches the old
+        // always-remute behavior) until the query resolves in the background.
+        micWasMutedRef.current = true;
+        window.electronAPI?.getMicMuted?.().then((muteState) => {
+          if (muteState?.success) micWasMutedRef.current = !!muteState.muted;
+        });
         await window.electronAPI?.setMicMuted?.(false);
       }
 
@@ -62,8 +77,9 @@ export const useAudioRecording = (toast, options = {}) => {
             void playStartCue();
           }
         }, 300);
-      } else if (autoUnmuteMic) {
-        // Start failed or ended immediately — don't leave the system mic unmuted.
+      } else if (autoUnmuteMic && micWasMutedRef.current) {
+        // Start failed or ended immediately — don't leave the system mic unmuted
+        // if it was actually muted before we touched it.
         window.electronAPI?.setMicMuted?.(true);
       }
 
@@ -84,7 +100,7 @@ export const useAudioRecording = (toast, options = {}) => {
 
       window.electronAPI?.unregisterCancelHotkey?.();
 
-      if (getSettings().autoUnmuteMicEnabled) {
+      if (getSettings().autoUnmuteMicEnabled && micWasMutedRef.current) {
         window.electronAPI?.setMicMuted?.(true);
       }
 
@@ -106,6 +122,12 @@ export const useAudioRecording = (toast, options = {}) => {
   }, []);
 
   useEffect(() => {
+    // Pays the one-time PowerShell/COM helper startup cost (~1-1.3s) in the
+    // background now, instead of on the user's first dictation.
+    if (getSettings().autoUnmuteMicEnabled) {
+      window.electronAPI?.warmupMicMuteHelper?.();
+    }
+
     audioManagerRef.current = new AudioManager();
 
     audioManagerRef.current.setCallbacks({
@@ -131,7 +153,7 @@ export const useAudioRecording = (toast, options = {}) => {
           // Paste errors happen after recording already stopped (mic already
           // re-muted by performStopRecording) — anything else may have failed
           // mid-recording, so don't leave the system mic unmuted.
-          if (getSettings().autoUnmuteMicEnabled) {
+          if (getSettings().autoUnmuteMicEnabled && micWasMutedRef.current) {
             window.electronAPI?.setMicMuted?.(true);
           }
         }
@@ -149,6 +171,9 @@ export const useAudioRecording = (toast, options = {}) => {
       },
       onPartialTranscript: (text) => {
         setPartialTranscript(text);
+      },
+      onCleanupPartial: (text) => {
+        window.electronAPI?.updateCleanupPreview?.(text);
       },
       onTranscriptionComplete: async (result) => {
         if (result.success) {
@@ -332,7 +357,7 @@ export const useAudioRecording = (toast, options = {}) => {
       if (getSettings().pauseMediaOnDictation) {
         window.electronAPI?.resumeMediaPlayback?.();
       }
-      if (getSettings().autoUnmuteMicEnabled) {
+      if (getSettings().autoUnmuteMicEnabled && micWasMutedRef.current) {
         window.electronAPI?.setMicMuted?.(true);
       }
       if (state.isStreaming) {

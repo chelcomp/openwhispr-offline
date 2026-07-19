@@ -11,7 +11,7 @@ import { SecureCache } from "../utils/SecureCache";
 import { withRetry, createApiRetryStrategy } from "../utils/retry";
 import { API_ENDPOINTS, TOKEN_LIMITS, buildApiUrl, ensureV1Suffix } from "../config/constants";
 import logger from "../utils/logger";
-import { getSettings, isCloudCleanupMode } from "../stores/settingsStore";
+import { getSettings, getLocalGenerationParams, isCloudCleanupMode } from "../stores/settingsStore";
 import { wrapCleanupTranscript } from "../config/prompts";
 import { streamText, stepCountIs } from "ai";
 import { getAIModel } from "./ai/providers";
@@ -19,7 +19,6 @@ import { createEnterpriseChatModel } from "./ai/enterpriseChatModel";
 import { PROVIDER_REGISTRY, type ProviderContext } from "./ai/inferenceProviders";
 import { getConfiguredOpenAIBase } from "./ai/openaiBase";
 import { applyThinkingSuppression } from "./ai/thinkingSuppression";
-import { clearTinfoilClientCache } from "./ai/tinfoilClient";
 
 export type AgentStreamChunk =
   | { type: "content"; text: string }
@@ -68,7 +67,7 @@ class ReasoningService extends BaseReasoningService {
 
   private async getApiKey(
     provider:
-      "openai" | "anthropic" | "gemini" | "groq" | "tinfoil" | "custom" | "openrouter" | "corti"
+      "openai" | "anthropic" | "gemini" | "groq" | "custom" | "openrouter"
   ): Promise<string> {
     if (provider === "custom") {
       let customKey = "";
@@ -369,6 +368,73 @@ class ReasoningService extends BaseReasoningService {
     }
   }
 
+  // Only the local llama-server path streams today — cloud/LAN cleanup keeps using
+  // the blocking processText() request/response flow. onPartial fires with the
+  // accumulated text so far after every chunk.
+  async processTextStreamed(
+    text: string,
+    model: string = "",
+    agentName: string | null = null,
+    config: ReasoningConfig = {},
+    onPartial?: (accumulatedText: string) => void
+  ): Promise<string> {
+    const trimmedModel = model?.trim?.() || "";
+    const isLanCleanup = !!config.lanUrl || this.isLanCleanupMode();
+    const rawProviderId = isLanCleanup ? "lan" : config.provider || getModelProvider(trimmedModel);
+    const providerId =
+      rawProviderId && PROVIDER_REGISTRY[rawProviderId]
+        ? rawProviderId
+        : getModelProvider(trimmedModel);
+
+    if (providerId !== "local" || !onPartial) {
+      return this.processText(text, model, agentName, config);
+    }
+
+    if (!trimmedModel) {
+      throw new Error("No reasoning model selected");
+    }
+
+    const systemPrompt = config.systemPrompt || this.providerContext.getSystemPrompt(agentName);
+    const userContent = config.systemPrompt ? text : wrapCleanupTranscript(text);
+    const messages = [
+      { role: "system", content: systemPrompt },
+      { role: "user", content: userContent },
+    ];
+
+    logger.logReasoning("LOCAL_STREAM_START", { model: trimmedModel, agentName });
+    const startTime = Date.now();
+    let accumulated = "";
+
+    try {
+      const contentGen = this.processTextStreaming(messages, trimmedModel, "local", {
+        ...config,
+        systemPrompt,
+      });
+      for await (const chunk of contentGen) {
+        accumulated += chunk;
+        onPartial(accumulated);
+      }
+    } catch (error) {
+      if (!accumulated) {
+        logger.logReasoning("LOCAL_STREAM_FALLBACK", { error: (error as Error).message });
+        return this.processText(text, model, agentName, config);
+      }
+      logger.logReasoning("LOCAL_STREAM_ERROR", {
+        error: (error as Error).message,
+        partialLength: accumulated.length,
+      });
+      throw error;
+    }
+
+    const result = accumulated.trim();
+    logger.logReasoning("LOCAL_STREAM_COMPLETE", {
+      model: trimmedModel,
+      processingTimeMs: Date.now() - startTime,
+      resultLength: result.length,
+    });
+    return result;
+  }
+
   async *processTextStreaming(
     messages: Array<{ role: string; content: string }>,
     model: string,
@@ -380,10 +446,8 @@ class ReasoningService extends BaseReasoningService {
       "groq",
       "gemini",
       "anthropic",
-      "tinfoil",
       "custom",
       "openrouter",
-      "corti",
     ];
     const isLocalProvider = !cloudProviders.includes(provider);
 
@@ -406,7 +470,7 @@ class ReasoningService extends BaseReasoningService {
       endpoint = `http://127.0.0.1:${serverResult.port}/v1/chat/completions`;
     } else {
       const providerKey = provider as
-        "openai" | "groq" | "gemini" | "anthropic" | "tinfoil" | "custom" | "openrouter" | "corti";
+        "openai" | "groq" | "gemini" | "anthropic" | "custom" | "openrouter";
       const overrideKey = providerKey === "custom" ? config.customApiKey?.trim() : "";
       apiKey = overrideKey || (await this.getApiKey(providerKey));
 
@@ -414,17 +478,12 @@ class ReasoningService extends BaseReasoningService {
         case "groq":
           endpoint = buildApiUrl(API_ENDPOINTS.GROQ_BASE, "/chat/completions");
           break;
-        case "corti":
-          endpoint = buildApiUrl(API_ENDPOINTS.CORTI_MODELS_BASE, "/chat/completions");
-          break;
         case "gemini":
           endpoint = buildApiUrl(API_ENDPOINTS.GEMINI, "/openai/chat/completions");
           break;
         case "openrouter":
           endpoint = buildApiUrl(API_ENDPOINTS.OPENROUTER_BASE, "/chat/completions");
           break;
-        case "tinfoil":
-          throw new Error("Tinfoil streaming must use the verified SDK transport");
         case "openai":
         case "custom":
           endpoint = buildApiUrl(
@@ -457,6 +516,21 @@ class ReasoningService extends BaseReasoningService {
       if (apiConfig.supportsTemperature) {
         requestBody.temperature = config.temperature ?? 0.3;
       }
+    }
+
+    // For on-device llama.cpp models, honor the user's manual sampling
+    // parameters (Local Model settings) on every request, regardless of which
+    // local model is selected. These override any route-supplied defaults.
+    // Scoped to genuinely local inference — a self-hosted LAN endpoint (which
+    // also reads as "not cloud") keeps its own server-side defaults.
+    if (isLocalProvider && !isLanCleanup) {
+      const lp = getLocalGenerationParams();
+      requestBody.temperature = lp.temperature;
+      requestBody.max_tokens = lp.maxTokens;
+      requestBody.top_p = lp.topP;
+      requestBody.top_k = lp.topK;
+      requestBody.min_p = lp.minP;
+      requestBody.repeat_penalty = lp.repeatPenalty;
     }
 
     applyThinkingSuppression(requestBody, model, provider, config);
@@ -599,10 +673,8 @@ class ReasoningService extends BaseReasoningService {
       "groq",
       "gemini",
       "anthropic",
-      "tinfoil",
       "custom",
       "openrouter",
-      "corti",
     ];
     const isLocalProvider = !isEnterprise && !cloudProviders.includes(provider);
 
@@ -635,7 +707,7 @@ class ReasoningService extends BaseReasoningService {
       baseURL = `http://127.0.0.1:${serverResult.port}/v1`;
     } else {
       const providerKey = provider as
-        "openai" | "groq" | "gemini" | "anthropic" | "tinfoil" | "custom" | "openrouter" | "corti";
+        "openai" | "groq" | "gemini" | "anthropic" | "custom" | "openrouter";
       const overrideKey = providerKey === "custom" ? config.customApiKey?.trim() : "";
       apiKey = overrideKey || (await this.getApiKey(providerKey));
       baseURL =
@@ -649,7 +721,6 @@ class ReasoningService extends BaseReasoningService {
     // OpenRouter ids are never in the local registry, so the supportsThinking
     // exemption below can't apply — honor the toggle directly.
     const openrouterDisableThinking = provider === "openrouter" && config.disableThinking === true;
-    // Resolving a Tinfoil model refreshes the registry, so read model config after it.
     const aiModel = isEnterprise
       ? createEnterpriseChatModel(provider as EnterpriseProvider, model)
       : await getAIModel(aiProvider, model, apiKey, baseURL, {
@@ -680,6 +751,12 @@ class ReasoningService extends BaseReasoningService {
 
     const useTemperature = isLocalProvider || isLanCleanup || apiConfig.supportsTemperature;
 
+    // Honor the user's manual Local Model sampling parameters on the tool-calling
+    // path too. The AI SDK forwards temperature/topP/topK/maxOutputTokens; the
+    // llama.cpp-specific min_p and repeat_penalty are applied on the non-tool
+    // streaming path (see processTextStreaming).
+    const localParams = isLocalProvider ? getLocalGenerationParams() : null;
+
     // cancelActiveStream() aborts this controller; streamText propagates it
     // into doStream, cancelling the enterprise IPC proxy's request in main.
     const abortController = new AbortController();
@@ -694,8 +771,11 @@ class ReasoningService extends BaseReasoningService {
       tools: tools || undefined,
       stopWhen: stepCountIs(tools ? ReasoningService.MAX_TOOL_STEPS : 1),
       abortSignal: abortController.signal,
-      ...(useTemperature ? { temperature: config.temperature ?? 0.3 } : {}),
-      maxOutputTokens: config.maxTokens || 4096,
+      ...(useTemperature
+        ? { temperature: localParams ? localParams.temperature : config.temperature ?? 0.3 }
+        : {}),
+      maxOutputTokens: localParams ? localParams.maxTokens : config.maxTokens || 4096,
+      ...(localParams ? { topP: localParams.topP, topK: localParams.topK } : {}),
       ...(hasProviderOptions ? { providerOptions } : {}),
     });
 
@@ -928,22 +1008,16 @@ class ReasoningService extends BaseReasoningService {
       | "gemini"
       | "groq"
       | "mistral"
-      | "tinfoil"
       | "custom"
       | "openrouter"
-      | "corti"
   ): void {
     if (provider) {
       if (provider !== "custom") {
         this.apiKeyCache.delete(provider);
       }
-      if (provider === "tinfoil") {
-        clearTinfoilClientCache();
-      }
       logger.logReasoning("API_KEY_CACHE_CLEARED", { provider });
     } else {
       this.apiKeyCache.clear();
-      clearTinfoilClientCache();
       logger.logReasoning("API_KEY_CACHE_CLEARED", { provider: "all" });
     }
   }

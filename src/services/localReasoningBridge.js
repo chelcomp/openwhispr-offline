@@ -33,10 +33,12 @@ class LocalReasoningService {
     try {
       const inferenceConfig = {
         maxTokens: config.maxTokens || this.calculateMaxTokens(text.length),
-        temperature: config.temperature || 0.7,
-        topK: config.topK || 40,
-        topP: config.topP || 0.9,
-        repeatPenalty: config.repeatPenalty || 1.1,
+        // Use ?? so an explicit 0 (e.g. topK=0 to disable top-k) is honored.
+        temperature: config.temperature ?? 0.7,
+        topK: config.topK ?? 40,
+        topP: config.topP ?? 0.9,
+        minP: config.minP ?? 0.05,
+        repeatPenalty: config.repeatPenalty ?? 1.1,
         contextSize: config.contextSize || 4096,
         threads: config.threads || 4,
         systemPrompt: config.systemPrompt || "",

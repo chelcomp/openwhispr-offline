@@ -62,6 +62,11 @@ export default function PromptStudio({ className = "", kind = "cleanup" }: Promp
   const useCleanupModel = useSettingsStore((s) => s.useCleanupModel);
   const cleanupModel = useSettingsStore((s) => s.cleanupModel);
   const localModel = useSettingsStore((s) => s.localModel);
+  const cleanupMode = useSettingsStore((s) => s.cleanupMode);
+  // Local cleanup mode keeps its model in localModel (cleanupModel stays empty); cloud/
+  // self-hosted modes use cleanupModel. Resolve once so the test + display agree with the
+  // pipeline's getEffectiveCleanupModel().
+  const effectiveCleanupModel = cleanupMode === "local" ? localModel : cleanupModel;
 
   const customPrompt = useSettingsStore((s) => s.customPrompts[kind]);
   const setCustomPrompt = useSettingsStore((s) => s.setCustomPrompt);
@@ -98,13 +103,13 @@ export default function PromptStudio({ className = "", kind = "cleanup" }: Promp
     setTestResult("");
 
     try {
-      const cleanupProvider = cleanupModel ? getModelProvider(cleanupModel) : "openai";
+      const cleanupProvider = effectiveCleanupModel ? getModelProvider(effectiveCleanupModel) : "openai";
 
       logger.debug(
         "PromptStudio test starting",
         {
           useCleanupModel,
-          cleanupModel,
+          cleanupModel: effectiveCleanupModel,
           cleanupProvider,
           testTextLength: testText.length,
           agentName,
@@ -117,7 +122,7 @@ export default function PromptStudio({ className = "", kind = "cleanup" }: Promp
         return;
       }
 
-      if (!cleanupModel) {
+      if (!effectiveCleanupModel) {
         setTestResult(t("promptStudio.test.noModelSelected"));
         return;
       }
@@ -143,7 +148,7 @@ export default function PromptStudio({ className = "", kind = "cleanup" }: Promp
         }
       }
 
-      const modelToUse = cleanupModel;
+      const modelToUse = effectiveCleanupModel;
 
       const previous = customPrompt;
       setCustomPrompt(kind, editedPrompt);
@@ -304,12 +309,14 @@ export default function PromptStudio({ className = "", kind = "cleanup" }: Promp
         {/* ── Test Tab ── */}
         {activeTab === "test" &&
           (() => {
-            const cleanupProvider = cleanupModel ? getModelProvider(cleanupModel) : "openai";
+            const cleanupProvider = effectiveCleanupModel
+              ? getModelProvider(effectiveCleanupModel)
+              : "openai";
             const providerConfig = PROVIDER_CONFIG[cleanupProvider] || {
               label: cleanupProvider.charAt(0).toUpperCase() + cleanupProvider.slice(1),
             };
 
-            const effectiveModel = cleanupProvider === "local" ? localModel : cleanupModel;
+            const effectiveModel = effectiveCleanupModel;
             const displayModel = effectiveModel
               ? (cleanupProvider === "local"
                   ? (modelRegistry.getModel(effectiveModel)?.model.name ?? effectiveModel)

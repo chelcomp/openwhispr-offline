@@ -395,6 +395,10 @@ class ModelManager {
       const result = await this.serverManager.inference(messages, {
         temperature: options.temperature ?? 0.7,
         max_tokens: options.maxTokens ?? 512,
+        topP: options.topP,
+        topK: options.topK,
+        minP: options.minP,
+        repeatPenalty: options.repeatPenalty,
         disableThinking: options.disableThinking,
       });
 
