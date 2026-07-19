@@ -3,6 +3,7 @@ import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 import path from "path";
 import fs from "fs";
+import { execSync } from "child_process";
 import { fileURLToPath } from "url";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -27,7 +28,19 @@ export default defineConfig(({ mode }) => {
   const rawPort = env.VITE_DEV_SERVER_PORT || env.OPENWHISPR_DEV_SERVER_PORT;
   const devServerPort = parseDevServerPort(rawPort);
 
+  let gitCommitHash = "unknown";
+  try {
+    gitCommitHash = execSync("git rev-parse --short HEAD", { cwd: envDir })
+      .toString()
+      .trim();
+  } catch {
+    gitCommitHash = "unknown";
+  }
+
   return {
+    define: {
+      __GIT_COMMIT_HASH__: JSON.stringify(gitCommitHash),
+    },
     plugins: [
       react(),
       tailwindcss(),

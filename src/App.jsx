@@ -10,6 +10,7 @@ import { useWindowDrag } from "./hooks/useWindowDrag";
 import { useAudioRecording } from "./hooks/useAudioRecording";
 import { useSettingsStore, selectResolvedLLMConfig } from "./stores/settingsStore";
 import { playTransformStartCue, playTransformDoneCue } from "./utils/dictationCues";
+import VersionBadge from "./components/VersionBadge";
 
 // Sound Wave Icon Component (for idle/hover states)
 const SoundWaveIcon = ({ size = 16 }) => {
@@ -136,7 +137,7 @@ export default function App() {
 
     const unsubscribeCorrections = window.electronAPI?.onCorrectionsLearned?.((words) => {
       if (words && words.length > 0) {
-        const wordList = words.map((w) => `\u201c${w}\u201d`).join(", ");
+        const wordList = words.map((w) => `“${w}”`).join(", ");
         let toastId;
         toastId = toast({
           title: t("app.toasts.addedToDict", { words: wordList }),
@@ -387,6 +388,7 @@ export default function App() {
 
   return (
     <div className="dictation-window">
+      <VersionBadge variant="overlay" visible={isCommandMenuOpen || toastCount > 0} />
       {/* Voice button - position determined by panelStartPosition setting */}
       <div
         className={`fixed bottom-1 z-50 ${
