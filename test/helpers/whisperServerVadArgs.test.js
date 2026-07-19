@@ -27,6 +27,8 @@ test("buildWhisperServerArgs includes VAD flags when enabled and model path prov
     "127.0.0.1",
     "--port",
     "8180",
+    "--best-of",
+    "5",
     "--language",
     "auto",
     "--vad",

@@ -37,13 +37,13 @@ test("ignores mentions that are dictated content, not commands", async () => {
 test("handles STT splitting or misspelling the name, with the same gating", async () => {
   const { detectAgentName } = await load();
 
-  // Split across tokens ("Open Whisper") and misheard endings still match
+  // Split across tokens ("Ektos Whisper") and misheard endings still match
   // when addressed...
-  assert.equal(detectAgentName("hey open whisper translate this", "EktosWhispr"), true);
-  assert.equal(detectAgentName("Open Whisper, take a note", "EktosWhispr"), true);
+  assert.equal(detectAgentName("hey ektos whisper translate this", "EktosWhispr"), true);
+  assert.equal(detectAgentName("Ektos Whispr, take a note", "EktosWhispr"), true);
   // ...but not as a mid-sentence mention.
   assert.equal(
-    detectAgentName("people keep calling open whisper a dictation app", "EktosWhispr"),
+    detectAgentName("people keep calling ektos whisper a dictation app", "EktosWhispr"),
     false
   );
 });

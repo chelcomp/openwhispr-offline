@@ -13,13 +13,15 @@ test("downsample24kTo16k output length is 2/3 of input samples", () => {
   assert.equal(outSamples.length, 4);
 });
 
-test("downsample24kTo16k first sample matches source", () => {
+test("downsample24kTo16k applies the anti-aliasing FIR at the boundary", () => {
   const samples = new Int16Array([1000, 2000, 3000, 4000, 5000, 6000]);
   const input = Buffer.from(samples.buffer);
   const output = downsample24kTo16k(input);
   const outSamples = new Int16Array(output.buffer, output.byteOffset, output.length / 2);
-  // index 0 maps to srcIdx 0.0 → s0=1000, frac=0 → 1000
-  assert.equal(outSamples[0], 1000);
+  // output[0] centres the 5-tap FIR at input idx 0; the two taps left of the
+  // boundary read as 0, so:
+  //   0.375*1000 + 0.25*2000 + 0.0625*3000 = 1062.5 → round → 1063
+  assert.equal(outSamples[0], 1063);
 });
 
 test("downsample24kTo16k returns a Buffer", () => {

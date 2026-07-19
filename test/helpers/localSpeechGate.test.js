@@ -17,15 +17,16 @@ test("treats near silence as skippable", async () => {
     await import("../../src/helpers/localSpeechGate.js");
 
   const state = createLocalSpeechGateState();
-  recordLocalSpeechWindow(state, 0.0012, 0.01);
-  recordLocalSpeechWindow(state, 0.0016, 0.015);
-  recordLocalSpeechWindow(state, 0.0014, 0.012);
+  // All windows sit below SILENCE_RMS_THRESHOLD (0.0008).
+  recordLocalSpeechWindow(state, 0.0004, 0.003);
+  recordLocalSpeechWindow(state, 0.0006, 0.005);
+  recordLocalSpeechWindow(state, 0.0005, 0.004);
 
   assert.deepEqual(getLocalSpeechGateDecision(state), {
     skip: true,
     reason: "silence",
-    peakRms: 0.0016,
-    peakAmplitude: 0.015,
+    peakRms: 0.0006,
+    peakAmplitude: 0.005,
     windowCount: 3,
     speechWindowCount: 0,
     maxConsecutiveSpeechWindows: 0,
@@ -37,17 +38,18 @@ test("rejects isolated noise bursts without sustained speech", async () => {
     await import("../../src/helpers/localSpeechGate.js");
 
   const state = createLocalSpeechGateState();
-  // All windows have energy above silence but below speech thresholds
-  recordLocalSpeechWindow(state, 0.0025, 0.015);
-  recordLocalSpeechWindow(state, 0.0028, 0.018);
-  recordLocalSpeechWindow(state, 0.0022, 0.014);
+  // Above SILENCE_RMS_THRESHOLD (0.0008) but below the speech-window
+  // thresholds (rms 0.0015 / peak 0.008) and STRONG_SPEECH_RMS_THRESHOLD (0.003).
+  recordLocalSpeechWindow(state, 0.001, 0.006);
+  recordLocalSpeechWindow(state, 0.0012, 0.007);
+  recordLocalSpeechWindow(state, 0.0011, 0.005);
 
   const decision = getLocalSpeechGateDecision(state);
 
   assert.equal(decision.skip, true);
   assert.equal(decision.reason, "insufficient_speech");
-  assert.equal(decision.peakRms, 0.0028);
-  assert.equal(decision.peakAmplitude, 0.018);
+  assert.equal(decision.peakRms, 0.0012);
+  assert.equal(decision.peakAmplitude, 0.007);
   assert.equal(decision.windowCount, 3);
   assert.equal(decision.speechWindowCount, 0);
   assert.equal(decision.maxConsecutiveSpeechWindows, 0);
