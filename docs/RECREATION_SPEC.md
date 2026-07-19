@@ -32,7 +32,7 @@ Estas são as discrepâncias mais relevantes encontradas entre a documentação 
 3. ✅ **Corrigido.** `searchNotesTool.ts` não tem uma etapa de "cloud search". A cadeia real é: busca semântica local (RRF) → FTS5 puro. O parâmetro `useCloudSearch` é recebido mas não usado. Ver §4.
 4. ✅ **Corrigido.** Não existe um provider de IA chamado "ektoswhispr". O conceito de "EktosWhispr Cloud" (backend próprio hospedado) está desativado/em remoção (a branch atual chama-se `chore/remove-dead-cloud-code`). Todos os seletores `selectIsCloud*Mode` retornam `false` hardcoded, e `streamFromIPC` lança erro `"Cloud agent streaming is not available in this version"`. Os providers reais são 7: `openai`/`custom`/`openrouter` (1 handler), `anthropic`, `gemini`, `groq`, `local`, `bedrock`/`azure`/`vertex` (1 handler "enterprise"), `lan`. Ver §5. (Ver também a remoção de `agent-skills/ektoswhispr-api/` e a limpeza de `docs/network-allowlist.md`, que documentavam esse mesmo backend cloud inexistente.)
 5. ✅ **Corrigido.** Não existe `src/config/aiProvidersConfig.ts`. A derivação de "AI_MODES" mencionada no CLAUDE.md é, na verdade, `buildReasoningProviders()` em `src/models/ModelRegistry.ts`. Ver §5.
-6. ✅ **Corrigido.** Google Calendar foi removido do código atual. `src/helpers/googleCalendarManager.js`/`googleCalendarOAuth.js` não existem mais nesta branch. Em `meetingDetectionEngine.js`, `imminentEvent` é hardcoded para `null`. A seção do CLAUDE.md sobre "Calendar Sync Resilience" descrevia uma arquitetura histórica já removida. Ver §3.
+6. ✅ **Corrigido.** Google Calendar foi removido do código atual. `src/helpers/googleCalendarManager.js`/`googleCalendarOAuth.js` não existem mais nesta branch. Em `meetingDetectionEngine.js`, `imminentEvent` é hardcoded para `null`. A seção do CLAUDE.md sobre "Calendar Sync Resilience" descrevia uma arquitetura histórica já removida. Ver §3. **Atualização**: os remanescentes dessa remoção (`joinCalendarMeeting()`/`getActiveEvents()`/`getCalendarEventById()` em `meetingDetectionEngine.js`/`database.js`, os 20 métodos mortos de `database.js` relacionados a Google Calendar, as tabelas `google_calendar_tokens`/`google_calendars`/`calendar_events`, e as strings órfãs `get_calendar_events`/`integrations.*` em prompts/ícones/locales) foram removidos por completo (`docs/specs/remove-dead-google-calendar-code.md`). Não há mais nenhum código, schema, ou string relacionado a Google Calendar no repositório.
 7. ✅ **Corrigido.** Onboarding não tem 8 passos fixos nem passo de "agent naming". O wizard atual é dinâmico (passo `localModel` é condicional; passo `meeting` existe no código mas está desativado via flag hardcoded `showMeetingStep = false`). Não há passo dedicado para nomear o agente — isso só existe em Settings hoje, com default `"EktosWhispr"`. Ver §6.
 8. ✅ **Corrigido.** Chaves de `localStorage` divergiam do CLAUDE.md: a chave real do hotkey é `dictationKey` (não `hotkey`); a flag de onboarding concluído é `onboardingCompleted` (não `hasCompletedOnboarding`); idioma de UI e idioma de transcrição são chaves **separadas** (`uiLanguage` e `preferredLanguage`), não uma única chave `language`. Ver §6 para a tabela completa.
 9. ✅ **Corrigido.** `SECRET_KEYS` em `environment.js` tem 16 chaves, não 12. Além das 7 BYOK + 5 enterprise citadas no CLAUDE.md, há mais 4: `ASSEMBLYAI_API_KEY`, `DEEPGRAM_API_KEY`, `CUSTOM_TRANSCRIPTION_API_KEY`, `CUSTOM_CLEANUP_API_KEY`. Ver §1 e §7.
@@ -686,7 +686,7 @@ Regras de supressão em ordem: (1) `audioDetection` desligado → ignora; (2) de
 
 `setUserRecording(active)`: `true` limpa cooldown pendente; `false` agenda `_postRecordingCooldown=setTimeout(...,2500)` que ao expirar chama `_flushNotificationQueue()` — implementa cooldown de **2.5s** pós-gravação. `_flushNotificationQueue()` mostra **apenas o primeiro item** da fila (coalescência).
 
-**⚠️ Nota**: `imminentEvent` é hardcoded `null` — o lookup de evento de calendário iminente foi removido junto com Google Calendar (ver §0.6).
+**⚠️ Nota**: `imminentEvent` é hardcoded `null` — o lookup de evento de calendário iminente foi removido junto com Google Calendar (ver §0.6). `startManualMeeting()` não tem mais branch de delegação para eventos de calendário (removido junto com `joinCalendarMeeting()` — ver §3.4.5), e `handleNotificationResponse()` não computa mais `isRealEvent`.
 
 #### 3.4.2 `meetingProcessDetector.js`
 macOS: `systemPreferences.subscribeWorkspaceNotification` (CPU zero), mapeia bundle ID via `BUNDLE_ID_MAP` (Zoom/Teams/Webex/FaceTime). Windows/Linux: polling `processListCache` a cada 30s.
@@ -698,7 +698,9 @@ Detecta uso "sustentado" de microfone (reuniões não-agendadas, Google Meet). `
 Singleton, TTL 5s, usa `ps-list`, deduplica chamadas concorrentes.
 
 #### 3.4.5 Google Calendar — **removido do código atual**
-`googleCalendarManager.js`/`googleCalendarOAuth.js` não existem mais nesta branch (`chore/remove-dead-cloud-code`). `imminentEvent` hardcoded `null` em `meetingDetectionEngine.js`. `getActiveEvents()`/`getCalendarEventById()` no DB ainda existem (schema preservado) mas nada popula via sync do Google. **Não implementar** essa funcionalidade numa recriação fiel do estado atual.
+`googleCalendarManager.js`/`googleCalendarOAuth.js` não existem mais nesta branch (`chore/remove-dead-cloud-code`). `imminentEvent` hardcoded `null` em `meetingDetectionEngine.js`. **Não implementar** essa funcionalidade numa recriação fiel do estado atual.
+
+**Atualização (`docs/specs/remove-dead-google-calendar-code.md`)**: os remanescentes dessa remoção também foram eliminados. `getActiveEvents()`/`getCalendarEventById()` não existem mais em `database.js` (nem os outros 18 métodos mortos de Google Calendar); `joinCalendarMeeting()` não existe mais em `meetingDetectionEngine.js`; `startManualMeeting()` cria a nota manual diretamente, sem branch de delegação; `handleNotificationResponse()`'s `"start"` não computa mais `isRealEvent`. As tabelas `google_calendar_tokens`/`google_calendars`/`calendar_events` foram removidas do schema (`DROP TABLE IF EXISTS` idempotente em `initDatabase()` para instalações existentes). Uma recriação fiel do estado atual não deve incluir nenhum desses métodos, branches, ou tabelas.
 
 ### 3.5 Voice Agent Hotkey
 
@@ -766,7 +768,7 @@ Binário nativo `linux-fast-paste` (XTest) tentado primeiro, exceto Konsole em X
 
 **`agent_messages`**: `id, conversation_id REFERENCES agent_conversations(id) ON DELETE CASCADE, role CHECK(IN user/assistant/system), content, created_at` + `metadata (JSON)`.
 
-**`google_calendar_tokens`/`google_calendars`/`calendar_events`**: schema preservado (ver §3.4.5 — funcionalidade de sync removida, mas tabelas continuam existindo para `getActiveEvents()`/`joinCalendarMeeting()`).
+**`google_calendar_tokens`/`google_calendars`/`calendar_events`**: **removidas** (ver §3.4.5) — `initDatabase()` executa `DROP TABLE IF EXISTS` para as 3 tabelas em toda inicialização (idempotente; no-op em instalações que nunca as tiveram). Não fazem mais parte do schema atual.
 
 **`contacts`**: `email PRIMARY KEY, display_name, created_at, updated_at`.
 
@@ -784,7 +786,7 @@ Toda entidade sincronizável (`notes`, `folders`, `agent_conversations`, `transc
 **Nota**: a infraestrutura de sync com nuvem existe no schema/DB mas está desativada no cliente atual (`noteStore.ts` tem `startMigration()` como no-op comentado "Cloud sync disabled").
 
 #### 4.1.3 Operações principais
-CRUD completo por entidade (`saveTranscription`, `setDictionary` com diff completo + promoção `learned→manual`, `saveNote`/`getNotes`/`updateNote`/`deleteNote`/`searchNotes`, `createFolder`/`deleteFolder` (bloqueia default, hard-deleta notas contidas), `createAgentConversation`/`addAgentMessage` (reindexação vetorial incremental), Google Calendar (schema preservado), `upsertSpeakerProfile` (fusão por email/nome), `mergeSpeakerProfiles`). Métodos de sync em massa (`getPending*`, `upsert*FromCloud`, `mark*Synced`, `hardDelete*`) para notes/folders/conversations/transcriptions.
+CRUD completo por entidade (`saveTranscription`, `setDictionary` com diff completo + promoção `learned→manual`, `saveNote`/`getNotes`/`updateNote`/`deleteNote`/`searchNotes`, `createFolder`/`deleteFolder` (bloqueia default, hard-deleta notas contidas), `createAgentConversation`/`addAgentMessage` (reindexação vetorial incremental), `upsertSpeakerProfile` (fusão por email/nome), `mergeSpeakerProfiles`). Métodos de sync em massa (`getPending*`, `upsert*FromCloud`, `mark*Synced`, `hardDelete*`) para notes/folders/conversations/transcriptions. (Não há mais métodos de Google Calendar — removidos por completo, ver §3.4.5/§4.1.1.)
 
 `cleanup()`: fecha conexão e apaga o arquivo `.db` do disco.
 
@@ -1040,7 +1042,7 @@ Registra só `localProviders` (Map, `formatPrompt` via template). Cloud/enterpri
 #### 5.6.3 Prompts (`src/config/prompts/`)
 `PROMPT_KINDS = {cleanup, dictationAgent, chatAgent}`. `resolvePrompt(kind, opts)`: prompt customizado do usuário `|| getDefaultPromptText`; `applySubstitutions` injeta `{{agentName}}`, instrução de idioma, sufixo de dicionário. `wrapCleanupTranscript`. `getAgentSystemPrompt` monta prompt do chat do agente + instruções por tool + bloco de notas relevantes (RAG).
 
-**Nota**: `get_calendar_events` tem instrução/ícone mas **não há tool registrada** — planejada/removida, não funcional.
+**Nota histórica**: `get_calendar_events` tinha instrução em `TOOL_INSTRUCTIONS` e ícone em `toolIcons.ts` mas nunca houve tool registrada — planejada/removida, nunca funcional. Removido por completo (`docs/specs/remove-dead-google-calendar-code.md`), junto com as chaves de locale órfãs `chat.tools.get_calendar_eventsStatus`/`calendarEvents`/`calendarEvents_plural` (`en`/`pt`) e o bloco `integrations.*` (pt-only) que não tinha nenhuma referência em código.
 
 ### 5.7 Supressão de "thinking" (`src/services/ai/thinkingSuppression.ts`)
 

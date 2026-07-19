@@ -73,9 +73,11 @@ This must **not** touch:
 - R6. Preserve the manual meeting-recording feature completely: the `meeting` hotkey slot
   and its Settings UI (`SettingsPage.tsx` "Meeting Hotkey" section,
   `register-meeting-hotkey` IPC, `hyprlandShortcut`/`gnomeShortcut`/`kdeShortcut`
-  `ToggleMeeting` bindings), `meetingDetectionEngine.js`'s manual-start methods
-  (`startManualMeeting`, `joinCalendarMeeting` — the latter is pre-existing dead calendar
-  code per `docs/RECREATION_SPEC.md` §0.6/§3.4.5 and is out of scope here, see Non-goals),
+  `ToggleMeeting` bindings), `meetingDetectionEngine.js`'s manual-start method
+  (`startManualMeeting` — by the time this spec executes, `joinCalendarMeeting()` no
+  longer exists: it was removed, calendar-free, by
+  `docs/specs/remove-dead-google-calendar-code.md`, which is sequenced to land first —
+  see that spec's Design "Sequencing" section),
   `queueMeetingNoteNavigation`/`consumePendingMeetingNoteNavigation`,
   `snapControlPanelToMeetingMode`/`restoreControlPanelFromMeetingMode`, the entire
   "Meeting Transcription" IPC block in `ipcHandlers.js` (`meeting-transcription-prepare/
@@ -136,12 +138,14 @@ This must **not** touch:
 - No changes to Note Recording.
 - No changes to `windows-system-audio-helper` / `AudioTapManager` (system-audio capture
   for manual meeting recording) — see Design for why these are out of scope.
-- No cleanup of the pre-existing dead Google Calendar code (`getActiveEvents()`,
-  `getCalendarEventById()` in `database.js`, `joinCalendarMeeting()` in the launcher).
-  This code already does nothing useful (calendar sync was removed separately, see
-  `docs/RECREATION_SPEC.md` §0.6/§3.4.5) and is a separate, pre-existing divergence not
-  introduced or worsened by this change. Tracking its removal is a separate spec if
-  desired.
+- Cleanup of the pre-existing dead Google Calendar code (`getActiveEvents()`,
+  `getCalendarEventById()` in `database.js`, `joinCalendarMeeting()` in the launcher) is
+  not this spec's job — that removal is `docs/specs/remove-dead-google-calendar-code.md`'s
+  scope, and (per its recommended sequencing) lands *before* this spec, meaning
+  `joinCalendarMeeting()`/`getActiveEvents()`/`getCalendarEventById()` are already gone
+  from the codebase by the time this spec executes. This spec's own references to
+  `meetingDetectionEngine.js`'s "manual-start methods" (R6, Design) reflect that
+  already-narrowed shape (`startManualMeeting()` only) rather than the pre-cleanup one.
 - No changes to `meetingAecManager.js`, `meetingEchoLeakDetector.js`,
   `meetingMicHoldback.js`, `meetingAudioStorage.js`, or any part of the "Meeting
   Transcription" IPC block in `ipcHandlers.js`.
@@ -193,7 +197,11 @@ capture-only and preserved.
 - `src/helpers/meetingDetectionEngine.js` → `src/helpers/manualMeetingLauncher.js`,
   class `MeetingDetectionEngine` → `ManualMeetingLauncher`. The narrowed class keeps
   only: constructor `(windowManager, databaseManager)` (drop the two detector
-  parameters), `startManualMeeting()`, `joinCalendarMeeting()`,
+  parameters), `startManualMeeting()` (already calendar-free — its
+  `getActiveEvents()`/`joinCalendarMeeting()` delegation was removed by
+  `docs/specs/remove-dead-google-calendar-code.md`, sequenced to land first, so
+  `joinCalendarMeeting()` itself no longer exists by the time this spec executes and is
+  not something this spec's narrowed class needs to keep or delete),
   `setMeetingModeActive(active)`, `broadcastToWindows(channel, data)`, and the
   `handleNotificationResponse`/`handleNotificationTimeout`/detection-preference/queue
   machinery is deleted (it existed only to service the removed prompt). Confirm at
@@ -368,8 +376,12 @@ time since line numbers drift)
 - The `"meeting"` debug-log category is **left as-is** — still an accurate umbrella term
   for the surviving manual-recording pipeline; renaming would be churn without benefit.
 - `joinCalendarMeeting()`/`getActiveEvents()`/`getCalendarEventById()` (pre-existing dead
-  calendar code, Non-goals) are **tracked as separate technical debt**, not folded into
-  this change — see the standalone follow-up task for its removal.
+  calendar code, Non-goals) are **not folded into this change** — their removal is
+  `docs/specs/remove-dead-google-calendar-code.md`'s scope, sequenced to land *before*
+  this spec. By the time this spec executes, those three functions no longer exist in
+  the codebase; this spec's own text (R6, Design "Files renamed") has been updated to
+  match that already-narrowed shape rather than describing them as still-present dead
+  code to work around.
 - `docs/guides/DEBUG.md`'s "Meeting Detection" table row is **deleted outright** (not
   repurposed as a historical note) once execution reveals exactly which debug log lines
   under the `"meeting"` category survive the removal.
