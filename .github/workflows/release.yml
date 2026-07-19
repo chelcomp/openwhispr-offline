@@ -55,11 +55,6 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}
 
-      - name: Download Qdrant binary
-        run: node scripts/download-qdrant.js --current
-        env:
-          GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}
-
       - name: Download meeting AEC helper
         run: node scripts/download-meeting-aec-helper.js --current
         env:
