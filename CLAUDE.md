@@ -16,8 +16,8 @@ These three constraints are foundational and take priority over convenience, fea
 
 - No telemetry, analytics, or crash-reporting call fires without explicit user opt-in. There is none in the codebase today — keep it that way.
 - No silent/background update checks. Any version-check network call must be visible to and controlled by the user, not fired automatically without notice.
-- Cloud AI providers (OpenAI, Anthropic, Gemini, Groq, the enterprise `bedrock`/`azure`/`vertex` handler, etc.) are an explicit exception: they're BYOK and opt-in — the user supplied the key and picked the provider. The rule is about data leaving *without the user choosing it*, not about the existence of cloud options.
-- No new TCP listener may bind to anything other than loopback (`127.0.0.1`) — never `0.0.0.0`, never reachable from the network. Existing loopback-only sidecars (`cliBridge.js` on ports 8200–8219, the Qdrant sidecar) are already compliant and don't need re-justifying. Any *new* port/service must state in its spec why it's needed and confirm it's loopback-only.
+- Cloud AI providers (OpenAI, Anthropic, Gemini, Groq, the enterprise `bedrock`/`azure`/`vertex` handler, etc.) are an explicit exception: they're BYOK and opt-in — the user supplied the key and picked the provider. The rule is about data leaving _without the user choosing it_, not about the existence of cloud options.
+- No new TCP listener may bind to anything other than loopback (`127.0.0.1`) — never `0.0.0.0`, never reachable from the network. Existing loopback-only sidecars (`cliBridge.js` on ports 8200–8219, the Qdrant sidecar) are already compliant and don't need re-justifying. Any _new_ port/service must state in its spec why it's needed and confirm it's loopback-only.
 
 ### 2. Performance — minimal footprint while idle
 
@@ -351,7 +351,7 @@ Non-secret env vars persisted to `.env` (via `saveAllKeysToEnvFile()`):
     - Gemini 3.1 Pro (`gemini-3.1-pro-preview`) - Most capable Gemini model
     - Gemini 3 Flash (`gemini-3-flash-preview`) - Ultra-fast, high-capability next-gen model
     - Gemini 2.5 Flash Lite (`gemini-2.5-flash-lite`) - Lowest latency and cost
-  - **Local**: GGUF models via llama.cpp (Qwen, Llama, Mistral, GPT-OSS)
+  - **Local**: GGUF models via llama.cpp (Qwen, Llama, Mistral, GPT-OSS, NVIDIA/Nemotron)
 
 ### 8. Model Registry Architecture
 
@@ -418,11 +418,12 @@ The app can open OS-level settings for microphone permissions, sound input selec
 - `open-accessibility-settings`: Opens accessibility privacy settings (macOS only)
 
 **Platform-specific URLs**:
-| Platform | Microphone Privacy | Sound Input | Accessibility |
-|----------|-------------------|-------------|---------------|
-| macOS | `x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone` | `x-apple.systempreferences:com.apple.preference.sound?input` | `x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility` |
-| Windows | `ms-settings:privacy-microphone` | `ms-settings:sound` | N/A |
-| Linux | Manual (no URL scheme) | Manual (e.g., pavucontrol) | N/A |
+
+| Platform | Microphone Privacy                                                           | Sound Input                                                  | Accessibility                                                                   |
+| -------- | ---------------------------------------------------------------------------- | ------------------------------------------------------------ | ------------------------------------------------------------------------------- |
+| macOS    | `x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone` | `x-apple.systempreferences:com.apple.preference.sound?input` | `x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility` |
+| Windows  | `ms-settings:privacy-microphone`                                             | `ms-settings:sound`                                          | N/A                                                                             |
+| Linux    | Manual (no URL scheme)                                                       | Manual (e.g., pavucontrol)                                   | N/A                                                                             |
 
 **UI Component** (`MicPermissionWarning.tsx`):
 
@@ -494,10 +495,10 @@ Improve transcription accuracy for specific words, names, or technical terms:
 
 **Auto-learn pipeline (learning corrections from the destination field)**:
 
-The custom dictionary also grows automatically by watching what the user *fixes* after a paste — this is strictly spelling-correction learning (teaching correct spelling of a word/name the user habitually mis-dictates), not a substitution/replacement engine. Actual find/replace is a separate, existing feature (Snippets: `trigger` → `replacement`, app-filtered); building substitution into the dictionary here would be duplicate scope.
+The custom dictionary also grows automatically by watching what the user _fixes_ after a paste — this is strictly spelling-correction learning (teaching correct spelling of a word/name the user habitually mis-dictates), not a substitution/replacement engine. Actual find/replace is a separate, existing feature (Snippets: `trigger` → `replacement`, app-filtered); building substitution into the dictionary here would be duplicate scope.
 
-- **Final-pasted-text invariant**: `TextEditMonitor.startMonitoring(text, 30000, {targetPid})` is started (500ms after paste, gated on Settings → Auto-Learn) from the `paste-text` IPC handler in `ipcHandlers.js`, using the *exact same* `text` argument the handler received — never `textToPaste` (which has snippets applied + a trailing smart-spacing space). Since `text` is always `AudioManager.processTranscription()`'s return value, this baseline is already the post-cleanup text whenever Text Cleanup is active (never the pre-cleanup raw transcript), and the raw transcript unchanged whenever cleanup is off/unreachable or bypassed (dictation-agent/voice-agent route, §17). Regression-locked in `test/helpers/pasteTextMonitorInvariant.test.js`.
-- **Detecting a correction**: the monitor emits `text-edited` (`{originalText, newFieldValue}`) on any OS-reported change to the focused field. `ipcHandlers.js`'s `_setupTextEditMonitor()` debounces 1500ms (`AUTO_LEARN_DEBOUNCE_MS`) then calls `_processCorrections()`, which delegates to `src/helpers/autoLearnDictionary.js`'s `processAutoLearnCorrections()`. That in turn calls `src/utils/correctionLearner.js`'s `extractCorrections(originalText, fieldValue, existingDictionary)`, which isolates the edited region (exact substring or a ≥30%-overlap sliding word-window — so text typed *after* the pasted content is never mistaken for a correction), word-aligns via LCS, bails out on rewrites (>50% of words changed), and filters candidates (already in dictionary, duplicate, case-identical, <3 chars, or Levenshtein edit-distance ratio >0.65). Returns `Array<{from, to}>` — `from` is the original mis-transcribed word, `to` is the correction; only `to` is ever added to the dictionary's Whisper-prompt hint list.
+- **Final-pasted-text invariant**: `TextEditMonitor.startMonitoring(text, 30000, {targetPid})` is started (500ms after paste, gated on Settings → Auto-Learn) from the `paste-text` IPC handler in `ipcHandlers.js`, using the _exact same_ `text` argument the handler received — never `textToPaste` (which has snippets applied + a trailing smart-spacing space). Since `text` is always `AudioManager.processTranscription()`'s return value, this baseline is already the post-cleanup text whenever Text Cleanup is active (never the pre-cleanup raw transcript), and the raw transcript unchanged whenever cleanup is off/unreachable or bypassed (dictation-agent/voice-agent route, §17). Regression-locked in `test/helpers/pasteTextMonitorInvariant.test.js`.
+- **Detecting a correction**: the monitor emits `text-edited` (`{originalText, newFieldValue}`) on any OS-reported change to the focused field. `ipcHandlers.js`'s `_setupTextEditMonitor()` debounces 1500ms (`AUTO_LEARN_DEBOUNCE_MS`) then calls `_processCorrections()`, which delegates to `src/helpers/autoLearnDictionary.js`'s `processAutoLearnCorrections()`. That in turn calls `src/utils/correctionLearner.js`'s `extractCorrections(originalText, fieldValue, existingDictionary)`, which isolates the edited region (exact substring or a ≥30%-overlap sliding word-window — so text typed _after_ the pasted content is never mistaken for a correction), word-aligns via LCS, bails out on rewrites (>50% of words changed), and filters candidates (already in dictionary, duplicate, case-identical, <3 chars, or Levenshtein edit-distance ratio >0.65). Returns `Array<{from, to}>` — `from` is the original mis-transcribed word, `to` is the correction; only `to` is ever added to the dictionary's Whisper-prompt hint list.
 - **Anti-oscillation guard**: before persisting a new `{from, to}` pair, checks whether an existing `source = 'learned'` dictionary row already has `word = from` and `learned_from = to` (case-insensitive) — the exact reverse of a previously-learned correction. If so, the pair is skipped (not persisted) and logged at debug level only (`[AutoLearn] Skipped likely oscillation`) — this is a heuristic against simple A↔B flip-flopping, not a guarantee against longer cycles (A→B→C→A); the existing `undo-learned-corrections` IPC and manual dictionary editing remain the escape hatch.
 - **`learned_from` column**: nullable `TEXT` column on `custom_dictionary`, populated only when a brand-new `source = 'learned'` row is inserted (via an optional provenance `Map` argument to `DatabaseManager.setDictionary(words, sourceForNewWords, learnedFromByLowerWord)`). Cleared to `NULL` when a `learned` row is promoted to `manual` (user re-types/endorses it). Deliberately excluded from `getPendingDictionary()`'s cloud-sync push payload — it's local-only provenance for this device's oscillation guard and is never applied as a find/replace rule anywhere.
 
@@ -679,7 +680,7 @@ All user-facing strings **must** use the i18n system. Never hardcode UI text in 
 
 **Setup**: react-i18next (v15) with i18next (v25). Translation files in `src/locales/{lang}/translation.json`.
 
-**Supported languages**: en, es, fr, de, pt, it, ru, zh-CN, zh-TW
+**Supported languages**: en-US and pt-BR only (`src/locales/en/` and `src/locales/pt/`). This is a deliberate project policy — the app previously supported 9 UI languages (en, es, fr, de, pt, it, ru, zh-CN, zh-TW), but the other 7 locale directories have already been removed from the repository; only `en` (en-US) and `pt` (pt-BR) exist and are maintained/shipped as UI languages today. Do not reintroduce the removed locale files — every new UI string only needs a translation key in these two.
 
 **How to use**:
 
@@ -693,7 +694,7 @@ const { t } = useTranslation();
 
 **Rules**:
 
-1. Every new UI string must have a translation key in `en/translation.json` and all other language files
+1. Every new UI string must have a translation key in `en/translation.json` and `pt/translation.json` (the only two maintained UI languages — see "Supported languages" above)
 2. Use `useTranslation()` hook in components and hooks
 3. Keep `{{variable}}` interpolation syntax for dynamic values
 4. Do NOT translate: brand names (EktosWhispr, Pro), technical terms (Markdown, Signal ID), format names (MP3, WAV), AI system prompts
@@ -705,7 +706,7 @@ const { t } = useTranslation();
 2. **New Setting**: Update useSettings.ts and SettingsPage.tsx
 3. **New UI Component**: Follow shadcn/ui patterns in src/components/ui
 4. **New Manager**: Create in src/helpers/, initialize in main.js
-5. **New UI Strings**: Add translation keys to all 10 language files (see i18n section above)
+5. **New UI Strings**: Add translation keys to both maintained language files (`en`, `pt` — see i18n section above)
 6. **New Sidecar Binary**: Add download script in `scripts/`, add to `prebuild*` scripts in package.json, add manager in `src/helpers/`, initialize in `main.js`. Spawn the child with `detached: process.platform !== "win32"` so it has its own process group on Unix. Right after spawn call `sidecarPidFile.write(name, child.pid)` and on `close` call `sidecarPidFile.clear(name)`. Add the binary fragment to `EXPECTED_BINARY_FRAGMENTS` in `sidecarReaper.js`. Register a stop function via `sidecarRegistry.register(name, () => manager.stop())` in `registerSidecars()` — that single registration replaces the old `will-quit` line.
 
 ### Testing Checklist
@@ -849,7 +850,7 @@ const { t } = useTranslation();
 
 - Streaming transcription support
 - Custom wake word detection
-- ~~Multi-language UI~~ (implemented — 9 languages via react-i18next)
+- ~~Multi-language UI~~ (implemented via react-i18next — scaled back to 2 maintained UI languages, en-US and pt-BR, per current project policy; see i18n section above)
 - Cloud model selection
 - Batch transcription
 - Export formats beyond clipboard

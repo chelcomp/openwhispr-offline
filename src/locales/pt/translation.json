@@ -2036,6 +2036,8 @@
         "llama_llama_3_2_1b_instruct_q4_k_m": "Modelo minúsculo para dispositivos de borda",
         "llama_llama_3_2_3b_instruct_q4_k_m": "Modelo multilíngue pequeno, mas capaz",
         "llama_llama_3_1_8b_instruct_q4_k_m": "Modelo poderoso com excelente desempenho",
+        "llama_llama_3_1_nemotron_nano_8b_v1_q4_k_m": "Modelo de raciocínio Llama 3.1 8B ajustado pela NVIDIA (Nemotron)",
+        "nvidia_nemotron_3_nano_4b_q4_k_m": "Modelo compacto de raciocínio da NVIDIA com contexto longo",
         "openai_oss_gpt_oss_20b_mxfp4": "Modelo open-weight da OpenAI para hardware de consumo",
         "gemma_gemma_3_4b_it_q4_k_m": "Modelo open-weight do Google, ótimo equilíbrio entre velocidade e qualidade",
         "gemma_gemma_4_31b_it_q4_k_m": "O maior Gemma 4 do Google, melhor qualidade",

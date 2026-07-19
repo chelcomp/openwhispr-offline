@@ -2149,6 +2149,8 @@
         "llama_llama_3_2_1b_instruct_q4_k_m": "Tiny model for edge devices",
         "llama_llama_3_2_3b_instruct_q4_k_m": "Small but capable multilingual model",
         "llama_llama_3_1_8b_instruct_q4_k_m": "Powerful model with great performance",
+        "llama_llama_3_1_nemotron_nano_8b_v1_q4_k_m": "NVIDIA's Nemotron-tuned Llama 3.1 8B reasoning model",
+        "nvidia_nemotron_3_nano_4b_q4_k_m": "NVIDIA's compact reasoning model with long context",
         "openai_oss_gpt_oss_20b_mxfp4": "OpenAI's open-weight model for consumer hardware",
         "gemma_gemma_3_4b_it_q4_k_m": "Google's open-weight model, great balance of speed and quality",
         "gemma_gemma_4_31b_it_q4_k_m": "Google's largest Gemma 4, best quality",

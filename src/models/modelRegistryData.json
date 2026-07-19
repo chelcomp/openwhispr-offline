@@ -768,6 +768,40 @@
           "contextLength": 131072,
           "hfRepo": "bartowski/Meta-Llama-3.1-8B-Instruct-GGUF",
           "descriptionKey": "models.descriptions.local.llama_llama_3_1_8b_instruct_q4_k_m"
+        },
+        {
+          "id": "llama-3.1-nemotron-nano-8b-v1-q4_k_m",
+          "name": "Llama 3.1 Nemotron Nano 8B",
+          "size": "4.58GB",
+          "sizeBytes": 4920736864,
+          "description": "NVIDIA's Nemotron-tuned Llama 3.1 8B reasoning model",
+          "fileName": "nvidia_Llama-3.1-Nemotron-Nano-8B-v1-Q4_K_M.gguf",
+          "quantization": "q4_k_m",
+          "contextLength": 131072,
+          "hfRepo": "bartowski/nvidia_Llama-3.1-Nemotron-Nano-8B-v1-GGUF",
+          "supportsThinking": true,
+          "descriptionKey": "models.descriptions.local.llama_llama_3_1_nemotron_nano_8b_v1_q4_k_m"
+        }
+      ]
+    },
+    {
+      "id": "nvidia",
+      "name": "NVIDIA",
+      "baseUrl": "https://huggingface.co",
+      "promptTemplate": "<|im_start|>system\n{system}<|im_end|>\n<|im_start|>user\n{user}<|im_end|>\n<|im_start|>assistant\n",
+      "models": [
+        {
+          "id": "nemotron-3-nano-4b-q4_k_m",
+          "name": "Nemotron 3 Nano 4B",
+          "size": "2.64GB",
+          "sizeBytes": 2837072864,
+          "description": "NVIDIA's compact reasoning model with long context",
+          "fileName": "NVIDIA-Nemotron3-Nano-4B-Q4_K_M.gguf",
+          "quantization": "q4_k_m",
+          "contextLength": 262144,
+          "hfRepo": "nvidia/NVIDIA-Nemotron-3-Nano-4B-GGUF",
+          "supportsThinking": true,
+          "descriptionKey": "models.descriptions.local.nvidia_nemotron_3_nano_4b_q4_k_m"
         }
       ]
     },
