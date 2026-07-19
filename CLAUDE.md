@@ -51,6 +51,14 @@ EktosWhispr starts with Windows and runs continuously in the background, so idle
 - The spec's Validation Plan must include a test that exercises the old format/value through the upgrade path and asserts the data survives — this is a specific case of the mandatory regression-test rule above, not an exemption from it.
 - `pr-reviewer` FAILs any diff that renames or restructures a storage key or schema without an accompanying migration.
 
+### 7. Data retention — operational data persists; only collected/ephemeral data is user-controlled and auto-purged
+
+- **Never auto-expunged (operational data, persisted indefinitely, deletion only ever user-initiated)**: Personal Notes content, everything related to Meeting recordings — both transcripts/summaries AND the raw meeting audio file itself — and the custom Dictionary. This is not "collected data" in the privacy sense; it's the product's own operational state, and auto-deleting any of it would be a data-loss bug, not a privacy feature. This is a deliberate change from today's code: `meetingAudioStorage.js`'s `cleanupExpiredAudio()` currently auto-purges meeting audio via the same `audioRetentionDays` setting as dictation audio — that must stop; meeting audio gets no automatic expiry at all.
+- **Eligible for user-controlled retention + auto-purge (collected/ephemeral data)**: dictation audio recordings (`audioRetentionDays` setting, `audioStorageManager.cleanupExpiredAudio()`), the SQLite transcription-history text (today only has a manual "Clear All", no age-based auto-expiry — gap to fill), and debug log files (today have no rotation/retention at all — gap to fill).
+- Every item in the second category must have (a) a user-facing setting controlling its retention window and (b) an automatic background purge honoring that setting — a "Clear All" button alone does not satisfy this rule.
+- **Known bug, scope now expanded**: `ipcHandlers.js`'s `_setupAudioCleanup()` today hardcodes `DEFAULT_RETENTION_DAYS = 30` for both dictation and meeting audio, ignoring the user's actual `audioRetentionDays` setting entirely. Fixing it must also remove meeting audio from that cleanup path altogether per this premise, not just make it respect the setting for meeting audio too.
+- Any spec touching data storage must state explicitly which category (operational vs. collected) new data falls into, and must never introduce auto-expiry for operational data.
+
 ## Architecture Overview
 
 ### Core Technologies
