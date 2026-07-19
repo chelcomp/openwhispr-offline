@@ -8,6 +8,57 @@ This document provides comprehensive technical details about the EktosWhispr pro
 
 EktosWhispr is an Electron-based desktop dictation application that uses whisper.cpp for speech-to-text transcription. It supports both local (privacy-focused) and cloud (OpenAI API) processing modes.
 
+## Non-Negotiable Product Premises
+
+These three constraints are foundational and take priority over convenience, feature scope, or implementation simplicity. `spec-planner` must state how any spec touching these areas complies with them, and `pr-reviewer` treats violations as a hard `FAIL`, not an advisory note.
+
+### 1. Privacy — no data leaves the user's PC by default
+
+- No telemetry, analytics, or crash-reporting call fires without explicit user opt-in. There is none in the codebase today — keep it that way.
+- No silent/background update checks. Any version-check network call must be visible to and controlled by the user, not fired automatically without notice.
+- Cloud AI providers (OpenAI, Anthropic, Gemini, Groq, the enterprise `bedrock`/`azure`/`vertex` handler, etc.) are an explicit exception: they're BYOK and opt-in — the user supplied the key and picked the provider. The rule is about data leaving *without the user choosing it*, not about the existence of cloud options.
+- No new TCP listener may bind to anything other than loopback (`127.0.0.1`) — never `0.0.0.0`, never reachable from the network. Existing loopback-only sidecars (`cliBridge.js` on ports 8200–8219, the Qdrant sidecar) are already compliant and don't need re-justifying. Any *new* port/service must state in its spec why it's needed and confirm it's loopback-only.
+
+### 2. Performance — minimal footprint while idle
+
+EktosWhispr starts with Windows and runs continuously in the background, so idle cost matters more than active-use cost.
+
+- Idle budget (app running, no active recording, no transcription/reasoning in flight): **≤300 MB RAM, <2% average CPU**, measured over several minutes of idle — not instantaneous spikes.
+- Prefer event-driven OS APIs over polling for anything continuous (the existing pattern for meeting detection and mic activity). New background work should follow the same lazy-spawn approach used by `QdrantManager` and the ONNX utility process — spawned on first use, never at app launch.
+- Any new always-on timer, polling loop, or background service must justify its interval and cost in the spec; `pr-reviewer` checks it against the idle budget above.
+
+### 3. Speed — sub-500ms raw transcription
+
+- From hotkey release to **raw transcript text** (before any optional cleanup/agent LLM pass), local transcription must complete in **≤500ms** for the default/fast engines (Whisper `tiny`/`base`, Parakeet, GPU-accelerated paths).
+- Medium/large Whisper models are an explicit, documented exception — they trade this budget for quality, and the UI/docs must make that tradeoff visible rather than implying they also hit 500ms.
+- The optional AI cleanup/agent pass (LLM round-trip, possibly over the network) has its own latency budget, separate from this 500ms figure, since it's a distinct opt-in step.
+- Any change to the audio pipeline, `whisper.js`/`parakeet.js` integration, or the IPC path between hotkey-release and transcript-ready must state its expected impact on this budget in the spec.
+
+### 4. Single instance — the app never runs twice
+
+- Already enforced: `app.requestSingleInstanceLock()` in `main.js` exits a second launch attempt immediately (`app.exit(0)`), and the `second-instance` handler (`main.js:1023`) focuses/restores the control panel of the existing instance. This is correct behavior today — the rule is that it must never regress.
+- Rationale: the app owns a global hotkey registration, a SQLite connection, and lazily-owned sidecar ports (Qdrant, ONNX worker) — a second instance would collide with all three.
+- Any spec touching app startup, window creation, or the relaunch/update path must explicitly confirm the single-instance lock and the `second-instance` focus handler are still intact.
+
+### 5. Graceful degradation — optional components never take the app down
+
+- Every optional native binary, sidecar process, or platform integration (Qdrant, the ONNX worker, whisper.cpp/Parakeet engines, native mic/key listeners, GNOME/Hyprland/KDE D-Bus shortcuts, Linux clipboard tools) must have a defined fallback. Its failure or absence must never crash the app or block its core function (record → transcribe → paste). This generalizes the pattern already used for search (Qdrant → FTS5), meeting detection (native listener → polling), and hotkeys (push-to-talk → tap mode).
+- Any spec introducing a new optional dependency must state its fallback path in the design; `pr-reviewer` treats a missing fallback as a violation, not a nice-to-have.
+
+### 6. Migration safety — upgrades never lose user data
+
+- Any change to a settings key, localStorage schema, database schema/column, or persisted file format must ship a migration path in the same spec. Existing user data (transcription history, settings, custom dictionary, API keys, notes, hotkeys) must survive the upgrade untouched or be transformed forward — never silently reset or dropped. `postMigrationDetector.js` (the one-time bundle-ID migration) is the precedent to follow, not a one-off exception specific to that rename.
+- The spec's Validation Plan must include a test that exercises the old format/value through the upgrade path and asserts the data survives — this is a specific case of the mandatory regression-test rule above, not an exemption from it.
+- `pr-reviewer` FAILs any diff that renames or restructures a storage key or schema without an accompanying migration.
+
+### 7. Data retention — operational data persists; only collected/ephemeral data is user-controlled and auto-purged
+
+- **Never auto-expunged (operational data, persisted indefinitely, deletion only ever user-initiated)**: Personal Notes content, everything related to Meeting recordings — both transcripts/summaries AND the raw meeting audio file itself — and the custom Dictionary. This is not "collected data" in the privacy sense; it's the product's own operational state, and auto-deleting any of it would be a data-loss bug, not a privacy feature. This is a deliberate change from today's code: `meetingAudioStorage.js`'s `cleanupExpiredAudio()` currently auto-purges meeting audio via the same `audioRetentionDays` setting as dictation audio — that must stop; meeting audio gets no automatic expiry at all.
+- **Eligible for user-controlled retention + auto-purge (collected/ephemeral data)**: dictation audio recordings (`audioRetentionDays` setting, `audioStorageManager.cleanupExpiredAudio()`), the SQLite transcription-history text (today only has a manual "Clear All", no age-based auto-expiry — gap to fill), and debug log files (today have no rotation/retention at all — gap to fill).
+- Every item in the second category must have (a) a user-facing setting controlling its retention window and (b) an automatic background purge honoring that setting — a "Clear All" button alone does not satisfy this rule.
+- **Known bug, scope now expanded**: `ipcHandlers.js`'s `_setupAudioCleanup()` today hardcodes `DEFAULT_RETENTION_DAYS = 30` for both dictation and meeting audio, ignoring the user's actual `audioRetentionDays` setting entirely. Fixing it must also remove meeting audio from that cleanup path altogether per this premise, not just make it respect the setting for meeting audio too.
+- Any spec touching data storage must state explicitly which category (operational vs. collected) new data falls into, and must never introduce auto-expiry for operational data.
+
 ## Architecture Overview
 
 ### Core Technologies
@@ -600,12 +651,26 @@ A dedicated global hotkey that starts a dictation whose transcript is sent strai
 
 From now on, every improvement — feature, refactor, or bug fix — starts from a spec, not from code. Never edit application code before a plan exists and its validation approach is defined, even for changes that sound trivial. Three subagents implement this pipeline:
 
-1. **Plan** — invoke `spec-planner` (`.claude/agents/spec-planner.md`) for any new piece of work. It creates or updates a spec under `docs/specs/<slug>.md` (problem, requirements, design, and a Validation Plan describing exactly how the change will be proven correct). It never edits application code.
+1. **Plan** — invoke `spec-planner` (`.claude/agents/spec-planner.md`) for any new piece of work. It creates or updates a spec under `docs/specs/<slug>.md` (problem, requirements, design, and a Validation Plan describing exactly how the change will be proven correct). It never edits application code. For a bugfix, the Validation Plan must name a concrete automated regression test that fails before the fix and passes after; for a new feature, it must name the automated test(s) that cover the new behavior. "Not testable" is not a default — UI behavior is covered via component/interaction tests (e.g. React Testing Library, Playwright), and native-binary/hardware-dependent behavior is covered by mocking or stubbing the native binary or IPC boundary it crosses, not skipped. A spec may only forgo an automated test when it explicitly documents why none is possible and states the manual validation step instead — this is a rare, reviewed exception, not a routine escape hatch.
 2. **Approve** — the user reviews the spec. Implementation must not start while the spec's `Status` is `Draft` — only on `Approved`.
 3. **Execute** — invoke `spec-executor` (`.claude/agents/spec-executor.md`) to implement exactly what the approved spec's Design section describes, run its Validation Plan, update the relevant docs, and mark the spec `Implemented`. It refuses to start on an unapproved or missing spec.
 4. **Gate** — invoke `pr-reviewer` (`.claude/agents/pr-reviewer.md`) before any `git commit` or PR (see below). `spec-executor` invokes this itself before reporting work as commit-ready.
 
 `docs/specs/*.md` describes the target state to build toward; `docs/RECREATION_SPEC.md` remains the authoritative record of current/actual behavior (its §0 lists known divergences from this file) and should be kept in sync as specs are implemented.
+
+**Reasoning-depth convention (not mechanically enforced)**: `spec-planner` should reason thoroughly and deeply before drafting a plan — it's the cheapest place to catch a wrong design. `spec-executor` should execute the approved plan directly and efficiently, without re-deliberating decisions the spec already settled. This is a stylistic guideline for whoever/whatever is operating these agents, not a hard setting — a standalone `Agent` tool call has no "effort" parameter; that control only exists for `agent()` calls inside a `Workflow` script (`opts.effort`). Don't invoke `Workflow` for this pipeline by default — it's a heavier, more expensive orchestration mode reserved for when the user explicitly asks for it.
+
+### AI Assistant Workflow — Worktree + PR Required for Every Code Change (Mandatory)
+
+No application code is ever edited directly on `main`, and no commit is ever pushed straight to `main`. This applies to every code change — features, refactors, and bug fixes alike, no matter how small. Docs-only changes (`docs/`, `README`, other markdown) are exempt and may be made directly on the current branch.
+
+1. **Isolate** — before step 3 (Execute) of the spec-driven workflow above, call `EnterWorktree` to create a fresh git worktree branched from the latest `main`. All implementation for that spec happens inside this worktree. Never skip this because the change "looks small" — the rule is per code change, not per perceived size.
+2. **Implement** — `spec-executor` does its work inside the worktree as usual.
+3. **Gate** — `pr-reviewer` runs inside the worktree (see Pre-Commit/PR Review below).
+4. **Ship** — once `pr-reviewer` returns `PASS`, push the worktree's branch and run `gh pr create` immediately, without waiting for further confirmation. Never `git push` to `main` directly, and never merge the PR yourself — merging is the user's call.
+5. **Leave the worktree in place** (`ExitWorktree` with `action: "keep"`) until the PR is merged, so the branch and any follow-up fixes remain available. Only remove it if the user asks to clean up.
+
+If `EnterWorktree` reports the session is already inside a worktree, continue there — don't nest another one.
 
 ### AI Assistant Workflow — Mandatory Pre-Commit/PR Review
 
@@ -615,10 +680,12 @@ The `pr-reviewer` agent:
 
 - Runs the test suite (`npm test`), lint (`npm run lint`), typecheck (`npm run typecheck`), format check, and the renderer build
 - Reviews the diff for bugs, regressions, and missing test coverage
+- Verifies every bugfix and every new feature in the diff ships with a new or updated automated regression test, per the Validation Plan requirement above — **FAILs** the review if one is missing, unless the spec documents an explicit, reviewed exception for why no automated test was possible
+- Checks the diff against the [Non-Negotiable Product Premises](#non-negotiable-product-premises) (privacy, idle RAM/CPU budget, sub-500ms raw-transcription budget) — **FAILs** on any violation
 - Guarantees the code follows this document (CLAUDE.md) and `docs/RECREATION_SPEC.md` (the authoritative "what the code actually does" spec — see its §0 for known divergences from this file) as a hard pass/fail gate, not an advisory note
 - Returns a `PASS`/`FAIL` verdict
 
-Only proceed with `git commit` / `gh pr create` after a `PASS`. On `FAIL`, fix the reported issues and re-run the agent rather than committing anyway.
+Only proceed with `git commit` / `gh pr create` after a `PASS`. On `FAIL`, fix the reported issues and re-run the agent rather than committing anyway. Per the Worktree + PR rule above, `git commit` happens inside the dedicated worktree and `gh pr create` follows automatically on `PASS` — never commit or push directly to `main`.
 
 ### Internationalization (i18n) — REQUIRED
 
