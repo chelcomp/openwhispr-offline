@@ -695,6 +695,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
   resizeTranscriptionPreviewWindow: (width, height) =>
     ipcRenderer.invoke("resize-transcription-preview-window", width, height),
   sendDictationPreviewAudio: (data) => ipcRenderer.send("dictation-preview-audio", data),
+  notifyTranscriptionPreviewReady: () => ipcRenderer.send("transcription-preview-ready"),
   acquireRecordingLock: (pipeline) => ipcRenderer.invoke("acquire-recording-lock", pipeline),
   releaseRecordingLock: (pipeline) => ipcRenderer.invoke("release-recording-lock", pipeline),
 

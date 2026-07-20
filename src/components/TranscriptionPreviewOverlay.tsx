@@ -191,6 +191,8 @@ export default function TranscriptionPreviewOverlay() {
       }, HIDE_ANIMATION_MS);
     });
 
+    window.electronAPI?.notifyTranscriptionPreviewReady?.();
+
     return () => {
       clearLifecycleTimers();
       clearTimer(copiedTimerRef);

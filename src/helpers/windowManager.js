@@ -1,4 +1,4 @@
-const { app, screen, BrowserWindow, shell, dialog } = require("electron");
+const { app, screen, BrowserWindow, shell, dialog, ipcMain } = require("electron");
 const debugLogger = require("./debugLogger");
 const HotkeyManager = require("./hotkeyManager");
 const { isGlobeLikeHotkey } = HotkeyManager;
@@ -18,12 +18,17 @@ const {
   WindowPositionUtil,
 } = require("./windowConfig");
 
+const TRANSCRIPTION_PREVIEW_READY_TIMEOUT_MS = 3000;
+
 class WindowManager {
   constructor() {
     this.mainWindow = null;
     this.controlPanelWindow = null;
     this.agentWindow = null;
     this.transcriptionPreviewWindow = null;
+    this._transcriptionPreviewReady = false;
+    this._transcriptionPreviewPendingSends = [];
+    this._transcriptionPreviewReadyTimeout = null;
     this.updateNotificationWindow = null;
     this._updateNotificationDismissed = false;
     this.notificationPrefs = {
@@ -50,6 +55,54 @@ class WindowManager {
       this.isQuitting = true;
       this.hotkeyManager.unregisterAll();
     });
+
+    ipcMain.on("transcription-preview-ready", (event) => {
+      if (
+        !this.transcriptionPreviewWindow ||
+        this.transcriptionPreviewWindow.isDestroyed() ||
+        event.sender !== this.transcriptionPreviewWindow.webContents
+      ) {
+        // Stale signal from a previously destroyed window instance — ignore.
+        return;
+      }
+      this._markTranscriptionPreviewReady();
+    });
+  }
+
+  _markTranscriptionPreviewReady() {
+    if (this._transcriptionPreviewReadyTimeout) {
+      clearTimeout(this._transcriptionPreviewReadyTimeout);
+      this._transcriptionPreviewReadyTimeout = null;
+    }
+    this._transcriptionPreviewReady = true;
+    this._flushTranscriptionPreviewPendingSends();
+  }
+
+  _flushTranscriptionPreviewPendingSends() {
+    const pending = this._transcriptionPreviewPendingSends;
+    this._transcriptionPreviewPendingSends = [];
+    if (!this.transcriptionPreviewWindow || this.transcriptionPreviewWindow.isDestroyed()) {
+      return;
+    }
+    for (const { channel, payload } of pending) {
+      if (payload === undefined) {
+        this.transcriptionPreviewWindow.webContents.send(channel);
+      } else {
+        this.transcriptionPreviewWindow.webContents.send(channel, payload);
+      }
+    }
+  }
+
+  _sendToPreviewWindow(channel, payload) {
+    if (this._transcriptionPreviewReady) {
+      if (payload === undefined) {
+        this.transcriptionPreviewWindow.webContents.send(channel);
+      } else {
+        this.transcriptionPreviewWindow.webContents.send(channel, payload);
+      }
+      return;
+    }
+    this._transcriptionPreviewPendingSends.push({ channel, payload });
   }
 
   async createMainWindow() {
@@ -812,9 +865,24 @@ class WindowManager {
     }
 
     this.transcriptionPreviewWindow = new BrowserWindow(TRANSCRIPTION_PREVIEW_CONFIG);
+    this._transcriptionPreviewReady = false;
+    this._transcriptionPreviewPendingSends = [];
+    if (this._transcriptionPreviewReadyTimeout) {
+      clearTimeout(this._transcriptionPreviewReadyTimeout);
+    }
+    this._transcriptionPreviewReadyTimeout = setTimeout(() => {
+      this._transcriptionPreviewReadyTimeout = null;
+      this._markTranscriptionPreviewReady();
+    }, TRANSCRIPTION_PREVIEW_READY_TIMEOUT_MS);
 
     this.transcriptionPreviewWindow.on("closed", () => {
       this.transcriptionPreviewWindow = null;
+      this._transcriptionPreviewReady = false;
+      this._transcriptionPreviewPendingSends = [];
+      if (this._transcriptionPreviewReadyTimeout) {
+        clearTimeout(this._transcriptionPreviewReadyTimeout);
+        this._transcriptionPreviewReadyTimeout = null;
+      }
     });
 
     if (process.env.NODE_ENV === "development") {
@@ -847,31 +915,31 @@ class WindowManager {
       this.transcriptionPreviewWindow.setBounds(position);
     }
 
-    this.transcriptionPreviewWindow.webContents.send("preview-text", text);
+    this._sendToPreviewWindow("preview-text", text);
     this.transcriptionPreviewWindow.showInactive();
     WindowPositionUtil.setupAlwaysOnTop(this.transcriptionPreviewWindow);
   }
 
   appendTranscriptionPreview(text) {
     if (!this.transcriptionPreviewWindow || this.transcriptionPreviewWindow.isDestroyed()) return;
-    this.transcriptionPreviewWindow.webContents.send("preview-append", text);
+    this._sendToPreviewWindow("preview-append", text);
   }
 
   holdTranscriptionPreview(options = {}) {
     if (!this.transcriptionPreviewWindow || this.transcriptionPreviewWindow.isDestroyed()) return;
-    this.transcriptionPreviewWindow.webContents.send("preview-hold", {
+    this._sendToPreviewWindow("preview-hold", {
       showCleanup: !!options.showCleanup,
     });
   }
 
   updateCleanupPreview(text) {
     if (!this.transcriptionPreviewWindow || this.transcriptionPreviewWindow.isDestroyed()) return;
-    this.transcriptionPreviewWindow.webContents.send("preview-cleanup-update", text);
+    this._sendToPreviewWindow("preview-cleanup-update", text);
   }
 
   completeTranscriptionPreview(text) {
     if (!this.transcriptionPreviewWindow || this.transcriptionPreviewWindow.isDestroyed()) return;
-    this.transcriptionPreviewWindow.webContents.send("preview-result", { text });
+    this._sendToPreviewWindow("preview-result", { text });
     this.transcriptionPreviewWindow.showInactive();
     WindowPositionUtil.setupAlwaysOnTop(this.transcriptionPreviewWindow);
   }
@@ -879,7 +947,7 @@ class WindowManager {
   hideTranscriptionPreview() {
     if (!this.transcriptionPreviewWindow || this.transcriptionPreviewWindow.isDestroyed()) return;
 
-    this.transcriptionPreviewWindow.webContents.send("preview-hide");
+    this._sendToPreviewWindow("preview-hide");
     setTimeout(() => {
       if (this.transcriptionPreviewWindow && !this.transcriptionPreviewWindow.isDestroyed()) {
         this.transcriptionPreviewWindow.hide();
