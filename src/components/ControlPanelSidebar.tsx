@@ -133,7 +133,7 @@ export default function ControlPanelSidebar({
 
       <div className="flex-1" />
 
-      <div className="px-2 pb-2 space-y-0.5">
+      <div className="px-2 pb-7 space-y-0.5">
         {updateAction && (
           <div className="px-1 pb-1" style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}>
             {updateAction}

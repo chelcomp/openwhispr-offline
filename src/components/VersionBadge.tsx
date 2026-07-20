@@ -30,7 +30,7 @@ export default function VersionBadge({ variant, visible = true }: VersionBadgePr
   const wrapperClassName =
     variant === "overlay"
       ? "fixed bottom-1 left-1 z-0 pointer-events-none opacity-30 hover:opacity-90 transition-opacity duration-150"
-      : "fixed bottom-2 left-3 z-0 pointer-events-none";
+      : "fixed bottom-2 left-3 z-[60] pointer-events-none";
 
   return (
     <div className={wrapperClassName}>
