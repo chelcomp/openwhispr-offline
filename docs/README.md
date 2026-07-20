@@ -4,11 +4,11 @@ Index of every doc in this repo — what it's for, who reads it, and when it goe
 
 ## Start here
 
-| Doc                                     | Purpose                                                                                   |
-| ---------------------------------------- | ------------------------------------------------------------------------------------------ |
-| [`../README.md`](../README.md)           | Project overview, features, screenshots, quick start, download links.                     |
-| [`../CLAUDE.md`](../CLAUDE.md)            | Technical reference for AI assistants: architecture, file responsibilities, IPC, conventions, and the mandatory spec-driven / pre-commit-review workflow. Read this before touching any code. |
-| [`../CHANGELOG.md`](../CHANGELOG.md)     | Version history.                                                                            |
+| Doc                                  | Purpose                                                                                                                                                                                       |
+| ------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [`../README.md`](../README.md)       | Project overview, features, screenshots, quick start, download links.                                                                                                                         |
+| [`../CLAUDE.md`](../CLAUDE.md)       | Technical reference for AI assistants: architecture, file responsibilities, IPC, conventions, and the mandatory spec-driven / pre-commit-review workflow. Read this before touching any code. |
+| [`../CHANGELOG.md`](../CHANGELOG.md) | Version history.                                                                                                                                                                              |
 
 ## Ground truth vs. target state — read this before trusting any architecture doc
 
@@ -21,33 +21,36 @@ Two documents describe "what the app does," at different points in time, and the
 
 ## Reference (operational / security)
 
-| Doc                                                     | Purpose                                                                                     |
-| -------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
-| [`network-allowlist.md`](network-allowlist.md)           | Outbound hosts the app contacts, by feature — for firewall/proxy/DNS-filter configuration. |
-| [`SECURITY.md`](SECURITY.md)                             | Vulnerability reporting process and security model (credential storage, context isolation, scope). |
+| Doc                                            | Purpose                                                                                                                  |
+| ---------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| [`network-allowlist.md`](network-allowlist.md) | Outbound hosts the app contacts, by feature — for firewall/proxy/DNS-filter configuration.                               |
+| [`SECURITY.md`](SECURITY.md)                   | Vulnerability reporting process and security model (credential storage, context isolation, scope).                       |
+| [`DEPENDENCIES.md`](DEPENDENCIES.md)           | npm packages, native binaries (built vs. downloaded), and on-demand model downloads — version pinning and update policy. |
 
 ## Guides (end users / support)
 
-| Doc                                                       | Purpose                                                                 |
-| ---------------------------------------------------------- | -------------------------------------------------------------------------- |
-| [`guides/TROUBLESHOOTING.md`](guides/TROUBLESHOOTING.md)   | Symptom → fix table for the most common issues, per platform.          |
-| [`guides/DEBUG.md`](guides/DEBUG.md)                       | How to enable verbose logging and where log files live, per platform.  |
-| [`guides/LOCAL_WHISPER_SETUP.md`](guides/LOCAL_WHISPER_SETUP.md) | Local whisper.cpp model setup, selection, and troubleshooting.    |
+| Doc                                                              | Purpose                                                                                           |
+| ---------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| [`guides/TROUBLESHOOTING.md`](guides/TROUBLESHOOTING.md)         | Symptom → fix table for the most common issues, per platform.                                     |
+| [`guides/DEBUG.md`](guides/DEBUG.md)                             | How to enable verbose logging and where log files live, per platform.                             |
+| [`guides/LOCAL_WHISPER_SETUP.md`](guides/LOCAL_WHISPER_SETUP.md) | Local whisper.cpp model setup, selection, and troubleshooting.                                    |
+| [`SETUP.md`](SETUP.md)                                           | Building/running from source: prerequisites, native binary compilation, packaging, quality gates. |
 
 ## Contributing
 
-| Doc                                                       | Purpose                                                        |
-| ---------------------------------------------------------- | ------------------------------------------------------------------ |
-| [`../.github/CONTRIBUTING.md`](../.github/CONTRIBUTING.md) | How to file issues, report security problems, and submit PRs. |
+| Doc                                                        | Purpose                                                                             |
+| ---------------------------------------------------------- | ----------------------------------------------------------------------------------- |
+| [`../.github/CONTRIBUTING.md`](../.github/CONTRIBUTING.md) | How to file issues, report security problems, and submit PRs.                       |
+| [`TESTING.md`](TESTING.md)                                 | Test layout (`test/`), how to run the suite and subsets, and coverage expectations. |
 
 ## AI agents (`.claude/agents/`)
 
 These are the subagents this repo's harness uses for spec-driven development. See [`../CLAUDE.md`](../CLAUDE.md) ("AI Assistant Workflow" sections) for how they chain together.
 
-| Agent                                                          | Role                                                                                     |
-| ---------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
-| [`../.claude/agents/spec-planner.md`](../.claude/agents/spec-planner.md)   | Plans a change: writes/updates a spec under `specs/`. Never touches application code.       |
-| [`../.claude/agents/spec-executor.md`](../.claude/agents/spec-executor.md) | Implements an `Approved` spec, runs its Validation Plan, then hands off to `pr-reviewer`.    |
+| Agent                                                                      | Role                                                                                                                                     |
+| -------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| [`../.claude/agents/spec-planner.md`](../.claude/agents/spec-planner.md)   | Plans a change: writes/updates a spec under `specs/`. Never touches application code.                                                    |
+| [`../.claude/agents/spec-executor.md`](../.claude/agents/spec-executor.md) | Implements an `Approved` spec, runs its Validation Plan, then hands off to `pr-reviewer`.                                                |
 | [`../.claude/agents/pr-reviewer.md`](../.claude/agents/pr-reviewer.md)     | Pre-commit/PR gate: tests, lint, typecheck, build, bug review, and documentation compliance (this map + CLAUDE.md + RECREATION_SPEC.md). |
 
 ## Not general documentation (tool-specific state — don't edit by hand)
