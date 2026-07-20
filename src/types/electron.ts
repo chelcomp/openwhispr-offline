@@ -1572,6 +1572,7 @@ declare global {
         bounds?: { x: number; y: number; width: number; height: number };
       }>;
       sendDictationPreviewAudio?: (data: ArrayBuffer) => void;
+      notifyTranscriptionPreviewReady?: () => void;
 
     };
 
