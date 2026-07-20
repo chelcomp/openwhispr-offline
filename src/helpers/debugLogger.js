@@ -251,10 +251,15 @@ class DebugLogger {
           ? orig.warn
           : orig.log;
 
+    // Pass a static "%s" format string and the computed line as data, rather
+    // than interpolating `message` (which may be externally controlled, e.g.
+    // an error message) directly as the format string itself — avoids
+    // console's printf-style substitution reinterpreting `%`-sequences in
+    // untrusted content.
     if (meta !== undefined) {
-      consoleFn(`${levelTag}${scopeTag}${sourceTag} ${message}`, meta);
+      consoleFn("%s", `${levelTag}${scopeTag}${sourceTag} ${message}`, meta);
     } else {
-      consoleFn(`${levelTag}${scopeTag}${sourceTag} ${message}`);
+      consoleFn("%s", `${levelTag}${scopeTag}${sourceTag} ${message}`);
     }
 
     if (this.logStream) {

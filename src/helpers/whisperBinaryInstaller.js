@@ -98,6 +98,17 @@ function fetchJson(url, redirectCount = 0) {
   });
 }
 
+const GITHUB_TOKEN_HOSTS = new Set(["github.com", "api.github.com"]);
+
+function isGithubTokenHost(urlString) {
+  try {
+    const hostname = new URL(urlString).hostname.toLowerCase();
+    return GITHUB_TOKEN_HOSTS.has(hostname) || hostname.endsWith(".github.com");
+  } catch {
+    return false;
+  }
+}
+
 function formatRelease(release) {
   return {
     tag: release.tag_name,
@@ -137,7 +148,7 @@ function downloadFile(url, dest, onProgress, redirectCount = 0) {
 
       const reqHeaders = { "User-Agent": "EktosWhispr-Downloader" };
       const ghToken = process.env.GITHUB_TOKEN || process.env.GH_TOKEN;
-      if (ghToken && currentUrl.includes("github.com")) {
+      if (ghToken && isGithubTokenHost(currentUrl)) {
         reqHeaders.Authorization = `Bearer ${ghToken}`;
       }
 

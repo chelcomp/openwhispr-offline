@@ -40,6 +40,11 @@ Module._extensions[".tsx"] = tsxLoader;
 // `.test.jsx` component test files also need this transform (JSX syntax,
 // or in some cases plain JS using a .jsx extension for consistency).
 Module._extensions[".jsx"] = tsxLoader;
+// Plain `.ts` helper modules (no JSX) that a `.tsx` component under test may
+// `require()` — e.g. `clipboardCopyFallback.ts` — also need a require hook,
+// since Node's default resolution only tries `.js`/`.json`/`.node` plus
+// whatever's registered here.
+Module._extensions[".ts"] = tsxLoader;
 
 after(async () => {
   await GlobalRegistrator.unregister();
