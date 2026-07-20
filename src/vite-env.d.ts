@@ -2,6 +2,10 @@
 
 import "react";
 
+declare global {
+  const __GIT_COMMIT_HASH__: string;
+}
+
 declare module "react" {
   interface CSSProperties {
     WebkitAppRegion?: "drag" | "no-drag";

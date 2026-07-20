@@ -26,6 +26,7 @@ import {
   useMeetingRecordingStore,
 } from "../stores/meetingRecordingStore";
 import ControlPanelSidebar, { type ControlPanelView } from "./ControlPanelSidebar";
+import VersionBadge from "./VersionBadge";
 import MeetingRecordingMount from "./MeetingRecordingMount";
 import MeetingRecordingPill from "./notes/MeetingRecordingPill";
 import WindowControls from "./WindowControls";
@@ -570,6 +571,7 @@ export default function ControlPanel({ initialSettingsSection }: ControlPanelPro
 
   return (
     <div className="h-screen bg-background flex flex-col">
+      <VersionBadge variant="controlPanel" />
       <MeetingRecordingMount />
       <MeetingRecordingPill
         activeView={activeView}
