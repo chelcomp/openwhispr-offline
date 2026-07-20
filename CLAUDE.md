@@ -376,6 +376,7 @@ All AI model definitions are centralized in `src/models/modelRegistryData.json` 
 - Each model has `hfRepo` for direct HuggingFace download URLs
 - `promptTemplate` defines the chat format (ChatML, Llama, Mistral)
 - Download URLs constructed as: `{baseUrl}/{hfRepo}/resolve/main/{fileName}`
+- A model's registry `contextLength` is a *maximum request*, not what's always used at runtime: `llamaServer.js`'s local server starts at a `4096` (`DEFAULT_CONTEXT_CAP`) default per request and doubles automatically (4096→8192→16384→32768→65536) on a detected context-overflow failure, never exceeding the smaller of `65536` (`MAX_CONTEXT_SIZE`) or the model's own declared `contextLength`; `--fit on` is also added alongside `--n-gpu-layers 99` when the resolved binary supports it, as a best-effort memory-fitting safety net independent of the doubling logic (see `docs/specs/llama-server-vram-tuning.md`).
 
 ### 9. API Integrations and Updates
 
