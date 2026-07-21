@@ -81,6 +81,8 @@ export interface PrivacySettings {
   cloudBackupEnabled: boolean;
   telemetryEnabled: boolean;
   audioRetentionDays: number;
+  transcriptionIdleTimeoutMs: number;
+  llmIdleTimeoutMs: number;
   dataRetentionEnabled: boolean;
   saveDiscardedTranscriptions: boolean;
 }
@@ -384,6 +386,10 @@ function useSettingsInternal() {
     setTelemetryEnabled: store.setTelemetryEnabled,
     audioRetentionDays: store.audioRetentionDays,
     setAudioRetentionDays: store.setAudioRetentionDays,
+    transcriptionIdleTimeoutMs: store.transcriptionIdleTimeoutMs,
+    setTranscriptionIdleTimeoutMs: store.setTranscriptionIdleTimeoutMs,
+    llmIdleTimeoutMs: store.llmIdleTimeoutMs,
+    setLlmIdleTimeoutMs: store.setLlmIdleTimeoutMs,
     dataRetentionEnabled: store.dataRetentionEnabled,
     setDataRetentionEnabled: store.setDataRetentionEnabled,
     saveDiscardedTranscriptions: store.saveDiscardedTranscriptions,

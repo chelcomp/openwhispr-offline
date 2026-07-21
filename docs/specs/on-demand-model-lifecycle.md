@@ -1,7 +1,7 @@
 # On-Demand Model Lifecycle (Whisper / Parakeet / llama-server — unified, no pinning, no pre-warm)
 
 ## Status
-Approved
+Implemented
 
 ## TL;DR
 

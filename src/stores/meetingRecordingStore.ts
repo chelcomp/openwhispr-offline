@@ -683,6 +683,30 @@ export async function startRecording(args: StartRecordingArgs): Promise<void> {
   if (isRecordingFlag || isStartingFlag) return;
   isStartingFlag = true;
 
+  // Fire-and-forget transcription-engine warm-up the moment the recording
+  // starts (hotkey press / manual meeting launch), so its cold-start overlaps
+  // with the meeting starting instead of only beginning after the first
+  // audio chunk. No LLM warm-up — Meeting/Note Recording transcripts never
+  // route through the cleanup/dictation-agent LLM pass. Uses Meeting's own
+  // configured model (falling back to Dictation's, via
+  // selectResolvedMeetingTranscription — same resolution already used
+  // elsewhere for meeting transcription). See
+  // docs/specs/on-demand-model-lifecycle.md R3.
+  try {
+    const resolved = selectResolvedMeetingTranscription(getSettings());
+    if (resolved.useLocalWhisper) {
+      if (resolved.localTranscriptionProvider === "nvidia") {
+        if (resolved.parakeetModel) {
+          window.electronAPI?.parakeetServerStart?.(resolved.parakeetModel)?.catch(() => {});
+        }
+      } else if (resolved.whisperModel) {
+        window.electronAPI?.whisperServerStart?.(resolved.whisperModel)?.catch(() => {});
+      }
+    }
+  } catch {
+    // Warmup is best-effort; the lazy start on the real transcription call still works.
+  }
+
   const initialEnabled =
     args.diarizationEnabled ??
     (getSettings() as { speakerDiarizationEnabled?: boolean }).speakerDiarizationEnabled ??

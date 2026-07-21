@@ -405,6 +405,7 @@ class IPCHandlers {
     liveSpeakerIdentifier.setDiarizationManager(this.diarizationManager);
     this._setupTextEditMonitor();
     this._setupAudioCleanup();
+    this._applyPersistedModelIdleTimeouts();
     // Restore hotkeys if the control panel is destroyed while a HotkeyInput had focus.
     this.windowManager.onControlPanelDestroyed = () => {
       this._forceExitHotkeyCaptureModeIfActive().catch(() => {});
@@ -770,6 +771,26 @@ class IPCHandlers {
     }
 
     this._audioCleanupInterval = setInterval(runCleanup, SIX_HOURS_MS);
+  }
+
+  // Applies any already-persisted transcriptionIdleTimeoutMs/llmIdleTimeoutMs
+  // value to the relevant manager(s) at construction time, so a returning
+  // user's custom timeout takes effect from the very first cold start rather
+  // than only after the next Settings change. A never-configured install
+  // leaves each manager's own DEFAULT_IDLE_TIMEOUT_MS in place — no
+  // self-persisting write happens here (mirrors the audio-retention startup
+  // safeguard above: establishing the value is the renderer's job).
+  _applyPersistedModelIdleTimeouts() {
+    if (this.environmentManager.hasTranscriptionIdleTimeoutMsBeenSet()) {
+      const ms = this.environmentManager.getTranscriptionIdleTimeoutMs();
+      this.whisperManager?.serverManager?.setIdleTimeoutMs?.(ms);
+      this.parakeetManager?.serverManager?.wsServer?.setIdleTimeoutMs?.(ms);
+    }
+    if (this.environmentManager.hasLlmIdleTimeoutMsBeenSet()) {
+      const ms = this.environmentManager.getLlmIdleTimeoutMs();
+      const modelManager = require("./modelManagerBridge").default;
+      modelManager.serverManager?.setIdleTimeoutMs?.(ms);
+    }
   }
 
   _setupTextEditMonitor() {
@@ -3586,6 +3607,49 @@ class IPCHandlers {
       };
     });
 
+    // Two independent idle-timeout settings — transcriptionIdleTimeoutMs
+    // (Whisper + Parakeet, shared) and llmIdleTimeoutMs (llama-server) — see
+    // docs/specs/on-demand-model-lifecycle.md Design §5. Each save handler
+    // only ever touches the manager(s) that own its setting; changing one
+    // never affects the other's configured timeout.
+    ipcMain.handle("get-transcription-idle-timeout-ms", async () => {
+      return this.environmentManager.getTranscriptionIdleTimeoutMs();
+    });
+
+    ipcMain.handle("save-transcription-idle-timeout-ms", async (event, ms) => {
+      const result = this.environmentManager.saveTranscriptionIdleTimeoutMs(ms);
+      this.whisperManager?.serverManager?.setIdleTimeoutMs?.(result.ms);
+      this.parakeetManager?.serverManager?.wsServer?.setIdleTimeoutMs?.(result.ms);
+      return result;
+    });
+
+    ipcMain.handle("get-llm-idle-timeout-ms", async () => {
+      return this.environmentManager.getLlmIdleTimeoutMs();
+    });
+
+    ipcMain.handle("save-llm-idle-timeout-ms", async (event, ms) => {
+      const result = this.environmentManager.saveLlmIdleTimeoutMs(ms);
+      const modelManager = require("./modelManagerBridge").default;
+      modelManager.serverManager?.setIdleTimeoutMs?.(result.ms);
+      return result;
+    });
+
+    // One round-trip returning both values + whether each has genuinely been
+    // persisted — mirrors get-audio-retention-sync-state, generalized to two
+    // independent keys (see src/helpers/modelIdleTimeoutSync.js).
+    ipcMain.handle("get-model-idle-timeout-sync-state", async () => {
+      return {
+        transcriptionIdleTimeoutMs: {
+          hasBeenSet: this.environmentManager.hasTranscriptionIdleTimeoutMsBeenSet(),
+          ms: this.environmentManager.getTranscriptionIdleTimeoutMs(),
+        },
+        llmIdleTimeoutMs: {
+          hasBeenSet: this.environmentManager.hasLlmIdleTimeoutMsBeenSet(),
+          ms: this.environmentManager.getLlmIdleTimeoutMs(),
+        },
+      };
+    });
+
     ipcMain.handle("set-ui-language", async (event, language) => {
       const result = this.environmentManager.saveUiLanguage(language);
       process.env.UI_LANGUAGE = result.language;
@@ -3614,6 +3678,17 @@ class IPCHandlers {
               error: err.message,
             });
           });
+          // Same-provider model change (docs/specs/on-demand-model-lifecycle.md R4):
+          // switching Parakeet models must unload the stale model immediately, not
+          // wait for the next lazy swap-on-mismatch or the idle timeout.
+          const currentParakeetModel = this.parakeetManager.getCurrentModel();
+          if (currentParakeetModel && currentParakeetModel !== prefs.model) {
+            this.parakeetManager.stopServer().catch((err) => {
+              debugLogger.error("Failed to stop parakeet-server on model switch", {
+                error: err.message,
+              });
+            });
+          }
         } else {
           setVars.LOCAL_WHISPER_MODEL = prefs.model;
           clearVars.push("PARAKEET_MODEL");
@@ -3622,6 +3697,16 @@ class IPCHandlers {
               error: err.message,
             });
           });
+          // Same-provider model change (docs/specs/on-demand-model-lifecycle.md R4):
+          // switching Whisper models must unload the stale model immediately.
+          const currentWhisperModel = this.whisperManager.currentServerModel;
+          if (currentWhisperModel && currentWhisperModel !== prefs.model) {
+            this.whisperManager.stopServer().catch((err) => {
+              debugLogger.error("Failed to stop whisper-server on model switch", {
+                error: err.message,
+              });
+            });
+          }
         }
       } else if (prefs.useLocalWhisper) {
         // Local mode enabled but no model selected - clear pre-warming vars

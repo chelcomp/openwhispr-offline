@@ -63,54 +63,26 @@ class ParakeetManager {
     return path.join(this.getModelsDir(), modelName);
   }
 
-  async initializeAtStartup(settings = {}) {
+  // Currently-loaded model name (null if the server isn't running), used to
+  // detect a same-provider model change (docs/specs/on-demand-model-lifecycle.md
+  // R4) that must unload the stale model immediately rather than lazily.
+  getCurrentModel() {
+    return this.serverManager.wsServer.modelName;
+  }
+
+  // R1 (docs/specs/on-demand-model-lifecycle.md): no longer pre-warms the
+  // parakeet server — that startup call site was removed from main.js.
+  // Retained (and still called at startup) for its non-pre-warm setup:
+  // stale-download cleanup and dependency-status logging. `settings` is
+  // accepted for backward compatibility but unused. Still exported/callable
+  // for any future explicit-prewarm caller.
+  async initializeAtStartup(_settings = {}) {
     const startTime = Date.now();
 
     try {
       this.isInitialized = true;
-
       await cleanupStaleDownloads(this.getModelsDir());
-
       await this.logDependencyStatus();
-
-      const { localTranscriptionProvider, parakeetModel } = settings;
-
-      if (
-        localTranscriptionProvider === "nvidia" &&
-        parakeetModel &&
-        this.serverManager.isAvailable(getModelRuntime(parakeetModel))
-      ) {
-        if (this.serverManager.isModelDownloaded(parakeetModel)) {
-          debugLogger.info("Pre-warming parakeet server", { model: parakeetModel });
-
-          try {
-            const serverStartTime = Date.now();
-            await this.serverManager.startServer(parakeetModel);
-            debugLogger.info("Parakeet server pre-warmed successfully", {
-              model: parakeetModel,
-              startupTimeMs: Date.now() - serverStartTime,
-            });
-          } catch (err) {
-            debugLogger.warn("Parakeet server pre-warm failed (will start on first use)", {
-              error: err.message,
-              model: parakeetModel,
-            });
-          }
-        } else {
-          debugLogger.debug("Skipping parakeet server pre-warm: model not downloaded", {
-            model: parakeetModel,
-          });
-        }
-      } else {
-        debugLogger.debug("Skipping parakeet server pre-warm", {
-          reason:
-            localTranscriptionProvider !== "nvidia"
-              ? "provider not nvidia"
-              : !parakeetModel
-                ? "no model selected"
-                : "server binary not available",
-        });
-      }
     } catch (error) {
       debugLogger.warn("Parakeet initialization error", { error: error.message });
       this.isInitialized = true;

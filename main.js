@@ -533,56 +533,44 @@ async function startApp() {
 
   const { powerMonitor } = require("electron");
   powerMonitor.on("resume", () => {
-    // Sleep evicts the local GPU model from VRAM; reload it once the driver settles. See #766.
+    // R9 (docs/specs/on-demand-model-lifecycle.md): sleep leaves the
+    // whisper-server *process* running with a now-dead CUDA context (unlike a
+    // clean idle-timeout stop), so a naive "do nothing" risks a silently
+    // broken first post-wake transcription. Rather than reloading (R1/R7
+    // forbid proactive loading), proactively *unload* it instead — genuinely
+    // equivalent to an idle-timeout eviction. The next Dictation hotkey press
+    // cold-starts it normally via the on-demand warm-up trigger (R2).
+    // Unconditional on every resume: stop() on an already-stopped/CPU server
+    // is a cheap no-op, so there's no need to gate on "was CUDA loaded".
     if (wakeRewarmTimer) clearTimeout(wakeRewarmTimer);
     wakeRewarmTimer = setTimeout(() => {
       wakeRewarmTimer = null;
-      whisperManager?.onWakeFromSleep().catch((err) => {
-        debugLogger.debug("whisper wake re-warm error (non-fatal)", { error: err.message });
+      whisperManager?.stopServer().catch((err) => {
+        debugLogger.debug("whisper post-wake unload error (non-fatal)", { error: err.message });
       });
     }, WHISPER_WAKE_REWARM_DELAY_MS);
   });
 
-  // Non-blocking server pre-warming
-  const whisperSettings = {
-    localTranscriptionProvider: process.env.LOCAL_TRANSCRIPTION_PROVIDER || "",
-    whisperModel: process.env.LOCAL_WHISPER_MODEL,
-    useCuda: process.env.WHISPER_CUDA_ENABLED === "true" && whisperCudaManager?.isDownloaded(),
-  };
-  whisperManager.initializeAtStartup(whisperSettings).catch((err) => {
+  // R1 (docs/specs/on-demand-model-lifecycle.md): nothing pre-warms at
+  // startup, for any of the three engines (Whisper, Parakeet, llama-server).
+  // Loading is instead kicked off on-demand — hotkey-down for Dictation/
+  // Meeting/Note Recording, file-selection for Upload (see
+  // audioManager.js's warmupTranscriptionEngine()/warmupReasoningServer(),
+  // and meetingRecordingStore.ts/UploadAudioView.tsx's equivalents) — or by
+  // an actual transcription/inference request arriving with no engine
+  // loaded. initializeAtStartup() itself is retained (and still called here)
+  // for its non-pre-warm setup only — stale-download cleanup + dependency
+  // logging — never a serverManager.start() call. llama-server's equivalent
+  // startup pre-warm block (formerly here, gated on CLEANUP_PROVIDER/
+  // DICTATION_AGENT_PROVIDER === "local") has been removed outright; it has
+  // no non-pre-warm setup worth preserving at startup.
+  whisperManager.initializeAtStartup().catch((err) => {
     debugLogger.debug("Whisper startup init error (non-fatal)", { error: err.message });
   });
 
-  const parakeetSettings = {
-    localTranscriptionProvider: process.env.LOCAL_TRANSCRIPTION_PROVIDER || "",
-    parakeetModel: process.env.PARAKEET_MODEL,
-  };
-  parakeetManager.initializeAtStartup(parakeetSettings).catch((err) => {
+  parakeetManager.initializeAtStartup().catch((err) => {
     debugLogger.debug("Parakeet startup init error (non-fatal)", { error: err.message });
   });
-
-  // TODO: drop legacy REASONING_PROVIDER / LOCAL_REASONING_MODEL fallbacks after 2 releases.
-  const cleanupProvider = process.env.CLEANUP_PROVIDER || process.env.REASONING_PROVIDER;
-  const cleanupLocalModel = process.env.LOCAL_CLEANUP_MODEL || process.env.LOCAL_REASONING_MODEL;
-  if (cleanupProvider === "local" && cleanupLocalModel) {
-    const modelManager = require("./src/helpers/modelManagerBridge").default;
-    modelManager.prewarmServer(cleanupLocalModel).catch((err) => {
-      debugLogger.debug("llama-server pre-warm error (non-fatal)", { error: err.message });
-    });
-  }
-
-  if (
-    process.env.DICTATION_AGENT_PROVIDER === "local" &&
-    process.env.LOCAL_DICTATION_AGENT_MODEL &&
-    process.env.LOCAL_DICTATION_AGENT_MODEL !== cleanupLocalModel
-  ) {
-    const modelManager = require("./src/helpers/modelManagerBridge").default;
-    modelManager.prewarmServer(process.env.LOCAL_DICTATION_AGENT_MODEL).catch((err) => {
-      debugLogger.debug("dictation-agent llama-server pre-warm error (non-fatal)", {
-        error: err.message,
-      });
-    });
-  }
 
   // Auto-download diarization models if binary is available
   if (
