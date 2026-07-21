@@ -15,8 +15,9 @@ should be implemented.
 llama-server* (new scope vs. the old spec, which explicitly excluded it) — becomes purely
 on-demand: nothing loads at app startup, loading is kicked off the moment the user starts an
 action that will need it (hotkey-down for Dictation/Meeting/Note Recording, file-selection for
-Upload), and every model unloads after a single, user-configurable idle timeout counted from its
-last use — with no permanent "pinned/always-warm" engine and no proactive crash-respawn.
+Upload), and every model unloads after a user-configurable idle timeout (two independent settings —
+one for transcription, one for the LLM, see below) counted from its last use — with no permanent
+"pinned/always-warm" engine and no proactive crash-respawn.
 
 **What's kept from the old spec** (still applies, unmodified in spirit):
 - Immediate unload the instant a model/provider is switched in Settings (old R3, same behavior).
@@ -40,8 +41,9 @@ last use — with no permanent "pinned/always-warm" engine and no proactive cras
   trigger as any other cold start (new R7).
 - ❌ **"No change to llama-server's own lifecycle" Non-goal** — reversed; llama-server is now in
   scope and gets the same policy (configurable idle timeout, no pre-warm, no proactive respawn).
-  Its existing hardcoded `IDLE_TIMEOUT_MS = 5 * 60 * 1000` becomes the shared default that the new
-  setting overrides.
+  Its existing hardcoded `IDLE_TIMEOUT_MS = 5 * 60 * 1000` becomes the default for the new
+  `llmIdleTimeoutMs` setting (which the new `transcriptionIdleTimeoutMs` setting also uses as its
+  default, independently — see below).
 
 **New, this spec**:
 - A pre-recording/pre-selection **warm-up trigger**: Dictation hotkey-down fires (fire-and-forget,
@@ -49,11 +51,21 @@ last use — with no permanent "pinned/always-warm" engine and no proactive cras
   hotkey-down and Upload file-selection both fire transcription-engine warm-up only (confirmed via
   code search that Meeting/Note Recording transcripts never route through the cleanup/agent LLM
   pass, same as Upload — so both get the same single-warm-up treatment).
-- A single, shared, user-facing **Settings → idle-timeout duration** control applying uniformly to
-  Whisper, Parakeet, and llama-server (one setting, not per-engine — see Design §5 and the
-  non-blocking dissenting consideration flagged below).
+- **Two independent, user-facing Settings → idle-timeout duration controls, not one** (this is a
+  decided requirement, settled by the project owner — see "Resolved decision" below, not a flagged
+  question anymore):
+  - **`transcriptionIdleTimeoutMs`** — governs Whisper and Parakeet together (they still share one
+    setting between themselves; there was never a request for per-engine granularity within the
+    transcription side, only for a transcription-vs-LLM split).
+  - **`llmIdleTimeoutMs`** — governs llama-server, covering all four reasoning scopes
+    (`dictationCleanup`/`dictationAgent`/`noteFormatting`/`chatIntelligence`), which already share a
+    single llama-server process/singleton per CLAUDE.md — one setting for it is correct.
+  - Both default to 5 minutes (300000ms) and share the same 30s–60min bounds — see "Resolved
+    decision" below for why identical numbers are the right call here, not an unexamined leftover
+    from the old single-setting design.
 - Removal of the entire pinning/displacement/proactive-respawn machinery, replaced by one small,
-  shared idle-timeout+lazy-load policy applied identically to all three engines.
+  shared idle-timeout+lazy-load *policy* (a single pure clamp/validation function, parameterized by
+  which setting is being resolved) applied to both settings/all three engines.
 - **Wake-from-sleep is revised, not simply deleted**: the existing proactive CUDA-rewarm-on-resume
   handler can't just be removed, because sleep leaves the whisper-server *process* running with a
   now-dead CUDA context (unlike an idle-timeout eviction, which cleanly stops the process) — deleting
@@ -62,17 +74,29 @@ last use — with no permanent "pinned/always-warm" engine and no proactive cras
   reloading it — genuinely equivalent to an idle-timeout eviction, and consistent with "no proactive
   loading, only proactive unloading is allowed."
 
-**Non-blocking, flagged-for-visibility question** (this draft proceeds with a default answer;
-implementation is not gated on a reply):
-- **Is a single shared idle-timeout setting really correct, or should Whisper/Parakeet (fast,
-  \<500ms-budget engines) have a *different* default/range than llama-server (already a
-  separately-budgeted, slower LLM pass)?** The Portuguese phrasing ("o tempo de Idle antes de
-  descarregar os modelos") reads as one shared concept, and per the task's own guidance this draft
-  implements it as one shared setting/value — but the two engine families have different cost
-  profiles (STT: cheap+fast to reload, tight 500ms budget when cold; LLM: already several seconds to
-  reload, its own separate budget). If a per-engine split is wanted, it's a small, non-blocking
-  follow-up change (two settings instead of one, different UI/IPC surface) — flag it, but Draft
-  approval doesn't need to wait on this.
+**Resolved decision — split into two settings** (previously a non-blocking flagged question; the
+project owner has now settled it: "É realmente um bom ponto. Divida em duas configurações." — "That's
+a really good point. Split it into two settings."):
+- **Two independent idle-timeout settings, not one**: `transcriptionIdleTimeoutMs` (Whisper +
+  Parakeet, shared between themselves) and `llmIdleTimeoutMs` (llama-server, all four reasoning
+  scopes). Changing one never affects the other.
+- **Why the split matters**: transcription engines sit on the sub-500ms critical path (CLAUDE.md
+  §3) — how long they stay warm directly affects how often a user hits the documented cold-start
+  edge case (Design §4). llama-server already has its own separate, more relaxed latency budget
+  (CLAUDE.md §3's "optional AI cleanup/agent pass... has its own latency budget"), so its warm/cold
+  tradeoff is a different, independently-tunable decision.
+- **Defaults/bounds — decided as identical for both (5 min default, 30s–60min bounds each), stated
+  explicitly rather than left unexamined**: the real lever protecting the 500ms budget is the
+  hotkey-down warm-up trigger (R2/R3), which races the user's own speech regardless of how the idle
+  timeout is set — a longer or shorter transcription timeout changes *how often* a cold start
+  happens, not *whether* the documented cold-start exception is handled correctly when it does.
+  Absent a concrete usage-pattern reason to diverge (e.g. telemetry showing transcription cold
+  starts are frequent enough to warrant a longer default) neither engine family has evidence
+  favoring a different number today, so both start from the same proven-safe default (matching
+  today's llama-server hardcoded value, so upgrading users see no behavior change for llama-server
+  and Whisper/Parakeet simply gain the same previously-nonexistent timeout). Because the two
+  settings are now fully independent, either can be retuned later without touching the other — this
+  is a deliberate, revisitable starting point, not a permanent coupling.
 
 **Practical impact for the user**: the app now truly does nothing at idle (satisfying CLAUDE.md
 §2's idle budget directly, for both STT and LLM) — no engine of any kind is loaded until the user
@@ -82,8 +106,10 @@ goes down*, racing the user's own speech, so it's usually already warm by releas
 does a very short dictation (release before the engine finishes loading), transcription simply
 waits for that load to finish before proceeding — the 500ms budget is measured recording-stop to
 transcript-ready in the already-warm case, and this edge case is an explicit, documented exception
-to it (see Design §4). Users get a new Settings control to tune how long any of these engines stay
-warm before auto-unloading (default 5 minutes, matching today's llama-server behavior).
+to it (see Design §4). Users get two new, independently-configurable Settings controls — one for
+transcription (Whisper/Parakeet), one for the local LLM (llama-server) — to tune how long each
+family stays warm before auto-unloading (default 5 minutes each, matching today's llama-server
+behavior).
 
 ## Problem / Goal
 
@@ -155,16 +181,22 @@ concept that the project owner has now explicitly rejected in favor of a simpler
   `resetIdleTimer`/`clearIdleTimer` shape exactly). No engine is ever permanently exempt from this
   timeout ("pinned") — every surface (Dictation, Meeting, Note Recording, Upload) is treated
   identically regardless of which model each is independently configured to use.
-- **R6 — New Settings control for the idle-timeout duration.** A single, shared, persisted setting
-  controls the idle-timeout duration applied to all three engines (see Design §5 for the
-  single-vs-per-engine judgment call, flagged as the one blocking Open Question above). Default:
-  5 minutes (300000ms), matching today's llama-server hardcoded value — so existing users see no
-  behavior change on upgrade for llama-server's timeout, and Whisper/Parakeet gain the same
-  previously-nonexistent timeout at the same default. Minimum: 30 seconds (prevents thrashing from
-  an accidentally-tiny value causing constant reload churn during normal pauses in dictation use).
-  Maximum: 60 minutes (a sane upper bound — beyond this, a user who wants "never expire" should be
-  told that's not offered, per R5's "no permanent exemption" rule; this is a deliberate product
-  choice, not an oversight — see Non-goals).
+- **R6a — New Settings control for the transcription (Whisper/Parakeet) idle-timeout duration.** A
+  persisted setting, `transcriptionIdleTimeoutMs`, controls the idle-timeout duration applied
+  jointly to Whisper and Parakeet (they still share one value between themselves — see Design §5).
+  Default: 5 minutes (300000ms). Minimum: 30 seconds (prevents thrashing from an accidentally-tiny
+  value causing constant reload churn during normal pauses in dictation use). Maximum: 60 minutes (a
+  sane upper bound — beyond this, a user who wants "never expire" should be told that's not offered,
+  per R5's "no permanent exemption" rule; this is a deliberate product choice, not an oversight — see
+  Non-goals).
+- **R6b — New, independent Settings control for the llama-server idle-timeout duration.** A separate
+  persisted setting, `llmIdleTimeoutMs`, controls the idle-timeout duration applied to llama-server
+  (covering all four reasoning scopes it shares, per the single-process llama-server architecture).
+  Default: 5 minutes (300000ms), matching today's llama-server hardcoded value — so existing users
+  see no behavior change on upgrade. Minimum: 30 seconds, maximum: 60 minutes — same bounds as R6a
+  (see Design §5's "Resolved decision" for why identical numbers are the deliberate, stated choice
+  rather than an unexamined leftover). Changing `llmIdleTimeoutMs` must never affect
+  `transcriptionIdleTimeoutMs` or vice versa — they are fully independent settings.
 - **R7 — No proactive crash-respawn, for any engine.** An unexpected process exit is logged
   distinctly (`error` level, includes exit code/signal, and text identifying it as unexpected vs.
   an intentional stop) and nothing else happens automatically. The engine only comes back via the
@@ -209,16 +241,18 @@ concept that the project owner has now explicitly rejected in favor of a simpler
   differing-model request from any surface simply cold-swaps the shared engine on demand (today's
   existing lazy swap-on-mismatch behavior, unchanged), with no "displacement" bookkeeping needed
   because there's no privileged pinned state to protect or restore.
-- No "never expire" / infinite-idle-timeout option — R6's 60-minute maximum is a deliberate ceiling;
-  a user who never wants a model to unload is out of scope for this spec (would reintroduce the
-  pinning-equivalent problem R5 explicitly removes).
+- No "never expire" / infinite-idle-timeout option — R6a/R6b's shared 60-minute maximum is a
+  deliberate ceiling; a user who never wants a model to unload is out of scope for this spec (would
+  reintroduce the pinning-equivalent problem R5 explicitly removes).
 - No change to cloud/BYOK/self-hosted (`lan`) transcription or reasoning lifecycle.
 - No change to `DiarizationManager`'s (speaker-embedding ONNX) lifecycle — separate manager, not one
   of the three engines in scope.
 - No per-scope (`dictationCleanup`/`dictationAgent`/`noteFormatting`/`chatIntelligence`) distinction
-  in the idle-timeout policy — llama-server remains a single shared process/timeout regardless of
-  which scope's request last used it, consistent with `llama-server-vram-tuning.md`'s existing
-  single-shared-server model (Non-goal there too).
+  in the idle-timeout policy — llama-server remains a single shared process/timeout (`llmIdleTimeoutMs`)
+  regardless of which scope's request last used it, consistent with `llama-server-vram-tuning.md`'s
+  existing single-shared-server model (Non-goal there too). Likewise no per-engine split *within*
+  the transcription side — Whisper and Parakeet share `transcriptionIdleTimeoutMs`; the only split
+  in scope is transcription-vs-LLM.
 - No user-visible notification/toast on crash or on idle-unload — logged only, consistent with R7's
   "just log it" simplicity and the old spec's already-accepted precedent of no crash notification.
 - Not reworking `llamaBackends.js`'s GPU/CPU backend selection, `--ctx-size` doubling
@@ -260,8 +294,9 @@ machinery), and §8 (restore hooks) are **not ported forward** — deleted from 
   shape to the old spec's Design §3, reused verbatim; this is orthogonal to pinning and still
   needed so an idle-timeout-triggered `stop()` never kills a request that's actually in flight.
 - `idleTimer`, `resetIdleTimer()`, `clearIdleTimer()` — same shape as `llamaServer.js`'s existing
-  implementation, but `IDLE_TIMEOUT_MS` becomes a **read from the new shared setting** (see Design
-  §5) instead of a hardcoded constant, for all three engines including llama-server itself.
+  implementation, but `IDLE_TIMEOUT_MS` becomes a **read from the relevant new setting** (see Design
+  §5) instead of a hardcoded constant: Whisper/Parakeet read `transcriptionIdleTimeoutMs`,
+  llama-server reads `llmIdleTimeoutMs`.
 - `_intentionalStop` boolean — same as old spec, needed so the `process.on("close", ...)` handler
   can log "crashed unexpectedly" (R7) vs. "stopped intentionally" without extra work.
 - **Not ported**: `pinned`, `pinnedModelPath`/`pinnedModelName`, `pinnedUseCuda`,
@@ -275,9 +310,12 @@ machinery), and §8 (restore hooks) are **not ported forward** — deleted from 
 
 `LlamaServerManager` (`llamaServer.js`) keeps its existing `resetIdleTimer`/`clearIdleTimer`/timer
 shape (`llamaServer.js:19,454-477`) essentially as-is; the only change is `IDLE_TIMEOUT_MS` becoming
-a value read from the shared setting (via a small setter, e.g. `setIdleTimeoutMs(ms)`, called
-whenever the setting changes, defaulting to 300000 if never set) instead of the current
-module-level `const`.
+a value read from the `llmIdleTimeoutMs` setting (via a small setter, `setIdleTimeoutMs(ms)`, called
+whenever that setting changes, defaulting to 300000 if never set) instead of the current
+module-level `const`. `WhisperServerManager`/`ParakeetWsServer` get the equivalent
+`setIdleTimeoutMs(ms)` setter, but wired to the *`transcriptionIdleTimeoutMs`* setting instead — same
+setter shape/name on each manager, different setting feeding it, so the three managers stay
+symmetric in code shape even though they're now split across two settings.
 
 ### 3. Removing startup pre-warm (R1)
 
@@ -375,42 +413,59 @@ explicitly documented exception (mirroring CLAUDE.md §3's existing carve-out fo
 Whisper models) rather than a silently-glossed-over regression — the Validation Plan includes a
 manual check for exactly this case.
 
-### 5. New Settings control (R6)
+### 5. New Settings controls — two independent settings (R6a, R6b)
 
-**Single shared setting** (pending resolution of the flagged Open Question):
+**Two settings, sharing one pure validation/clamp function** — favoring shared clamp/validation
+logic over duplicating the whole helper file, per the resolved decision in the TL;DR:
 
-- Store key: `modelIdleTimeoutMs` (renderer `localStorage`, via `useSettingsStore.ts`, following the
-  exact pattern of `audioRetentionDays` — default value resolution, `get`/`set` action, and the
-  `useSettingsStore.ts:191`-style key registration for persistence).
-- Env var mirror for main-process consumption: `MODEL_IDLE_TIMEOUT_MS`, persisted via
-  `saveAllKeysToEnvFile()` (mirrors the existing `AUDIO_RETENTION_DAYS` pattern referenced in
-  CLAUDE.md's Settings Storage section) — needed because `WhisperServerManager`,
-  `ParakeetWsServer`, and `LlamaServerManager` are all main-process singletons instantiated well
-  before any renderer window/localStorage exists, exactly the same "two sources of truth" problem
-  CLAUDE.md documents for `AUDIO_RETENTION_DAYS` (see project memory:
-  `project_settings_two_sources_of_truth.md`) — reuse that exact startup-sync pattern
-  (`get-model-idle-timeout-sync-state` IPC + a pure `resolveModelIdleTimeoutStartupSync()` helper in
-  a new `src/helpers/modelIdleTimeoutSync.js`, mirroring `audioRetentionSync.js`) rather than
-  inventing a new one.
-- IPC handlers: `get-model-idle-timeout-ms` / `save-model-idle-timeout-ms` (mirrors
-  `get-audio-retention-days`/`save-audio-retention-days` exactly), calling a new
-  `setModelIdleTimeoutMs(ms)` on each of the three managers (or a small shared
-  `modelIdleTimeoutRegistry.js` that all three managers register with, so a single settings-change
-  event fans out to all three without `ipcHandlers.js` having to know about three separate setter
-  calls individually — preferred, since it also gives a single point to clamp/validate the value
-  once).
-- UI: a new numeric/slider control in `SettingsPage.tsx`, placed near existing performance-adjacent
-  settings (the same section `audioRetentionDays`'s "Storage Usage"/Privacy & Data control lives in,
-  or a new "Local Model Performance" grouping if that reads better in context — executor's call
-  during implementation, following existing section-heading conventions) — labeled per the i18n
-  rules (new keys in both `en/translation.json` and `pt/translation.json`; do not hardcode text).
-  Bounds enforced both in the UI (min 30s / max 60min, per R6) and defensively in the pure validation
-  helper (`resolveModelIdleTimeoutMs(value)` in the same new helper file), mirroring
-  `audioCleanupPolicy.js`'s existing pattern of a pure, independently-testable validation function.
-- **Migration (CLAUDE.md §6)**: this is a brand-new setting with no prior value to migrate — an
-  upgrading user who has never touched it gets the stated default (5 minutes / 300000ms), applied
-  identically to all three engines. No existing data is at risk since nothing previously depended on
-  this key.
+- Store keys: `transcriptionIdleTimeoutMs` and `llmIdleTimeoutMs` (renderer `localStorage`, via
+  `useSettingsStore.ts`, following the exact pattern of `audioRetentionDays` — default value
+  resolution, `get`/`set` actions, and the `useSettingsStore.ts:191`-style key registration for
+  persistence, duplicated for both keys). Fully independent: setting one never reads, writes, or
+  falls back to the other's value.
+- Env var mirrors for main-process consumption: `TRANSCRIPTION_IDLE_TIMEOUT_MS` and
+  `LLM_IDLE_TIMEOUT_MS`, both persisted via `saveAllKeysToEnvFile()` (mirrors the existing
+  `AUDIO_RETENTION_DAYS` pattern referenced in CLAUDE.md's Settings Storage section) — needed
+  because `WhisperServerManager`, `ParakeetWsServer`, and `LlamaServerManager` are all main-process
+  singletons instantiated well before any renderer window/localStorage exists, exactly the same
+  "two sources of truth" problem CLAUDE.md documents for `AUDIO_RETENTION_DAYS` (see project memory:
+  `project_settings_two_sources_of_truth.md`) — reuse that exact startup-sync pattern for each
+  setting independently: `get-model-idle-timeout-sync-state` IPC returns both values in one payload
+  (`{transcriptionIdleTimeoutMs, llmIdleTimeoutMs}`, one IPC round-trip, not two), and a single new
+  helper file, `src/helpers/modelIdleTimeoutSync.js` (mirroring `audioRetentionSync.js`), exports one
+  pure `resolveModelIdleTimeoutStartupSync(settingKey, mainValue, rendererValue)` function called
+  twice by `initializeSettings()` — once per setting key — rather than writing two near-duplicate
+  helper files.
+- Shared pure clamp/validation function: `resolveModelIdleTimeoutMs(value)` in the same
+  `modelIdleTimeoutSync.js` — one function, called with either setting's raw value, since both
+  settings share identical bounds (30s min / 60min max, per the "Resolved decision" in the TL;DR).
+  If the two settings' bounds ever need to diverge later, this function takes an optional
+  `{min, max}` override param at that point — not needed today since both use the same bounds.
+- IPC handlers: `get-transcription-idle-timeout-ms` / `save-transcription-idle-timeout-ms` and
+  `get-llm-idle-timeout-ms` / `save-llm-idle-timeout-ms` (each pair mirrors
+  `get-audio-retention-days`/`save-audio-retention-days`). `save-transcription-idle-timeout-ms`
+  calls `setIdleTimeoutMs(ms)` on `WhisperServerManager` and `ParakeetWsServer` (both, since they
+  share this one setting); `save-llm-idle-timeout-ms` calls `setIdleTimeoutMs(ms)` on
+  `LlamaServerManager` only. A small shared `modelIdleTimeoutRegistry.js` (managers register which
+  setting key they care about) is the preferred fan-out mechanism so `ipcHandlers.js` doesn't need
+  to hardcode which managers belong to which setting — it just fires the setting-changed event with
+  the setting's key and value, and each registered manager's own registration decides whether it
+  applies.
+- UI: two new numeric/slider controls in `SettingsPage.tsx`, placed near existing
+  performance-adjacent settings (the same section `audioRetentionDays`'s "Storage Usage"/Privacy &
+  Data control lives in, or a new "Local Model Performance" grouping if that reads better in context
+  — executor's call during implementation, following existing section-heading conventions),
+  labeled distinctly (e.g. "Transcription idle timeout" and "Local AI model idle timeout") so users
+  understand these are two separate knobs, not one. Labeled per the i18n rules (new keys in both
+  `en/translation.json` and `pt/translation.json`; do not hardcode text). Bounds enforced both in
+  the UI (min 30s / max 60min, per R6a/R6b) and defensively via the shared
+  `resolveModelIdleTimeoutMs(value)` helper.
+- **Migration (CLAUDE.md §6)**: both are brand-new settings with no prior value to migrate — an
+  upgrading user who has never touched either gets the stated default (5 minutes / 300000ms each),
+  applied to the respective engine group. No existing data is at risk since nothing previously
+  depended on either key. (There is no old single `modelIdleTimeoutMs` key in any shipped release to
+  migrate away from — this spec never reached implementation before the split was decided, so there
+  is nothing to transform forward, only two new keys to introduce.)
 
 ### 6. Crash logging only (R7)
 
@@ -445,10 +500,10 @@ the previously-missing distinct crash log line for all three engines).
   (Design §4) so a failed or slow warm-up never blocks or breaks the recording-start/file-select UX;
   a crashed engine (R7) degrades to "next on-demand call does a normal cold start," never a hard
   failure of the record→transcribe→paste core function.
-- **Migration safety (§6)**: the one new persisted setting (`modelIdleTimeoutMs` /
-  `MODEL_IDLE_TIMEOUT_MS`) is brand-new with a stated default (5 minutes) and the standard
-  renderer/main two-source-of-truth sync pattern reused from `audioRetentionDays` — no existing
-  key is renamed or restructured.
+- **Migration safety (§6)**: the two new persisted settings (`transcriptionIdleTimeoutMs` /
+  `TRANSCRIPTION_IDLE_TIMEOUT_MS` and `llmIdleTimeoutMs` / `LLM_IDLE_TIMEOUT_MS`) are both brand-new
+  with a stated default (5 minutes each) and the standard renderer/main two-source-of-truth sync
+  pattern reused from `audioRetentionDays` — no existing key is renamed or restructured.
 
 ## Validation Plan
 
@@ -457,27 +512,35 @@ the previously-missing distinct crash log line for all three engines).
 - **New `test/helpers/modelIdleTimeoutSync.test.js`** (mirrors `test/helpers/audioRetentionSync.test.js`
   if it exists, else follow `audioCleanupPolicy.test.js`'s pure-function-test convention): tests
   `resolveModelIdleTimeoutMs()`'s bounds-clamping (below 30s → clamped/rejected per chosen policy;
-  above 60min → clamped/rejected; valid values pass through unchanged) and
-  `resolveModelIdleTimeoutStartupSync()`'s renderer-wins-when-main-has-no-persisted-value /
-  main-wins-when-genuinely-persisted logic, mirroring `audioRetentionSync.js`'s existing tests
-  structurally.
+  above 60min → clamped/rejected; valid values pass through unchanged) — run against **both**
+  `transcriptionIdleTimeoutMs`-style and `llmIdleTimeoutMs`-style inputs, since it's one shared
+  function — and `resolveModelIdleTimeoutStartupSync()`'s renderer-wins-when-main-has-no-persisted-value
+  / main-wins-when-genuinely-persisted logic, called and asserted **independently for each of the
+  two setting keys**, including a case that changes one key's value and asserts the other key's
+  resolved value is completely unaffected (proving the two settings don't cross-contaminate),
+  mirroring `audioRetentionSync.js`'s existing tests structurally.
 - **Update `test/helpers/llamaServer.test.js`**: add a test asserting `IDLE_TIMEOUT_MS` is now
-  sourced from `setIdleTimeoutMs(ms)` rather than the hardcoded module constant — e.g.
-  `"resetIdleTimer schedules a stop after the currently configured idle timeout, not a hardcoded 5 minutes"`
+  sourced from `setIdleTimeoutMs(ms)` (fed by `llmIdleTimeoutMs`) rather than the hardcoded module
+  constant — e.g.
+  `"resetIdleTimer schedules a stop after the currently configured LLM idle timeout, not a hardcoded 5 minutes"`
   using `t.mock.timers` to assert a custom, non-default timeout value (e.g. 45000ms) is honored
   after calling `setIdleTimeoutMs(45000)`, and that the previous default (300000ms) is used when
-  never explicitly set.
+  never explicitly set. Add a companion assertion that changing the transcription-side setting in
+  the same test run does not alter llama-server's configured timeout.
 - **Update/rename `test/helpers/whisperServer.test.js` and `test/helpers/parakeetWsServer.test.js`**:
   - Remove/do-not-add any pinning-related test scenarios from the old spec's Validation Plan that
     were never implemented (nothing to delete in shipped code, but do not port these test cases
     forward from the old spec when writing new tests for this one).
   - New test: idle-timeout now applies universally (no "pinned, never times out" branch to test at
-    all) — start the server, tick past the configured idle timeout, assert `stop()`/kill fires;
-    tick past it again after a fresh use, assert the timer resets per-use, matching R5's
-    "reset on every use" wording, mirroring the existing `llamaServer.test.js` idle-timeout test
-    shape.
-  - New test: idle-timeout duration is configurable — assert a custom
-    `setIdleTimeoutMs(value)` changes the scheduled delay (via `t.mock.timers.tick`).
+    all) — start the server, tick past the configured `transcriptionIdleTimeoutMs`-sourced idle
+    timeout, assert `stop()`/kill fires; tick past it again after a fresh use, assert the timer
+    resets per-use, matching R5's "reset on every use" wording, mirroring the existing
+    `llamaServer.test.js` idle-timeout test shape.
+  - New test: idle-timeout duration is configurable, independently of llama-server's setting —
+    assert a custom `setIdleTimeoutMs(value)` on `WhisperServerManager`/`ParakeetWsServer` changes
+    the scheduled delay (via `t.mock.timers.tick`), and that calling `LlamaServerManager`'s
+    `setIdleTimeoutMs` with a different value in the same test does not change the transcription
+    manager's already-configured delay.
   - New test: drain-before-stop (`DRAIN_TIMEOUT_MS`/`activeRequestCount`) still holds when the idle
     timer (not a settings-change) is what triggers the stop — an in-flight fake
     `transcribe()`/`_transcribeOffline()` call must still settle successfully before the process is
@@ -528,38 +591,45 @@ the previously-missing distinct crash log line for all three engines).
    right after a long idle period so the engine is cold); confirm the transcription still completes
    correctly, but observe/measure that it takes noticeably longer than 500ms in this case — confirm
    this is the accepted, documented exception from Design §4, not a hang or an error.
-5. In Settings, change the new idle-timeout control to a short custom value (e.g. 30 seconds, the
-   minimum). Do a dictation, then wait past that duration without doing another one; check debug
-   logs confirm the transcription engine and (if locally configured) llama-server both unload after
-   that shorter interval rather than the old hardcoded 5 minutes.
-6. Attempt to set the idle-timeout control below 30 seconds or above 60 minutes via direct
-   input/URL/devtools manipulation of the underlying store value; confirm the value is clamped/
-   rejected rather than silently accepted out-of-bounds.
-7. Switch Dictation's Whisper model from one size to another; confirm the old model's process stops
+5. In Settings, change the **transcription** idle-timeout control to a short custom value (e.g. 30
+   seconds, the minimum), leaving the **LLM** idle-timeout control at its default. Do a dictation
+   (with local cleanup/dictation-agent configured), then wait past 30 seconds without doing another
+   one; check debug logs confirm the transcription engine (Whisper/Parakeet) unloads after ~30
+   seconds while llama-server remains loaded until its own (default, 5-minute) timeout — confirming
+   the two settings apply independently and changing one does not affect the other.
+6. Repeat the inverse: change only the **LLM** idle-timeout control to a short custom value, leave
+   transcription at default; confirm llama-server unloads on the shorter schedule while the
+   transcription engine stays warm until its own (default) timeout elapses.
+7. Attempt to set either idle-timeout control below 30 seconds or above 60 minutes via direct
+   input/URL/devtools manipulation of the underlying store value; confirm each is independently
+   clamped/rejected rather than silently accepted out-of-bounds, and that clamping one setting has
+   no effect on the other's stored value.
+8. Switch Dictation's Whisper model from one size to another; confirm the old model's process stops
    immediately (existing behavior, unchanged) and confirm the new model does **not** load again
    until the next Dictation hotkey press (no immediate reload) — check debug logs show a gap with no
    process running in between.
-8. Select a file for Upload transcription; confirm (via debug logs) the transcription engine begins
+9. Select a file for Upload transcription; confirm (via debug logs) the transcription engine begins
    warming up immediately on file selection, before the user explicitly starts the transcription
    itself, and confirm no LLM warm-up log line appears for this path.
-9. Start a Meeting recording via the Meeting hotkey; confirm the transcription engine configured for
-   Meeting (its own model setting, or Dictation's fallback) begins warming up at that same
-   hotkey-press moment.
-10. Kill the whisper-server process manually mid-session (simulating a crash) while it's the only
+10. Start a Meeting recording via the Meeting hotkey; confirm the transcription engine configured for
+    Meeting (its own model setting, or Dictation's fallback) begins warming up at that same
+    hotkey-press moment.
+11. Kill the whisper-server process manually mid-session (simulating a crash) while it's the only
     thing running; confirm debug logs show a distinctly-logged unexpected-exit message and confirm
     **no** automatic respawn attempt occurs (no process reappears without a subsequent Dictation
     hotkey press or other real use); then press the Dictation hotkey again and confirm it recovers
     normally via a fresh cold start.
-11. Put the machine to sleep and wake it while a local Whisper CUDA model was loaded (running,
+12. Put the machine to sleep and wake it while a local Whisper CUDA model was loaded (running,
     warm). Confirm debug logs show the engine being proactively **stopped** (not reloaded) shortly
     after resume; confirm no process for it remains running post-wake; then press the Dictation
     hotkey and confirm the transcription completes correctly via a normal on-demand cold start
     (momentarily slower than an already-warm case, but correct output) — this is the accepted,
     revised R9 tradeoff (unload-not-reload, to avoid the dead-CUDA-context risk of leaving the old
     process running post-wake).
-12. Leave the app fully idle (no recording, no LLM use) for a duration well past the configured idle
-    timeout; confirm via Task Manager/Activity Monitor and RAM measurement that idle RAM/CPU is at or
-    below the CLAUDE.md §2 budget (≤300 MB RAM, <2% average CPU) with all three engines unloaded.
+13. Leave the app fully idle (no recording, no LLM use) for a duration well past **both** configured
+    idle timeouts; confirm via Task Manager/Activity Monitor and RAM measurement that idle RAM/CPU is
+    at or below the CLAUDE.md §2 budget (≤300 MB RAM, <2% average CPU) with all three engines
+    unloaded.
 
 ### Docs
 
@@ -568,9 +638,10 @@ the previously-missing distinct crash log line for all three engines).
   no-pinning, universal-idle-timeout model instead, cross-referencing this spec (not the superseded
   one). Update the "whisper.cpp Integration" and "NVIDIA Parakeet Integration" bullet lists to state
   they no longer pre-warm at startup and now warm up on hotkey-press/file-select instead. Add a note
-  to the Model Registry Architecture section (§8) or a new small subsection documenting the shared
-  `modelIdleTimeoutMs` setting and that it now also governs llama-server's previously-hardcoded
-  `IDLE_TIMEOUT_MS`.
+  to the Model Registry Architecture section (§8) or a new small subsection documenting the two
+  independent settings — `transcriptionIdleTimeoutMs` (Whisper + Parakeet) and `llmIdleTimeoutMs`
+  (llama-server, replacing its previously-hardcoded `IDLE_TIMEOUT_MS`) — and that they are configured
+  and applied fully independently of each other.
 - **docs/RECREATION_SPEC.md**: update its transcription-pipeline section (§2, referenced by the old
   spec) to describe the new on-demand/idle-timeout behavior as current/actual once implemented,
   removing any description of startup pre-warming as today's behavior.
@@ -580,20 +651,11 @@ the previously-missing distinct crash log line for all three engines).
 
 ## Open Questions
 
-1. **(Non-blocking — this draft proceeds with a default reading; flag if you want it changed.)**
-   This spec implements the idle-timeout as **one shared setting** for all three engines, per the
-   literal singular Portuguese phrasing ("o tempo de Idle antes de descarregar os modelos") and per
-   the task's own guidance to proceed with that reading unless a per-engine split is clearly
-   better. Worth surfacing anyway: Whisper/Parakeet (fast STT, tight 500ms budget when cold) and
-   llama-server (already separately-budgeted, several-second reload) have different cost profiles,
-   so independently tunable timeouts/defaults could genuinely be nicer — but this is a "would be
-   nice," not a blocker. Nothing in this spec is gated on the answer; implementation can proceed
-   as drafted (single shared setting) unless told otherwise.
-2. (Non-blocking) Whether `WhisperManager.initializeAtStartup`/`ParakeetManager.initializeAtStartup`
+1. (Non-blocking) Whether `WhisperManager.initializeAtStartup`/`ParakeetManager.initializeAtStartup`
    contain any non-pre-warm setup work that must be preserved at startup even though the pre-warm
    call itself is removed — to be confirmed by reading their actual bodies during implementation
    (Design §3).
-3. (Non-blocking) Whether wake-from-sleep's proactive unload (revised R9) should gate on
+2. (Non-blocking) Whether wake-from-sleep's proactive unload (revised R9) should gate on
    `shouldRewarmOnWake`'s existing "was a CUDA model actually loaded pre-sleep" condition, or
    simply unload unconditionally on every resume (cheap no-op if nothing's loaded) — leaning toward
    the latter for simplicity, to be settled during implementation (Design §3).
