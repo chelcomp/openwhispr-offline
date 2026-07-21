@@ -88,10 +88,11 @@ test.beforeEach(() => {
   delete process.env.TRANSCRIPTION_GPU_UUID;
 });
 
-test("GPU-change restart preserves the previously-active model's registry contextSize", async () => {
+test("GPU-change restart preserves the previously-active (tracked, possibly doubled) context size, not the raw registry contextLength", async () => {
   const startCalls = [];
   const modelManager = {
     currentServerModelId: "nemotron-3-nano-4b-q4_k_m",
+    currentContextSizeByModel: new Map([["nemotron-3-nano-4b-q4_k_m", 16384]]),
     serverManager: {
       process: { pid: 123 },
       modelPath: "/models/nemotron-3-nano-4b-q4_k_m.gguf",
@@ -114,7 +115,39 @@ test("GPU-change restart preserves the previously-active model's registry contex
   assert.equal(startCalls.length, 1);
   assert.equal(startCalls[0].modelPath, "/models/nemotron-3-nano-4b-q4_k_m.gguf");
   assert.deepEqual(startCalls[0].options, {
-    contextSize: 262144,
+    contextSize: 16384,
+    threads: 4,
+    gpuLayers: 99,
+  });
+});
+
+test("GPU-change restart falls back to the clamped DEFAULT_CONTEXT_CAP when no context size was tracked yet", async () => {
+  const startCalls = [];
+  const modelManager = {
+    currentServerModelId: "nemotron-3-nano-4b-q4_k_m",
+    currentContextSizeByModel: new Map(),
+    serverManager: {
+      process: { pid: 123 },
+      modelPath: "/models/nemotron-3-nano-4b-q4_k_m.gguf",
+      stop: async () => {},
+      start: async (modelPath, options) => {
+        startCalls.push({ modelPath, options });
+      },
+    },
+    findModelById: (modelId) => {
+      assert.equal(modelId, "nemotron-3-nano-4b-q4_k_m");
+      return { model: { id: modelId, contextLength: 262144 } };
+    },
+  };
+
+  const handler = loadHandler("set-gpu-device-index", { modelManager });
+
+  const result = await handler({}, "intelligence", "GPU-abc123");
+
+  assert.deepEqual(result, { success: true });
+  assert.equal(startCalls.length, 1);
+  assert.deepEqual(startCalls[0].options, {
+    contextSize: 2048,
     threads: 4,
     gpuLayers: 99,
   });

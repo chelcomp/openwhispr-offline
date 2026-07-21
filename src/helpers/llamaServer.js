@@ -1,4 +1,4 @@
-const { spawn } = require("child_process");
+const { spawn, execFileSync } = require("child_process");
 const fs = require("fs");
 const path = require("path");
 const http = require("http");
@@ -21,6 +21,64 @@ const IDLE_TIMEOUT_MS = 5 * 60 * 1000;
 // sites (runInference/prewarmServer) so the same number appears in one more
 // place, not a new arbitrary value.
 const DEFAULT_CONTEXT_SIZE = 4096;
+// The value modelManagerBridge.js targets on a fresh (non-retry) server start
+// for a model. _doStart itself doesn't know about this — it just launches
+// whatever --ctx-size it's given, clamped only against MAX_CONTEXT_SIZE below.
+const DEFAULT_CONTEXT_CAP = 2048;
+// The real outer ceiling _doStart enforces, reachable only via
+// modelManagerBridge.js's overflow-doubling retry logic.
+const MAX_CONTEXT_SIZE = 65536;
+
+// llama.cpp's OpenAI-compatible error shape when the request/context exceeds
+// the server's configured --ctx-size. Matched defensively by keyword, not an
+// exact string, since wording can vary across llama.cpp builds/tags.
+function isContextOverflowMessage(message) {
+  if (!message || typeof message !== "string") return false;
+  const lower = message.toLowerCase();
+  if (!lower.includes("context")) return false;
+  return (
+    lower.includes("exceed") ||
+    lower.includes("too long") ||
+    lower.includes("too large") ||
+    lower.includes("increase")
+  );
+}
+
+class ContextOverflowError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = "ContextOverflowError";
+    this.isContextOverflow = true;
+  }
+}
+
+// Cache of { kvCacheQuant, fit } per binary path, mirroring llamaBackends.js's
+// vulkanDeviceCache pattern — runs `--help` at most once per binary per app run.
+const binaryCapabilitiesCache = new Map();
+
+function probeBinaryCapabilities(binaryPath) {
+  if (!binaryPath) return { kvCacheQuant: false, fit: false };
+  if (binaryCapabilitiesCache.has(binaryPath)) return binaryCapabilitiesCache.get(binaryPath);
+
+  let capabilities = { kvCacheQuant: false, fit: false };
+  try {
+    const output = execFileSync(binaryPath, ["--help"], {
+      timeout: 5000,
+      windowsHide: true,
+    }).toString();
+    const kvCacheQuant =
+      output.includes("--cache-type-k") &&
+      output.includes("--cache-type-v") &&
+      output.includes("--flash-attn");
+    const fit = output.includes("-fit") || output.includes("--fit");
+    capabilities = { kvCacheQuant, fit };
+  } catch {
+    capabilities = { kvCacheQuant: false, fit: false };
+  }
+
+  binaryCapabilitiesCache.set(binaryPath, capabilities);
+  return capabilities;
+}
 
 class LlamaServerManager {
   constructor() {
@@ -70,6 +128,12 @@ class LlamaServerManager {
     this.port = await this.findAvailablePort();
     this.modelPath = modelPath;
 
+    const resolvedContextSize =
+      Number.isFinite(options.contextSize) && options.contextSize > 0
+        ? options.contextSize
+        : DEFAULT_CONTEXT_SIZE;
+    const ctxSize = Math.min(resolvedContextSize, MAX_CONTEXT_SIZE);
+
     const baseArgs = [
       "--model",
       modelPath,
@@ -80,11 +144,7 @@ class LlamaServerManager {
       "--threads",
       String(options.threads || 4),
       "--ctx-size",
-      String(
-        Number.isFinite(options.contextSize) && options.contextSize > 0
-          ? options.contextSize
-          : DEFAULT_CONTEXT_SIZE
-      ),
+      String(ctxSize),
       "--jinja",
     ];
 
@@ -113,6 +173,29 @@ class LlamaServerManager {
         });
         await this._killCurrentProcess();
         this.port = await this.findAvailablePort();
+
+        // If the failed attempt included the capability-gated flags
+        // (KV-cache quantization/flash-attn/--fit), retry this same backend
+        // exactly once with those flags stripped before moving on to the
+        // next backend in the chain.
+        const capabilities = probeBinaryCapabilities(backend.getBinaryPath());
+        if (capabilities.kvCacheQuant || capabilities.fit) {
+          try {
+            await this._startBackend(backend, baseArgs, gpuMode, { stripCapabilityFlags: true });
+            this.activeBackend = backend.name;
+            started = true;
+            break;
+          } catch (err2) {
+            lastError = err2;
+            debugLogger.warn("llama-server backend failed again without capability flags", {
+              backend: backend.name,
+              gpuMode,
+              error: err2.message,
+            });
+            await this._killCurrentProcess();
+            this.port = await this.findAvailablePort();
+          }
+        }
       }
     }
 
@@ -127,11 +210,37 @@ class LlamaServerManager {
     });
   }
 
-  async _startBackend(backend, baseArgs, gpuMode) {
+  async _startBackend(backend, baseArgs, gpuMode, { stripCapabilityFlags = false } = {}) {
     const binaryPath = backend.getBinaryPath();
     if (!binaryPath) throw new Error(`No ${backend.name} llama-server binary available`);
 
-    const args = backend.buildArgs(baseArgs, gpuMode);
+    let args = backend.buildArgs(baseArgs, gpuMode);
+    let kvCacheQuantized = false;
+    let fitEnabled = false;
+
+    if (!stripCapabilityFlags) {
+      const capabilities = probeBinaryCapabilities(binaryPath);
+      if (capabilities.kvCacheQuant) {
+        args = [...args, "--cache-type-k", "q8_0", "--cache-type-v", "q8_0", "--flash-attn", "on"];
+        kvCacheQuantized = true;
+      }
+      if (capabilities.fit) {
+        // Keep --fit adjacent to --n-gpu-layers in the argv/log for readability.
+        const gpuLayersIdx = args.indexOf("--n-gpu-layers");
+        if (gpuLayersIdx !== -1) {
+          args = [
+            ...args.slice(0, gpuLayersIdx + 2),
+            "--fit",
+            "on",
+            ...args.slice(gpuLayersIdx + 2),
+          ];
+        } else {
+          args = [...args, "--fit", "on"];
+        }
+        fitEnabled = true;
+      }
+    }
+
     const env = backend.buildEnv(binaryPath);
 
     // Print the exact launch parameters so the chosen backend and every flag are
@@ -141,6 +250,8 @@ class LlamaServerManager {
       gpuMode,
       gpuAccelerated: backend.gpuAccelerated,
       binary: binaryPath,
+      kvCacheQuantized,
+      fitEnabled,
       args,
     });
 
@@ -417,7 +528,20 @@ class LlamaServerManager {
             });
 
             if (res.statusCode !== 200) {
-              reject(new Error(`llama-server returned status ${res.statusCode}: ${data}`));
+              let overflowMessage = null;
+              try {
+                const parsed = JSON.parse(data);
+                const message = parsed?.error?.message;
+                if (isContextOverflowMessage(message)) overflowMessage = message;
+              } catch {
+                // Non-JSON or unexpected shape — treat as a non-overflow error below.
+              }
+
+              if (overflowMessage) {
+                reject(new ContextOverflowError(overflowMessage));
+              } else {
+                reject(new Error(`llama-server returned status ${res.statusCode}: ${data}`));
+              }
               return;
             }
 
@@ -511,3 +635,8 @@ class LlamaServerManager {
 
 module.exports = LlamaServerManager;
 module.exports.DEFAULT_CONTEXT_SIZE = DEFAULT_CONTEXT_SIZE;
+module.exports.DEFAULT_CONTEXT_CAP = DEFAULT_CONTEXT_CAP;
+module.exports.MAX_CONTEXT_SIZE = MAX_CONTEXT_SIZE;
+module.exports.ContextOverflowError = ContextOverflowError;
+module.exports.isContextOverflowMessage = isContextOverflowMessage;
+module.exports.probeBinaryCapabilities = probeBinaryCapabilities;

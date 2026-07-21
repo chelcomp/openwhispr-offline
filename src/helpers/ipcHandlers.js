@@ -2400,12 +2400,20 @@ class IPCHandlers {
                   ? modelManager.findModelById(previousModelId)
                   : null;
                 if (modelInfo) {
+                  const { DEFAULT_CONTEXT_CAP } = require("./llamaServer");
+                  const preservedContextSize =
+                    modelManager.currentContextSizeByModel.get(previousModelId) ||
+                    Math.min(
+                      modelInfo.model.contextLength || DEFAULT_CONTEXT_CAP,
+                      DEFAULT_CONTEXT_CAP
+                    );
                   await modelManager.serverManager.start(modelPath, {
-                    contextSize: modelInfo.model.contextLength || 4096,
+                    contextSize: preservedContextSize,
                     threads: 4,
                     gpuLayers: 99,
                   });
                   modelManager.currentServerModelId = previousModelId;
+                  modelManager.currentContextSizeByModel.set(previousModelId, preservedContextSize);
                 } else {
                   await modelManager.serverManager.start(modelPath);
                 }

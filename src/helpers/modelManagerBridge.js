@@ -11,6 +11,7 @@ const {
 
 const modelRegistryData = require("../models/modelRegistryData.json");
 const LlamaServerManager = require("./llamaServer");
+const { DEFAULT_CONTEXT_CAP, MAX_CONTEXT_SIZE, ContextOverflowError } = LlamaServerManager;
 const debugLogger = require("./debugLogger");
 
 const MIN_FILE_SIZE = 1_000_000; // 1MB minimum for valid model files
@@ -42,6 +43,9 @@ class ModelManager {
     this.activeRequests = new Map(); // Track HTTP requests for cancellation
     this.serverManager = new LlamaServerManager();
     this.currentServerModelId = null;
+    // In-memory only — tracks the currently-effective --ctx-size per model for
+    // this server process's lifetime. Resets on model change / restart.
+    this.currentContextSizeByModel = new Map();
     this._initialized = false;
 
     // IMPORTANT: Do NOT call app.getPath() here!
@@ -366,12 +370,17 @@ class ModelManager {
         serverReady: this.serverManager.ready,
       });
 
+      const startContextSize =
+        options.contextSize ||
+        Math.min(modelInfo.model.contextLength || DEFAULT_CONTEXT_CAP, DEFAULT_CONTEXT_CAP);
+
       await this.serverManager.start(modelPath, {
-        contextSize: options.contextSize || modelInfo.model.contextLength || 4096,
+        contextSize: startContextSize,
         threads: options.threads || 4,
         gpuLayers: 99,
       });
       this.currentServerModelId = modelId;
+      this.currentContextSizeByModel.set(modelId, startContextSize);
 
       debugLogger.logReasoning("INFERENCE_SERVER_STARTED", {
         port: this.serverManager.port,
@@ -391,16 +400,58 @@ class ModelManager {
       userPromptLength: prompt.length,
     });
 
+    const inferenceOptions = {
+      temperature: options.temperature ?? 0.7,
+      max_tokens: options.maxTokens ?? 512,
+      topP: options.topP,
+      topK: options.topK,
+      minP: options.minP,
+      repeatPenalty: options.repeatPenalty,
+      disableThinking: options.disableThinking,
+    };
+
     try {
-      const result = await this.serverManager.inference(messages, {
-        temperature: options.temperature ?? 0.7,
-        max_tokens: options.maxTokens ?? 512,
-        topP: options.topP,
-        topK: options.topK,
-        minP: options.minP,
-        repeatPenalty: options.repeatPenalty,
-        disableThinking: options.disableThinking,
-      });
+      // Once the doubling ceiling (65536, or the model's own smaller
+      // registry contextLength) is reached, a further ContextOverflowError
+      // is re-thrown here and falls through to the catch block below like
+      // any other inference failure today — it still surfaces to the caller
+      // (wrapped in the same ModelError every other inference failure gets),
+      // it's just no longer retried.
+      let result;
+      // eslint-disable-next-line no-constant-condition
+      while (true) {
+        try {
+          result = await this.serverManager.inference(messages, inferenceOptions);
+          break;
+        } catch (error) {
+          if (!(error instanceof ContextOverflowError || error?.isContextOverflow)) throw error;
+
+          const currentSize =
+            this.currentContextSizeByModel.get(modelId) ||
+            Math.min(modelInfo.model.contextLength || DEFAULT_CONTEXT_CAP, DEFAULT_CONTEXT_CAP);
+          const ceiling = Math.min(
+            MAX_CONTEXT_SIZE,
+            modelInfo.model.contextLength || MAX_CONTEXT_SIZE
+          );
+          const nextSize = Math.min(currentSize * 2, ceiling);
+
+          if (nextSize <= currentSize) throw error;
+
+          debugLogger.logReasoning("INFERENCE_CONTEXT_OVERFLOW_RETRY", {
+            modelId,
+            fromSize: currentSize,
+            toSize: nextSize,
+          });
+
+          await this.serverManager.start(modelPath, {
+            contextSize: nextSize,
+            threads: options.threads || 4,
+            gpuLayers: 99,
+          });
+          this.currentServerModelId = modelId;
+          this.currentContextSizeByModel.set(modelId, nextSize);
+        }
+      }
 
       const totalTime = Date.now() - startTime;
       debugLogger.logReasoning("INFERENCE_SUCCESS", {
@@ -444,13 +495,18 @@ class ModelManager {
     if (!this.serverManager.isAvailable()) return false;
 
     try {
+      const startContextSize = Math.min(
+        modelInfo.model.contextLength || DEFAULT_CONTEXT_CAP,
+        DEFAULT_CONTEXT_CAP
+      );
       await this.serverManager.start(modelPath, {
-        contextSize: modelInfo.model.contextLength || 4096,
+        contextSize: startContextSize,
         threads: 4,
         gpuLayers: 99,
       });
       this.currentServerModelId = modelId;
-      debugLogger.info("llama-server pre-warmed", { modelId });
+      this.currentContextSizeByModel.set(modelId, startContextSize);
+      debugLogger.info("llama-server pre-warmed", { modelId, contextSize: startContextSize });
       return true;
     } catch (error) {
       debugLogger.warn("Failed to pre-warm llama-server", { error: error.message });
