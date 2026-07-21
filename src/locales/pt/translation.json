@@ -1859,6 +1859,21 @@
             "info": "Áudio estendido de um segmento para o próximo, evitando cortes bruscos na concatenação."
           }
         }
+      },
+      "previewVad": {
+        "title": "Sensibilidade da prévia ao vivo",
+        "description": "Controla a rapidez com que a prévia \"Ouvindo...\" reconhece e reflete sua fala enquanto você ainda está falando. Este é um detector separado, mais simples e mais rápido do que o usado na sua transcrição final — ajustar um não afeta o outro. Se a prévia ao vivo raramente mostra texto enquanto você fala, tente diminuir os valores abaixo.",
+        "resetDefaults": "Repor predefinições",
+        "fields": {
+          "minSpeechDurationMs": {
+            "label": "Duração mínima da fala (ms)",
+            "info": "Menor = a prévia começa a mostrar texto mais rápido depois que você começa a falar, mas também pode reagir mais facilmente a ruídos de fundo."
+          },
+          "minSilenceDurationMs": {
+            "label": "Duração mínima de silêncio (ms)",
+            "info": "Menor = a prévia divide sua fala em segmentos com mais frequência durante as pausas."
+          }
+        }
       }
     },
     "intelligence": {

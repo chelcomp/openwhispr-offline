@@ -2053,6 +2053,21 @@
             "info": "Audio carried from each segment into the next to avoid abrupt cuts when concatenating."
           }
         }
+      },
+      "previewVad": {
+        "title": "Live Preview Sensitivity",
+        "description": "Controls how quickly the live \"Listening...\" preview recognizes and reflects your speech while you're still talking. This is a separate, simpler, faster detector than the one used for your final transcription — tuning one does not affect the other. If the live preview rarely shows text while you speak, try lowering the values below.",
+        "resetDefaults": "Reset to defaults",
+        "fields": {
+          "minSpeechDurationMs": {
+            "label": "Minimum speech duration (ms)",
+            "info": "Lower = the preview starts showing text sooner after you begin speaking, but may also react to background noise more easily."
+          },
+          "minSilenceDurationMs": {
+            "label": "Minimum silence duration (ms)",
+            "info": "Lower = the preview breaks your speech into segments more eagerly during pauses."
+          }
+        }
       }
     },
     "intelligence": {

@@ -43,6 +43,11 @@ const {
   sanitizeWhisperVadConfig,
   resolveContextSileroEnabled,
 } = require("./whisperVadConfig");
+const {
+  DEFAULT_PREVIEW_VAD_CONFIG,
+  sanitizePreviewVadConfig,
+  resolvePreviewVadConfig,
+} = require("./previewVadConfig");
 const { createDictationBatchingSession, bufferRms } = require("./dictationBatchingSession");
 const { getModelRuntime } = require("./parakeetModelInfo");
 const {
@@ -402,6 +407,7 @@ class IPCHandlers {
       meetingSileroEnabled: true,
       ...DEFAULT_WHISPER_VAD_CONFIG,
     };
+    this.previewVadSettings = { ...DEFAULT_PREVIEW_VAD_CONFIG };
     liveSpeakerIdentifier.setDiarizationManager(this.diarizationManager);
     this._setupTextEditMonitor();
     this._setupAudioCleanup();
@@ -447,6 +453,19 @@ class IPCHandlers {
       vadEnabled: resolveContextSileroEnabled(settings, context),
       vadConfig,
     };
+  }
+
+  _getPreviewVadSettings() {
+    return sanitizePreviewVadConfig(this.previewVadSettings || {});
+  }
+
+  _setPreviewVadSettings(update = {}) {
+    this.previewVadSettings = { ...this._getPreviewVadSettings(), ...update };
+    return this._getPreviewVadSettings();
+  }
+
+  _resolvePreviewVadOptions() {
+    return resolvePreviewVadConfig(this._getPreviewVadSettings());
   }
 
   async _forceExitHotkeyCaptureModeIfActive() {
@@ -5969,6 +5988,23 @@ class IPCHandlers {
       }
     });
 
+    ipcMain.handle("preview-vad-get-config", async () => {
+      try {
+        return { success: true, config: this._getPreviewVadSettings() };
+      } catch (error) {
+        return { success: false, error: error.message };
+      }
+    });
+
+    ipcMain.handle("preview-vad-set-config", async (_event, payload) => {
+      try {
+        const config = this._setPreviewVadSettings(payload || {});
+        return { success: true, config };
+      } catch (error) {
+        return { success: false, error: error.message };
+      }
+    });
+
     ipcMain.handle("meeting-set-session-speaker-config", async (_event, payload) => {
       try {
         const enabled = payload?.enabled !== false;
@@ -6468,19 +6504,15 @@ class IPCHandlers {
           return { success: true };
         }
 
-        // The streaming session's endpointing is a crude RMS/energy detector, not
-        // the neural Silero model these min-silence/min-speech values were tuned
-        // for. Silero can tell a genuine pause from a brief unvoiced consonant or
-        // breath; energy-only detection can't, so reusing Silero's short default
-        // silence window chops real speech into 1-2 word fragments — many too
-        // quiet to clear minSegmentRms and so silently dropped, which reads as the
-        // preview losing text or "freezing" after the first couple of words. Floor
-        // it higher for endpoint stability; still respect a longer user setting.
-        const sileroVadConfig = this._resolveWhisperVadOptions("dictation")?.vadConfig;
-        const energyVadConfig = {
-          ...sileroVadConfig,
-          minSilenceDurationMs: Math.max(sileroVadConfig?.minSilenceDurationMs || 0, 500),
-        };
+        // The live-preview overlay's streaming session uses a crude RMS/energy
+        // detector, architecturally unlike the neural Silero model that governs
+        // the offline/full-clip transcription pass. It has its own, independent,
+        // user-visible "Live Preview Sensitivity" settings (Settings →
+        // Speech-to-Text) — see docs/specs/live-preview-vad-sensitivity.md.
+        // Deliberately does NOT read Silero/`_resolveWhisperVadOptions()` for
+        // any field; whatever the Live Preview Sensitivity settings show is
+        // exactly what runs here, with no silent floors/caps.
+        const energyVadConfig = this._resolvePreviewVadOptions();
         const isNvidia = provider === "nvidia";
         dictationPreviewSession = createDictationBatchingSession({
           vadConfig: energyVadConfig,

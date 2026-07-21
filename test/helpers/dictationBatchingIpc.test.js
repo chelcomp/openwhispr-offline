@@ -47,10 +47,26 @@ Module._load = function patchedLoad(request, parent, isMain) {
   if (request === "./activeAppCapture") {
     return { detectAsync: async () => null, getLastAppName: () => null, setMacOSAppName: () => {} };
   }
+  if (request === "./dictationBatchingSession") {
+    const real = originalLoad.call(this, request, parent, isMain);
+    return {
+      ...real,
+      createDictationBatchingSession: (options) => {
+        capturedVadConfigs.push(options?.vadConfig);
+        return real.createDictationBatchingSession(options);
+      },
+    };
+  }
   return originalLoad.call(this, request, parent, isMain);
 };
 
 process.env.NODE_ENV = "test";
+
+// Populated by the "./dictationBatchingSession" mock above each time
+// start-dictation-preview builds a batching session — lets tests assert on
+// exactly what vadConfig was passed, without needing to modify the real
+// dictationBatchingSession module.
+const capturedVadConfigs = [];
 
 const IPCHandlers = require("../../src/helpers/ipcHandlers.js");
 
@@ -58,7 +74,12 @@ test.after(() => {
   Module._load = originalLoad;
 });
 
-function createHandlerUnderTest({ transcribeLocalParakeetCalls, parakeetText = "hello" }) {
+function createHandlerUnderTest({
+  transcribeLocalParakeetCalls,
+  parakeetText = "hello",
+  resolveWhisperVadOptions,
+  resolvePreviewVadOptions,
+}) {
   const instance = Object.create(IPCHandlers.prototype);
   instance.parakeetManager = {
     transcribeLocalParakeet: async (audio, opts) => {
@@ -78,7 +99,11 @@ function createHandlerUnderTest({ transcribeLocalParakeetCalls, parakeetText = "
     updateCleanupPreview: () => {},
     resizeTranscriptionPreview: () => ({ success: true }),
   };
-  instance._resolveWhisperVadOptions = () => ({ vadConfig: {} });
+  instance._resolveWhisperVadOptions =
+    resolveWhisperVadOptions || (() => ({ vadConfig: {} }));
+  if (resolvePreviewVadOptions) {
+    instance._resolvePreviewVadOptions = resolvePreviewVadOptions;
+  }
 
   instance.setupHandlers();
   const start = registeredHandlers.get("start-dictation-preview");
@@ -126,6 +151,64 @@ test("start-dictation-preview always creates a batching session for a Parakeet (
     "the batching session must have called transcribeLocalParakeet at least once"
   );
   assert.equal(typeof result.streamingText, "string");
+});
+
+test("start-dictation-preview builds its energy-VAD vadConfig from Preview VAD settings, never from Silero", async () => {
+  capturedVadConfigs.length = 0;
+  const transcribeLocalParakeetCalls = [];
+
+  // Deliberately distinctive Silero sentinel values that must NOT reach the
+  // energy detector for any of the five shared fields (Design's "no
+  // cross-contamination" property).
+  const sileroSentinel = {
+    vadConfig: {
+      threshold: 0.5,
+      minSpeechDurationMs: 999,
+      minSilenceDurationMs: 999,
+      maxSpeechDurationS: 999,
+      speechPadMs: 999,
+      samplesOverlap: 0.999,
+    },
+  };
+  // Distinct Preview VAD sentinel values that SHOULD reach the detector.
+  const previewVadSentinel = {
+    minSpeechDurationMs: 80,
+    minSilenceDurationMs: 500,
+    speechPadMs: 100,
+    maxSpeechDurationS: 20,
+    samplesOverlap: 0.3,
+  };
+
+  const { start, stop } = createHandlerUnderTest({
+    transcribeLocalParakeetCalls,
+    resolveWhisperVadOptions: () => sileroSentinel,
+    resolvePreviewVadOptions: () => previewVadSentinel,
+  });
+
+  await start({}, {
+    provider: "nvidia",
+    model: "parakeet-tdt-0.6b-v3",
+    language: "en",
+    initialPrompt: undefined,
+    showOverlay: false,
+  });
+  await stop({}, {});
+
+  assert.equal(capturedVadConfigs.length, 1, "exactly one batching session must have been created");
+  const usedVadConfig = capturedVadConfigs[0];
+
+  assert.deepEqual(
+    usedVadConfig,
+    previewVadSentinel,
+    "start-dictation-preview must build its vadConfig entirely from the Preview VAD settings"
+  );
+  for (const key of Object.keys(sileroSentinel.vadConfig)) {
+    assert.notEqual(
+      usedVadConfig[key],
+      sileroSentinel.vadConfig[key],
+      `Silero sentinel value for "${key}" must not have reached the energy detector`
+    );
+  }
 });
 
 test("stop-dictation-preview falls back to full-audio (empty streamingText) when the session's aggregate quality is poor", async () => {

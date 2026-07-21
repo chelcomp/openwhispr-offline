@@ -1,0 +1,16 @@
+{
+  "DEFAULTS": {
+    "minSpeechDurationMs": 80,
+    "minSilenceDurationMs": 500,
+    "speechPadMs": 100,
+    "maxSpeechDurationS": 20,
+    "samplesOverlap": 0.3
+  },
+  "LIMITS": {
+    "minSpeechDurationMs": { "min": 20, "max": 500, "round": true },
+    "minSilenceDurationMs": { "min": 100, "max": 2000, "round": true },
+    "speechPadMs": { "min": 0, "max": 500, "round": true },
+    "maxSpeechDurationS": { "min": 5, "max": 60, "round": true },
+    "samplesOverlap": { "min": 0, "max": 0.95, "round": false }
+  }
+}

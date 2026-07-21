@@ -5,6 +5,7 @@ import { ensureAgentNameInDictionary } from "../utils/agentName";
 import { useStreamingProvidersStore } from "./streamingProvidersStore";
 import logger from "../utils/logger";
 import whisperVadConstants from "../constants/whisperVad.json";
+import previewVadConstants from "../constants/previewVad.json";
 import type { LocalTranscriptionProvider, InferenceMode, SelfHostedType } from "../types/electron";
 import { PROMPT_KIND_LIST, type PromptKind } from "../config/prompts/registry";
 import { deriveReasoningMode, buildReasoningScopePatches } from "../helpers/reasoningRouting";
@@ -221,6 +222,8 @@ const NUMERIC_SETTINGS = new Set([
   "whisperVadMaxSpeechDurationS",
   "whisperVadSpeechPadMs",
   "whisperVadSamplesOverlap",
+  "previewVadMinSpeechDurationMs",
+  "previewVadMinSilenceDurationMs",
 ]);
 
 const WHISPER_VAD_DEFAULTS = whisperVadConstants.DEFAULTS;
@@ -233,6 +236,20 @@ const clampVadValue = (key: WhisperVadKey, raw: unknown): number => {
   const n = raw === null || raw === undefined || raw === "" ? fallback : Number(raw);
   if (!Number.isFinite(n)) return fallback;
   const { min, max, round } = WHISPER_VAD_LIMITS[key];
+  const clamped = Math.min(max, Math.max(min, n));
+  return round ? Math.round(clamped) : clamped;
+};
+
+const PREVIEW_VAD_DEFAULTS = previewVadConstants.DEFAULTS;
+const PREVIEW_VAD_LIMITS = previewVadConstants.LIMITS;
+
+type PreviewVadKey = keyof typeof PREVIEW_VAD_DEFAULTS;
+
+const clampPreviewVadValue = (key: PreviewVadKey, raw: unknown): number => {
+  const fallback = PREVIEW_VAD_DEFAULTS[key];
+  const n = raw === null || raw === undefined || raw === "" ? fallback : Number(raw);
+  if (!Number.isFinite(n)) return fallback;
+  const { min, max, round } = PREVIEW_VAD_LIMITS[key];
   const clamped = Math.min(max, Math.max(min, n));
   return round ? Math.round(clamped) : clamped;
 };
@@ -485,6 +502,8 @@ export interface SettingsState
   whisperVadMaxSpeechDurationS: number;
   whisperVadSpeechPadMs: number;
   whisperVadSamplesOverlap: number;
+  previewVadMinSpeechDurationMs: number;
+  previewVadMinSilenceDurationMs: number;
   panelStartPosition: "bottom-right" | "center" | "bottom-left";
   showTranscriptionPreview: boolean;
   autoPasteEnabled: boolean;
@@ -725,6 +744,9 @@ export interface SettingsState
   setWhisperVadSpeechPadMs: (value: number) => void;
   setWhisperVadSamplesOverlap: (value: number) => void;
   resetWhisperVad: () => void;
+  setPreviewVadMinSpeechDurationMs: (value: number) => void;
+  setPreviewVadMinSilenceDurationMs: (value: number) => void;
+  resetPreviewVadDefaults: () => void;
   setPanelStartPosition: (position: "bottom-right" | "center" | "bottom-left") => void;
   setShowTranscriptionPreview: (value: boolean) => void;
   setAutoPasteEnabled: (value: boolean) => void;
@@ -1132,6 +1154,14 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
   whisperVadSamplesOverlap: clampVadValue(
     "samplesOverlap",
     readString("whisperVadSamplesOverlap", "0.5")
+  ),
+  previewVadMinSpeechDurationMs: clampPreviewVadValue(
+    "minSpeechDurationMs",
+    readString("previewVadMinSpeechDurationMs", "80")
+  ),
+  previewVadMinSilenceDurationMs: clampPreviewVadValue(
+    "minSilenceDurationMs",
+    readString("previewVadMinSilenceDurationMs", "500")
   ),
   panelStartPosition: (() => {
     const v = readString("panelStartPosition", "center");
@@ -1767,6 +1797,44 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
         minSilenceDurationMs: d.minSilenceDurationMs,
         maxSpeechDurationS: d.maxSpeechDurationS,
         speechPadMs: d.speechPadMs,
+        samplesOverlap: d.samplesOverlap,
+      });
+    }
+  },
+  setPreviewVadMinSpeechDurationMs: (value: number) => {
+    const next = clampPreviewVadValue("minSpeechDurationMs", value);
+    if (isBrowser) localStorage.setItem("previewVadMinSpeechDurationMs", String(next));
+    useSettingsStore.setState({ previewVadMinSpeechDurationMs: next });
+    if (isBrowser) {
+      window.electronAPI?.setPreviewVadConfig?.({ minSpeechDurationMs: next });
+    }
+  },
+  setPreviewVadMinSilenceDurationMs: (value: number) => {
+    const next = clampPreviewVadValue("minSilenceDurationMs", value);
+    if (isBrowser) localStorage.setItem("previewVadMinSilenceDurationMs", String(next));
+    useSettingsStore.setState({ previewVadMinSilenceDurationMs: next });
+    if (isBrowser) {
+      window.electronAPI?.setPreviewVadConfig?.({ minSilenceDurationMs: next });
+    }
+  },
+  resetPreviewVadDefaults: () => {
+    const d = PREVIEW_VAD_DEFAULTS;
+    const next = {
+      previewVadMinSpeechDurationMs: d.minSpeechDurationMs,
+      previewVadMinSilenceDurationMs: d.minSilenceDurationMs,
+    };
+    if (isBrowser) {
+      for (const [key, value] of Object.entries(next)) {
+        localStorage.setItem(key, String(value));
+      }
+    }
+    useSettingsStore.setState(next);
+    if (isBrowser) {
+      window.electronAPI?.setPreviewVadConfig?.({
+        minSpeechDurationMs: d.minSpeechDurationMs,
+        minSilenceDurationMs: d.minSilenceDurationMs,
+        speechPadMs: d.speechPadMs,
+        maxSpeechDurationS: d.maxSpeechDurationS,
         samplesOverlap: d.samplesOverlap,
       });
     }
@@ -2560,6 +2628,20 @@ export async function initializeSettings(): Promise<void> {
     } catch (err) {
       logger.warn(
         "Failed to sync whisper VAD config on startup",
+        { error: (err as Error).message },
+        "settings"
+      );
+    }
+
+    try {
+      const currentState = useSettingsStore.getState();
+      await window.electronAPI.setPreviewVadConfig?.({
+        minSpeechDurationMs: currentState.previewVadMinSpeechDurationMs,
+        minSilenceDurationMs: currentState.previewVadMinSilenceDurationMs,
+      });
+    } catch (err) {
+      logger.warn(
+        "Failed to sync preview VAD config on startup",
         { error: (err as Error).message },
         "settings"
       );

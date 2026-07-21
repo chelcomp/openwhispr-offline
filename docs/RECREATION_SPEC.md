@@ -571,6 +571,24 @@ Nenhum dos dois engines tem encoder incremental — cada chamada de inferência 
 - `requestPartial()`: re-transcreve utterance aberto, nunca compete com commit pendente; só é agendado (timer de 1500ms) quando `showOverlay` é `true` — é puramente cosmético e nunca afeta o texto commitado/colado.
 - `finish()`: força flush, retorna `{text, segments, finalized, quality:{committedMs, lowQualityMs, totalInputMs, lowQualityRatio, coverageRatio}}`.
 
+**Configuração própria ("Live Preview Sensitivity"), independente do Silero VAD
+(`docs/specs/live-preview-vad-sensitivity.md`, implementado)**: `minSpeechDurationMs`
+(usado por `_voicedRunMs >= minSpeechDurationMs`) e `minSilenceDurationMs` (fecha o
+segmento) **não são mais lidos/derivados do `whisperVad.json`/`_resolveWhisperVadOptions()`
+do Silero** — vêm de `src/constants/previewVad.json` +
+`src/helpers/previewVadConfig.js` (`DEFAULT_PREVIEW_VAD_CONFIG`,
+`sanitizePreviewVadConfig`, `resolvePreviewVadConfig`), com defaults `minSpeechDurationMs:
+80`, `minSilenceDurationMs: 500` (validados via testes ao vivo — os defaults do Silero,
+250ms/200ms via `settingsStore.ts`, deixavam `coverageRatio` perto de 0 quando reusados por
+este detector de energia mais cru). `speechPadMs: 100`, `maxSpeechDurationS: 20`,
+`samplesOverlap: 0.3` também vêm exclusivamente deste novo namespace (constantes fixas, não
+expostas como controle de UI). Persistido via IPC própria (`preview-vad-get-config`/
+`preview-vad-set-config`), `_resolvePreviewVadOptions()` em `ipcHandlers.js`, e novas chaves
+de `localStorage` (`previewVadMinSpeechDurationMs`/`previewVadMinSilenceDurationMs`) em
+`settingsStore.ts` — sem relação de schema com o `whisperVad.json` do Silero. Configurável
+em Settings → Fala-para-Texto → "Live Preview Sensitivity", visualmente distinta da seção
+Silero "Voice Activity Detection" acima.
+
 #### 2.6.3 Sinal de confiança por engine (`src/utils/transcriptionQualityHeuristics.js`)
 - **Whisper**: `isWhisperSegmentLowQuality` via limiares clássicos (`avg_logprob < -1.0` ou `compression_ratio > 2.4`), usando os campos reais de `avg_logprob`/`compression_ratio`/`no_speech_prob` do whisper.cpp.
 - **Parakeet (offline-runtime)**: não existe campo de confiança nativo no protocolo JSON do binário offline-websocket-server do sherpa-onnx. `isParakeetSegmentLowQuality` usa um heurístico derivado de texto — desvio deliberado e sinalizado, não uma substituição silenciosa: razão de compressão via zlib (mesma técnica que o whisper.cpp usa para `compression_ratio`), o detector de alucinação compartilhado (`isHallucinatedText`), e o RMS do chunk.
@@ -578,6 +596,11 @@ Nenhum dos dois engines tem encoder incremental — cada chamada de inferência 
 
 #### 2.6.4 Integração em `ipcHandlers.js` (`start/stop-dictation-preview`)
 - Ambos os engines (Whisper e Parakeet offline-runtime) criam uma `dictationBatchingSession` com o par de callbacks `transcribe`/`isLowQuality` apropriado — única diferença de wiring entre os dois.
+- O `vadConfig` passado a `createDictationBatchingSession` vem inteiramente de
+  `this._resolvePreviewVadOptions()` (novo namespace "Live Preview Sensitivity" — ver
+  §2.6.2) — **não** lê mais `_resolveWhisperVadOptions("dictation")`/Silero para nenhum
+  campo. Um clamp experimental (`Math.min`/`Math.max`) que fazia esse empréstimo
+  silenciosamente foi removido; nada mais é limitado/floor sem aparecer na tela.
 - `showOverlay` (booleano passado pelo renderer, espelhando `showTranscriptionPreview`) controla **apenas** se a janela de legenda ao vivo é exibida — a sessão de batching roda de qualquer forma, sempre que o modelo/engine é elegível.
 - **Filtro de qualidade no stop**: só retorna para paste direto se `finalized && lowQualityRatio <= 0.5 && coverageRatio >= 0.4`. Senão, cai para re-transcrição offline autoritativa do WAV completo.
 - **Os três modelos Parakeet `runtime: "online"` foram removidos do produto inteiramente** (decisão do project owner, Opção A — ver o spec): `nemotron-speech-streaming-en-0.6b`, `nemotron-3.5-asr-streaming-0.6b`, `nemotron-3.5-asr-streaming-0.6b-1120ms`, junto com a flag/toggle `parakeetStreamingBeta` e as primitivas de streaming real agora mortas (`ParakeetWsServer.createOnlineStream()`/`_transcribeOnline()`/`_warmUpOnline()`, binário `sherpa-onnx-online-websocket-server`). Não há mais exceção de streaming por modelo — exatamente um mecanismo unificado de batching/qualidade para todos os engines locais. Usuários previamente configurados em um dos três IDs removidos são migrados para `parakeet-tdt-0.6b-v3` no próximo lançamento (`src/helpers/parakeetModelMigration.js`, checado a cada lançamento — idempotente, sem sentinel).

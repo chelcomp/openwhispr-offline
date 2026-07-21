@@ -272,6 +272,14 @@ practice, **the answer to "should VAD happen at the shared app/pipeline level" i
 already does for Whisper — this spec generalizes the same JS-level VAD to Parakeet** rather than
 inventing a second chunking mechanism. This directly satisfies Requirement 2.
 
+> **Superseded note**: at the time this spec was implemented, the JS energy-RMS VAD's
+> `minSpeechDurationMs`/`minSilenceDurationMs` (and other fields) were sourced from
+> `_resolveWhisperVadOptions("dictation")` — i.e. borrowed from the Silero VAD settings
+> described above. `docs/specs/live-preview-vad-sensitivity.md` (implemented) replaced this
+> with a separate, independent, user-visible "Live Preview Sensitivity" settings namespace;
+> the energy-RMS VAD no longer reads any Silero-sourced value for any field. See that spec
+> for the current, correct config-sourcing design.
+
 ### 2. Confidence signal per engine — what was actually found
 
 - **Whisper**: `whisperServer.js: transcribe()` already requests `response_format=verbose_json`

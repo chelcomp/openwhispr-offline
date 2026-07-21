@@ -726,6 +726,24 @@ See `docs/specs/audio-transcription-batching.md` for the full design.
   `WhisperManager.isHallucinatedText` (`whisper.js`) is now a thin delegating wrapper so existing
   call sites keep working unchanged.
 
+**Live Preview Sensitivity (own settings, decoupled from Silero VAD)**: the energy-RMS
+detector above is a crude, architecturally different animal from the neural Silero VAD that
+governs the offline/full-clip Whisper pass (Settings → Speech-to-Text → "Voice Activity
+Detection"). It has its own, independent, user-visible settings section — "Live Preview
+Sensitivity" — rather than borrowing/clamping Silero's values (see
+`docs/specs/live-preview-vad-sensitivity.md`). `minSpeechDurationMs` (default `80`, drives
+`_voicedRunMs >= minSpeechDurationMs`) and `minSilenceDurationMs` (default `500`, closes a
+segment) are user-tunable; `speechPadMs` (`100`), `maxSpeechDurationS` (`20`), and
+`samplesOverlap` (`0.3`) get their own fixed defaults in the same new namespace but are not
+exposed as UI controls. New files: `src/constants/previewVad.json`,
+`src/helpers/previewVadConfig.js` (mirrors `whisperVad.json`/`whisperVadConfig.js`'s pattern:
+`DEFAULT_PREVIEW_VAD_CONFIG`, `clampPreviewVadField`, `sanitizePreviewVadConfig`, plus
+`resolvePreviewVadConfig()`). New IPC: `preview-vad-get-config`/`preview-vad-set-config`,
+`ipcHandlers.js`'s `_resolvePreviewVadOptions()` (dictation-only — this settings section
+only affects `start-dictation-preview`). `start-dictation-preview` builds its `vadConfig`
+entirely from this — it no longer reads `_resolveWhisperVadOptions("dictation")`/Silero for
+any of these five fields, and no silent floor/cap clamps remain in that path.
+
 **`showTranscriptionPreview`** now only controls whether the live caption overlay window is shown
 — it does not gate whether the batching session itself runs. The overlay's cosmetic 1500ms partial
 re-transcription of the still-open utterance (`requestPartial()`) is the one piece of the

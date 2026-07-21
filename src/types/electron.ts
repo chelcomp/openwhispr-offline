@@ -1563,6 +1563,24 @@ declare global {
         speechPadMs?: number;
         samplesOverlap?: number;
       }) => Promise<{ success: boolean; config?: Record<string, unknown>; error?: string }>;
+      getPreviewVadConfig?: () => Promise<{
+        success: boolean;
+        config?: {
+          minSpeechDurationMs: number;
+          minSilenceDurationMs: number;
+          speechPadMs: number;
+          maxSpeechDurationS: number;
+          samplesOverlap: number;
+        };
+        error?: string;
+      }>;
+      setPreviewVadConfig?: (config: {
+        minSpeechDurationMs?: number;
+        minSilenceDurationMs?: number;
+        speechPadMs?: number;
+        maxSpeechDurationS?: number;
+        samplesOverlap?: number;
+      }) => Promise<{ success: boolean; config?: Record<string, unknown>; error?: string }>;
       getPendingMeetingNoteNavigation?: () => Promise<{
         noteId: number;
         folderId: number;

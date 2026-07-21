@@ -712,11 +712,16 @@ export default function SettingsPage({
     setWhisperVadSpeechPadMs,
     whisperVadSamplesOverlap,
     setWhisperVadSamplesOverlap,
+    previewVadMinSpeechDurationMs,
+    setPreviewVadMinSpeechDurationMs,
+    previewVadMinSilenceDurationMs,
+    setPreviewVadMinSilenceDurationMs,
   } = useSettings();
 
   const voiceAgentKey = useSettingsStore((s) => s.voiceAgentKey);
   const setVoiceAgentKey = useSettingsStore((s) => s.setVoiceAgentKey);
   const resetWhisperVad = useSettingsStore((s) => s.resetWhisperVad);
+  const resetPreviewVadDefaults = useSettingsStore((s) => s.resetPreviewVadDefaults);
 
   const { t, i18n } = useTranslation();
   const { toast } = useToast();
@@ -1335,6 +1340,63 @@ export default function SettingsPage({
             <Button variant="ghost" size="sm" onClick={resetWhisperVad}>
               <RotateCw className="mr-1.5 h-3.5 w-3.5" />
               {t("settingsPage.transcription.vad.resetDefaults")}
+            </Button>
+          </div>
+        </SettingsPanelRow>
+      </SettingsPanel>
+    </div>
+  );
+
+  const renderPreviewVadSettings = () => (
+    <div>
+      <SectionHeader
+        title={t("settingsPage.transcription.previewVad.title")}
+        description={t("settingsPage.transcription.previewVad.description")}
+      />
+      <SettingsPanel>
+        <SettingsPanelRow>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 w-full">
+            <div className="space-y-1.5">
+              <VADLabelWithInfo
+                label={t("settingsPage.transcription.previewVad.fields.minSpeechDurationMs.label")}
+                description={t(
+                  "settingsPage.transcription.previewVad.fields.minSpeechDurationMs.info"
+                )}
+              />
+              <Input
+                type="number"
+                step="10"
+                min="20"
+                max="500"
+                value={previewVadMinSpeechDurationMs}
+                onChange={(e) => setPreviewVadMinSpeechDurationMs(Number(e.target.value))}
+              />
+            </div>
+            <div className="space-y-1.5">
+              <VADLabelWithInfo
+                label={t(
+                  "settingsPage.transcription.previewVad.fields.minSilenceDurationMs.label"
+                )}
+                description={t(
+                  "settingsPage.transcription.previewVad.fields.minSilenceDurationMs.info"
+                )}
+              />
+              <Input
+                type="number"
+                step="10"
+                min="100"
+                max="2000"
+                value={previewVadMinSilenceDurationMs}
+                onChange={(e) => setPreviewVadMinSilenceDurationMs(Number(e.target.value))}
+              />
+            </div>
+          </div>
+        </SettingsPanelRow>
+        <SettingsPanelRow>
+          <div className="flex justify-end w-full">
+            <Button variant="ghost" size="sm" onClick={resetPreviewVadDefaults}>
+              <RotateCw className="mr-1.5 h-3.5 w-3.5" />
+              {t("settingsPage.transcription.previewVad.resetDefaults")}
             </Button>
           </div>
         </SettingsPanelRow>
@@ -2821,6 +2883,7 @@ EOF`,
                 {transcriptionMode === "local" &&
                   localTranscriptionProvider !== "nvidia" &&
                   renderWhisperVadSettings()}
+                {transcriptionMode === "local" && renderPreviewVadSettings()}
               </div>
             )}
             renderNoteRecording={() => (
