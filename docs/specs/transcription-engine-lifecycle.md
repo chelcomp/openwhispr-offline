@@ -1,9 +1,9 @@
 # Transcription Engine Lifecycle (Pinning, Idle-Timeout, Crash Respawn)
 
 ## Status
-Approved
+Superseded by `docs/specs/on-demand-model-lifecycle.md`
 
-Approved directly by the project owner in conversation ("abra uma task para esta implementação") — not inferred by any subagent.
+Approved directly by the project owner in conversation ("abra uma task para esta implementação") — not inferred by any subagent. However, the project owner subsequently gave a substantially different set of requirements (no pre-warm at startup, no permanent "pinned" engine, universal on-demand loading triggered by hotkey-press/file-select, a single configurable idle-timeout applying to Whisper/Parakeet/llama-server alike, no proactive crash-respawn) that invert several of this spec's core decisions (R1/R2 pinning, R4's immediate reload, R5/R6 proactive respawn, R7's non-pinned-only idle-timeout, and the "no change to llama-server" Non-goal). This spec was never implemented (confirmed: no `transcriptionEnginePinning.js`/`.test.js` exists in the repo). Do not implement anything from this file — see `docs/specs/on-demand-model-lifecycle.md` for the current target design. This file is retained only for historical record of the design that was superseded.
 
 ## Problem / Goal
 
