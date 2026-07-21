@@ -43,6 +43,8 @@ const PERSISTED_KEYS = [
   "START_MINIMIZED",
   "UI_LANGUAGE",
   "AUDIO_RETENTION_DAYS",
+  "TRANSCRIPTION_IDLE_TIMEOUT_MS",
+  "LLM_IDLE_TIMEOUT_MS",
   "WHISPER_CUDA_ENABLED",
   "WHISPER_GPU_MODE",
   "LLAMA_GPU_MODE",
@@ -500,6 +502,57 @@ class EnvironmentManager {
   // its own since 0 is both the fallback and a valid explicit choice.
   hasAudioRetentionDaysBeenSet() {
     return this._getKey("AUDIO_RETENTION_DAYS") !== "";
+  }
+
+  // Two independent idle-timeout settings (transcriptionIdleTimeoutMs for
+  // Whisper/Parakeet, llmIdleTimeoutMs for llama-server — see
+  // docs/specs/on-demand-model-lifecycle.md Design §5). Bounds/default
+  // duplicated here (rather than requiring src/helpers/modelIdleTimeoutSync.js,
+  // which uses ESM `export` and can't be require()'d from this CJS module) —
+  // that file remains the canonical/tested definition, consumed directly by
+  // settingsStore.ts (renderer) and this file's ipcHandlers.js callers apply
+  // the same numbers defensively before calling *setIdleTimeoutMs*.
+  _clampModelIdleTimeoutMs(value) {
+    const MIN_MS = 30 * 1000;
+    const MAX_MS = 60 * 60 * 1000;
+    const DEFAULT_MS = 5 * 60 * 1000;
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric)) return DEFAULT_MS;
+    return Math.max(MIN_MS, Math.min(MAX_MS, Math.round(numeric)));
+  }
+
+  getTranscriptionIdleTimeoutMs() {
+    const raw = this._getKey("TRANSCRIPTION_IDLE_TIMEOUT_MS");
+    if (raw === "") return this._clampModelIdleTimeoutMs(undefined);
+    return this._clampModelIdleTimeoutMs(parseInt(raw, 10));
+  }
+
+  saveTranscriptionIdleTimeoutMs(ms) {
+    const normalized = this._clampModelIdleTimeoutMs(ms);
+    const result = this._saveKey("TRANSCRIPTION_IDLE_TIMEOUT_MS", String(normalized));
+    this.saveAllKeysToEnvFile().catch(() => {});
+    return { ...result, ms: normalized };
+  }
+
+  hasTranscriptionIdleTimeoutMsBeenSet() {
+    return this._getKey("TRANSCRIPTION_IDLE_TIMEOUT_MS") !== "";
+  }
+
+  getLlmIdleTimeoutMs() {
+    const raw = this._getKey("LLM_IDLE_TIMEOUT_MS");
+    if (raw === "") return this._clampModelIdleTimeoutMs(undefined);
+    return this._clampModelIdleTimeoutMs(parseInt(raw, 10));
+  }
+
+  saveLlmIdleTimeoutMs(ms) {
+    const normalized = this._clampModelIdleTimeoutMs(ms);
+    const result = this._saveKey("LLM_IDLE_TIMEOUT_MS", String(normalized));
+    this.saveAllKeysToEnvFile().catch(() => {});
+    return { ...result, ms: normalized };
+  }
+
+  hasLlmIdleTimeoutMsBeenSet() {
+    return this._getKey("LLM_IDLE_TIMEOUT_MS") !== "";
   }
 
   async saveAllKeysToEnvFile() {

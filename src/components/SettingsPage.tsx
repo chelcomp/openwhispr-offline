@@ -724,6 +724,10 @@ export default function SettingsPage({
     setPanelStartPosition,
     audioRetentionDays,
     setAudioRetentionDays,
+    transcriptionIdleTimeoutMs,
+    setTranscriptionIdleTimeoutMs,
+    llmIdleTimeoutMs,
+    setLlmIdleTimeoutMs,
     dataRetentionEnabled,
     setDataRetentionEnabled,
     saveDiscardedTranscriptions,
@@ -2454,6 +2458,94 @@ EOF`,
                     >
                       {t("settingsPage.privacy.clearAllMeetingAudio")}
                     </Button>
+                  </SettingsRow>
+                </SettingsPanelRow>
+              </SettingsPanel>
+            </div>
+
+            {/* Local Model Performance — on-demand load/idle-timeout (see
+                docs/specs/on-demand-model-lifecycle.md). Two independent
+                settings: transcription (Whisper/Parakeet) and the local LLM
+                (llama-server) each auto-unload after their own idle timeout. */}
+            <div>
+              <SectionHeader
+                title={t("settingsPage.privacy.localModelPerformance")}
+                description={t("settingsPage.privacy.localModelPerformanceDescription")}
+              />
+
+              <SettingsPanel>
+                <SettingsPanelRow>
+                  <SettingsRow
+                    label={t("settingsPage.privacy.transcriptionIdleTimeout")}
+                    description={t("settingsPage.privacy.transcriptionIdleTimeoutDescription")}
+                  >
+                    <select
+                      value={transcriptionIdleTimeoutMs}
+                      onChange={(e) => setTranscriptionIdleTimeoutMs(parseInt(e.target.value, 10))}
+                      className="h-7 rounded border border-border/70 bg-surface-1/80 px-2.5 text-xs font-medium text-foreground shadow-sm backdrop-blur-sm hover:border-border-hover hover:bg-surface-2/70 focus:outline-none focus:ring-2 focus:ring-ring/30 focus:ring-offset-1 transition-colors duration-200"
+                    >
+                      <option value={30000}>
+                        {t("settingsPage.privacy.idleTimeoutSeconds", { count: 30 })}
+                      </option>
+                      <option value={60000}>
+                        {t("settingsPage.privacy.idleTimeoutMinutes", { count: 1 })}
+                      </option>
+                      <option value={120000}>
+                        {t("settingsPage.privacy.idleTimeoutMinutes", { count: 2 })}
+                      </option>
+                      <option value={300000}>
+                        {t("settingsPage.privacy.idleTimeoutMinutes", { count: 5 })}
+                      </option>
+                      <option value={600000}>
+                        {t("settingsPage.privacy.idleTimeoutMinutes", { count: 10 })}
+                      </option>
+                      <option value={900000}>
+                        {t("settingsPage.privacy.idleTimeoutMinutes", { count: 15 })}
+                      </option>
+                      <option value={1800000}>
+                        {t("settingsPage.privacy.idleTimeoutMinutes", { count: 30 })}
+                      </option>
+                      <option value={3600000}>
+                        {t("settingsPage.privacy.idleTimeoutMinutes", { count: 60 })}
+                      </option>
+                    </select>
+                  </SettingsRow>
+                </SettingsPanelRow>
+                <SettingsPanelRow>
+                  <SettingsRow
+                    label={t("settingsPage.privacy.llmIdleTimeout")}
+                    description={t("settingsPage.privacy.llmIdleTimeoutDescription")}
+                  >
+                    <select
+                      value={llmIdleTimeoutMs}
+                      onChange={(e) => setLlmIdleTimeoutMs(parseInt(e.target.value, 10))}
+                      className="h-7 rounded border border-border/70 bg-surface-1/80 px-2.5 text-xs font-medium text-foreground shadow-sm backdrop-blur-sm hover:border-border-hover hover:bg-surface-2/70 focus:outline-none focus:ring-2 focus:ring-ring/30 focus:ring-offset-1 transition-colors duration-200"
+                    >
+                      <option value={30000}>
+                        {t("settingsPage.privacy.idleTimeoutSeconds", { count: 30 })}
+                      </option>
+                      <option value={60000}>
+                        {t("settingsPage.privacy.idleTimeoutMinutes", { count: 1 })}
+                      </option>
+                      <option value={120000}>
+                        {t("settingsPage.privacy.idleTimeoutMinutes", { count: 2 })}
+                      </option>
+                      <option value={300000}>
+                        {t("settingsPage.privacy.idleTimeoutMinutes", { count: 5 })}
+                      </option>
+                      <option value={600000}>
+                        {t("settingsPage.privacy.idleTimeoutMinutes", { count: 10 })}
+                      </option>
+                      <option value={900000}>
+                        {t("settingsPage.privacy.idleTimeoutMinutes", { count: 15 })}
+                      </option>
+                      <option value={1800000}>
+                        {t("settingsPage.privacy.idleTimeoutMinutes", { count: 30 })}
+                      </option>
+                      <option value={3600000}>
+                        {t("settingsPage.privacy.idleTimeoutMinutes", { count: 60 })}
+                      </option>
+                    </select>
                   </SettingsRow>
                 </SettingsPanelRow>
               </SettingsPanel>

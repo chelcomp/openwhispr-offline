@@ -37,6 +37,12 @@ export const useAudioRecording = (toast, options = {}) => {
 
       audioManagerRef.current.setVoiceAgentRequested(voiceAgentRequested);
 
+      // Issue transcription-engine warm-up first, then LLM warm-up — both
+      // fire-and-forget/non-blocking, issued back-to-back (not awaited before
+      // the next), matching R2's "transcription first, then LLM" issue-order
+      // requirement. See docs/specs/on-demand-model-lifecycle.md Design §4.
+      audioManagerRef.current.warmupTranscriptionEngine();
+
       // Load the local cleanup/agent model now so its ~4s cold start overlaps
       // with the user speaking instead of blocking the paste after they release.
       audioManagerRef.current.warmupReasoningServer();

@@ -10,6 +10,11 @@ import { PROMPT_KIND_LIST, type PromptKind } from "../config/prompts/registry";
 import { deriveReasoningMode, buildReasoningScopePatches } from "../helpers/reasoningRouting";
 import { resolveAudioRetentionStartupSync } from "../helpers/audioRetentionSync";
 import {
+  resolveModelIdleTimeoutMs,
+  resolveModelIdleTimeoutStartupSync,
+  DEFAULT_MODEL_IDLE_TIMEOUT_MS,
+} from "../helpers/modelIdleTimeoutSync";
+import {
   INFERENCE_SCOPES,
   type InferenceScope,
   type InferenceScopeDefinition,
@@ -189,6 +194,8 @@ const ARRAY_SETTINGS = new Set([
 
 const NUMERIC_SETTINGS = new Set([
   "audioRetentionDays",
+  "transcriptionIdleTimeoutMs",
+  "llmIdleTimeoutMs",
   "whisperVadThreshold",
   "whisperVadMinSpeechDurationMs",
   "whisperVadMinSilenceDurationMs",
@@ -677,6 +684,8 @@ export interface SettingsState
   setCloudBackupEnabled: (value: boolean) => void;
   setTelemetryEnabled: (value: boolean) => void;
   setAudioRetentionDays: (days: number) => void;
+  setTranscriptionIdleTimeoutMs: (ms: number) => void;
+  setLlmIdleTimeoutMs: (ms: number) => void;
   setDataRetentionEnabled: (value: boolean) => void;
   setSaveDiscardedTranscriptions: (value: boolean) => void;
   setAudioCuesEnabled: (value: boolean) => void;
@@ -1063,6 +1072,23 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
     if (stored === null) return 0;
     const parsed = parseInt(stored, 10);
     return isNaN(parsed) ? 0 : parsed;
+  })(),
+  // Two independent idle-timeout settings (Whisper/Parakeet vs. llama-server)
+  // — see docs/specs/on-demand-model-lifecycle.md Design §5. Both default to
+  // 5 minutes and share the same 30s-60min bounds, but are never coupled.
+  transcriptionIdleTimeoutMs: (() => {
+    if (!isBrowser) return DEFAULT_MODEL_IDLE_TIMEOUT_MS;
+    const stored = localStorage.getItem("transcriptionIdleTimeoutMs");
+    return stored === null
+      ? DEFAULT_MODEL_IDLE_TIMEOUT_MS
+      : resolveModelIdleTimeoutMs(Number(stored));
+  })(),
+  llmIdleTimeoutMs: (() => {
+    if (!isBrowser) return DEFAULT_MODEL_IDLE_TIMEOUT_MS;
+    const stored = localStorage.getItem("llmIdleTimeoutMs");
+    return stored === null
+      ? DEFAULT_MODEL_IDLE_TIMEOUT_MS
+      : resolveModelIdleTimeoutMs(Number(stored));
   })(),
   dataRetentionEnabled: readBoolean("dataRetentionEnabled", false),
   saveDiscardedTranscriptions: readBoolean("saveDiscardedTranscriptions", false),
@@ -1558,6 +1584,34 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
       window.electronAPI.saveAudioRetentionDays(days).catch((err) => {
         logger.warn(
           "Failed to sync audio retention days to main process",
+          { error: (err as Error).message },
+          "settings"
+        );
+      });
+    }
+  },
+  setTranscriptionIdleTimeoutMs: (ms: number) => {
+    const clamped = resolveModelIdleTimeoutMs(ms);
+    if (isBrowser) localStorage.setItem("transcriptionIdleTimeoutMs", String(clamped));
+    set({ transcriptionIdleTimeoutMs: clamped });
+    if (isBrowser && window.electronAPI?.saveTranscriptionIdleTimeoutMs) {
+      window.electronAPI.saveTranscriptionIdleTimeoutMs(clamped).catch((err) => {
+        logger.warn(
+          "Failed to sync transcription idle timeout to main process",
+          { error: (err as Error).message },
+          "settings"
+        );
+      });
+    }
+  },
+  setLlmIdleTimeoutMs: (ms: number) => {
+    const clamped = resolveModelIdleTimeoutMs(ms);
+    if (isBrowser) localStorage.setItem("llmIdleTimeoutMs", String(clamped));
+    set({ llmIdleTimeoutMs: clamped });
+    if (isBrowser && window.electronAPI?.saveLlmIdleTimeoutMs) {
+      window.electronAPI.saveLlmIdleTimeoutMs(clamped).catch((err) => {
+        logger.warn(
+          "Failed to sync LLM idle timeout to main process",
           { error: (err as Error).message },
           "settings"
         );
@@ -2339,6 +2393,56 @@ export async function initializeSettings(): Promise<void> {
     } catch (err) {
       logger.warn(
         "Failed to sync audio retention days on startup",
+        { error: (err as Error).message },
+        "settings"
+      );
+    }
+
+    // Sync the two independent model-idle-timeout settings with main process.
+    // Same "pull once genuinely persisted, else push renderer's value" shape
+    // as audio retention above, applied to each key independently — one IPC
+    // round-trip returns both, but the resolution/write-back never crosses
+    // between the two keys. See modelIdleTimeoutSync.js.
+    try {
+      const syncState = await window.electronAPI.getModelIdleTimeoutSyncState?.();
+      if (syncState) {
+        const transcriptionDecision = resolveModelIdleTimeoutStartupSync({
+          hasBeenSetOnMain: syncState.transcriptionIdleTimeoutMs?.hasBeenSet,
+          mainValue: syncState.transcriptionIdleTimeoutMs?.ms,
+          rendererValue: state.transcriptionIdleTimeoutMs,
+        });
+        if (transcriptionDecision.action === "pull") {
+          if (transcriptionDecision.value !== state.transcriptionIdleTimeoutMs) {
+            if (isBrowser)
+              localStorage.setItem(
+                "transcriptionIdleTimeoutMs",
+                String(transcriptionDecision.value)
+              );
+            useSettingsStore.setState({
+              transcriptionIdleTimeoutMs: transcriptionDecision.value,
+            });
+          }
+        } else {
+          await window.electronAPI.saveTranscriptionIdleTimeoutMs?.(transcriptionDecision.value);
+        }
+
+        const llmDecision = resolveModelIdleTimeoutStartupSync({
+          hasBeenSetOnMain: syncState.llmIdleTimeoutMs?.hasBeenSet,
+          mainValue: syncState.llmIdleTimeoutMs?.ms,
+          rendererValue: state.llmIdleTimeoutMs,
+        });
+        if (llmDecision.action === "pull") {
+          if (llmDecision.value !== state.llmIdleTimeoutMs) {
+            if (isBrowser) localStorage.setItem("llmIdleTimeoutMs", String(llmDecision.value));
+            useSettingsStore.setState({ llmIdleTimeoutMs: llmDecision.value });
+          }
+        } else {
+          await window.electronAPI.saveLlmIdleTimeoutMs?.(llmDecision.value);
+        }
+      }
+    } catch (err) {
+      logger.warn(
+        "Failed to sync model idle timeouts on startup",
         { error: (err as Error).message },
         "settings"
       );

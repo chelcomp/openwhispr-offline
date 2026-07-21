@@ -397,6 +397,13 @@ contextBridge.exposeInMainWorld("electronAPI", {
   saveAudioRetentionDays: (days) => ipcRenderer.invoke("save-audio-retention-days", days),
   getAudioRetentionSyncState: () => ipcRenderer.invoke("get-audio-retention-sync-state"),
 
+  getTranscriptionIdleTimeoutMs: () => ipcRenderer.invoke("get-transcription-idle-timeout-ms"),
+  saveTranscriptionIdleTimeoutMs: (ms) =>
+    ipcRenderer.invoke("save-transcription-idle-timeout-ms", ms),
+  getLlmIdleTimeoutMs: () => ipcRenderer.invoke("get-llm-idle-timeout-ms"),
+  saveLlmIdleTimeoutMs: (ms) => ipcRenderer.invoke("save-llm-idle-timeout-ms", ms),
+  getModelIdleTimeoutSyncState: () => ipcRenderer.invoke("get-model-idle-timeout-sync-state"),
+
   // Custom endpoint API keys
   getCustomTranscriptionKey: () => ipcRenderer.invoke("get-custom-transcription-key"),
   saveCustomTranscriptionKey: (key) => ipcRenderer.invoke("save-custom-transcription-key", key),

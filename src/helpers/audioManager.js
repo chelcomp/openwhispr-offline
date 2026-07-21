@@ -572,6 +572,52 @@ registerProcessor("pcm-collector-processor", PCMCollectorProcessor);
     }
   }
 
+  // Kick off loading the configured local transcription engine (Whisper or
+  // Parakeet) the moment a recording/upload action starts — hotkey-down for
+  // Dictation/Meeting/Note Recording, file-selection for Upload — so its
+  // cold-start (which would otherwise only begin after the hotkey release, on
+  // the sub-500ms critical path) overlaps with the user's own speech instead.
+  // Fire-and-forget, idempotent (whisperServerStart/parakeetServerStart share
+  // the same no-op-if-already-warm guard as the real transcription call), and
+  // a no-op for cloud/BYOK providers — nothing to warm up locally. See
+  // docs/specs/on-demand-model-lifecycle.md R2/R3.
+  //
+  // `settingsOverride` lets Meeting/Note Recording and Upload pass their own
+  // configured model (falling back to Dictation's settings otherwise, since
+  // that's already what getSettings() resolves for those surfaces per existing
+  // settings-resolution logic).
+  warmupTranscriptionEngine(settingsOverride) {
+    try {
+      if (typeof window === "undefined") return;
+      const settings = settingsOverride || getSettings();
+      const { useLocalWhisper, localTranscriptionProvider, whisperModel, parakeetModel } = settings;
+      if (!useLocalWhisper) return; // Cloud/BYOK — nothing to warm up locally.
+
+      if (localTranscriptionProvider === "nvidia") {
+        if (!parakeetModel || !window.electronAPI?.parakeetServerStart) return;
+        logger.debug(
+          "Pre-warming local Parakeet transcription engine",
+          {
+            model: parakeetModel,
+          },
+          "audio"
+        );
+        window.electronAPI.parakeetServerStart(parakeetModel).catch(() => {});
+        return;
+      }
+
+      if (!whisperModel || !window.electronAPI?.whisperServerStart) return;
+      logger.debug(
+        "Pre-warming local Whisper transcription engine",
+        { model: whisperModel },
+        "audio"
+      );
+      window.electronAPI.whisperServerStart(whisperModel).catch(() => {});
+    } catch {
+      // Warmup is best-effort; the lazy start on the real transcription call still works.
+    }
+  }
+
   /**
    * Returns the persistent mic stream if the track is still live and the
    * device hasn't changed. Falls back to getUserMedia otherwise.
@@ -1876,7 +1922,7 @@ registerProcessor("pcm-collector-processor", PCMCollectorProcessor);
     return result;
   }
 
-  
+
 
   getCustomDictionaryArray() {
     return getSettings().customDictionary;

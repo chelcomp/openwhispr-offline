@@ -571,6 +571,84 @@ test("inference() throws ContextOverflowError when the server's error body match
   );
 });
 
+// --- setIdleTimeoutMs(): configurable idle timeout (llmIdleTimeoutMs) -----
+
+test("resetIdleTimer schedules a stop after the currently configured LLM idle timeout, not a hardcoded 5 minutes", (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const manager = loadLlamaServerManager({});
+  manager.stop = t.mock.fn(manager.stop.bind(manager));
+
+  manager.setIdleTimeoutMs(45000);
+  manager.resetIdleTimer();
+
+  t.mock.timers.tick(44999);
+  assert.equal(manager.stop.mock.callCount(), 0, "must not fire before the configured 45s");
+  t.mock.timers.tick(1);
+  assert.equal(manager.stop.mock.callCount(), 1, "must fire once 45s configured timeout elapses");
+});
+
+test("resetIdleTimer uses the previous default (300000ms) when setIdleTimeoutMs was never called", (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const LlamaServerManager = require("../../src/helpers/llamaServer");
+  const manager = loadLlamaServerManager({});
+  manager.stop = t.mock.fn(manager.stop.bind(manager));
+
+  assert.equal(manager.idleTimeoutMs, LlamaServerManager.DEFAULT_IDLE_TIMEOUT_MS);
+  manager.resetIdleTimer();
+
+  t.mock.timers.tick(300000 - 1);
+  assert.equal(manager.stop.mock.callCount(), 0);
+  t.mock.timers.tick(1);
+  assert.equal(manager.stop.mock.callCount(), 1);
+});
+
+test("changing the transcription-side idle timeout setting never alters llama-server's own configured timeout", (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const manager = loadLlamaServerManager({});
+  manager.stop = t.mock.fn(manager.stop.bind(manager));
+
+  manager.setIdleTimeoutMs(45000);
+  manager.resetIdleTimer();
+
+  // Simulate a completely separate transcription-engine manager's idle timeout
+  // being changed in the same process — llama-server's own configured value
+  // (and therefore its already-scheduled timer) must be unaffected.
+  const unrelatedTranscriptionIdleTimeoutMs = 600000;
+  assert.notEqual(manager.idleTimeoutMs, unrelatedTranscriptionIdleTimeoutMs);
+
+  t.mock.timers.tick(45000);
+  assert.equal(manager.stop.mock.callCount(), 1);
+});
+
+// --- process.on("close", ...): crash logging only, no respawn (R7) --------
+
+test("an unexpected process exit logs distinctly and does not schedule a respawn; a later start() still cold-starts normally", async () => {
+  const cpu = makeBackend({ name: "cpu" });
+  const { fakeSpawn } = createFakeSpawn({ [cpu.getBinaryPath()]: "succeed" });
+  const manager = loadLlamaServerManager({ spawn: fakeSpawn, backendChain: [cpu] });
+  withHealthTrackingProcess(manager);
+
+  await manager.start(FAKE_MODEL_PATH);
+  assert.equal(manager.ready, true);
+
+  const proc = manager.process;
+  // Simulate an unexpected crash (never called manager.stop(), so
+  // _intentionalStop is still false).
+  assert.equal(manager._intentionalStop, false);
+  proc.emit("close", 1, null);
+
+  assert.equal(manager.process, null);
+  assert.equal(manager.ready, false);
+
+  // No automatic respawn: process stays null until an explicit start() call.
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.equal(manager.process, null);
+
+  // The next on-demand start() still cold-starts normally.
+  await manager.start(FAKE_MODEL_PATH);
+  assert.equal(manager.ready, true);
+});
+
 test("inference() throws a plain Error (not ContextOverflowError) for an unrelated non-200 response", async () => {
   const body = JSON.stringify({ error: { message: "invalid request: missing field" } });
   const manager = loadLlamaServerManager({ http: createFakeHttp(400, body) });

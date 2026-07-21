@@ -240,6 +240,27 @@ export default function UploadAudioView({ onNoteCreated, onOpenSettings }: Uploa
     return generateNoteTitle(text, model);
   };
 
+  // Fire-and-forget transcription-engine warm-up the moment a file is
+  // selected (before the user confirms/starts the actual transcription), so
+  // its cold-start overlaps with the rest of the upload flow. No LLM
+  // warm-up — Upload's transcript never routes through the cleanup/
+  // dictation-agent LLM pass. Uses Upload's own configured model (already
+  // resolved with a Dictation fallback via selectResolvedUploadTranscription
+  // above). See docs/specs/on-demand-model-lifecycle.md R3.
+  const warmupUploadTranscriptionEngine = () => {
+    try {
+      if (!useLocalWhisper) return;
+      if (localTranscriptionProvider === "nvidia") {
+        if (parakeetModel)
+          window.electronAPI?.parakeetServerStart?.(parakeetModel)?.catch(() => {});
+      } else if (whisperModel) {
+        window.electronAPI?.whisperServerStart?.(whisperModel)?.catch(() => {});
+      }
+    } catch {
+      // Warmup is best-effort; the lazy start on the real transcription call still works.
+    }
+  };
+
   const handleBrowse = async () => {
     const res = await window.electronAPI.selectAudioFile();
     if (!res.canceled && res.filePath) {
@@ -253,6 +274,7 @@ export default function UploadAudioView({ onNoteCreated, onOpenSettings }: Uploa
       });
       setState("selected");
       setError(null);
+      warmupUploadTranscriptionEngine();
     }
   };
 
@@ -268,6 +290,7 @@ export default function UploadAudioView({ onNoteCreated, onOpenSettings }: Uploa
       setFile({ name: f.name, path: filePath, size: formatFileSize(f.size), sizeBytes: f.size });
       setState("selected");
       setError(null);
+      warmupUploadTranscriptionEngine();
     }
   };
 

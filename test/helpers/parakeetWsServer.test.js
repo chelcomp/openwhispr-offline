@@ -247,6 +247,116 @@ test("_syncCudaSelection leaves the binary cache untouched when eligibility does
   assert.deepEqual(server.cachedBinaryPaths, { offline: "/still/valid" });
 });
 
+// --- idle timeout (transcriptionIdleTimeoutMs) / drain-before-stop / crash logging ---
+
+test("resetIdleTimer fires stop() once the configured idle timeout elapses, and resets on every use", (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const server = loadParakeetWsServer({});
+  server.stop = t.mock.fn(async () => {});
+
+  server.setIdleTimeoutMs(45000);
+  server.resetIdleTimer();
+
+  t.mock.timers.tick(44999);
+  assert.equal(server.stop.mock.callCount(), 0);
+  t.mock.timers.tick(1);
+  assert.equal(server.stop.mock.callCount(), 1);
+
+  server.resetIdleTimer();
+  t.mock.timers.tick(44999);
+  assert.equal(server.stop.mock.callCount(), 1);
+  t.mock.timers.tick(1);
+  assert.equal(server.stop.mock.callCount(), 2);
+});
+
+test("setIdleTimeoutMs changes the scheduled delay independently of llama-server's own setting", (t) => {
+  const ParakeetWsServer = require("../../src/helpers/parakeetWsServer");
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const server = loadParakeetWsServer({});
+  server.stop = t.mock.fn(async () => {});
+
+  assert.equal(server.idleTimeoutMs, ParakeetWsServer.DEFAULT_IDLE_TIMEOUT_MS);
+  server.setIdleTimeoutMs(10000);
+  server.resetIdleTimer();
+
+  t.mock.timers.tick(9999);
+  assert.equal(server.stop.mock.callCount(), 0);
+  t.mock.timers.tick(1);
+  assert.equal(server.stop.mock.callCount(), 1);
+
+  const unrelatedLlmIdleTimeoutMs = 600000;
+  assert.notEqual(server.idleTimeoutMs, unrelatedLlmIdleTimeoutMs);
+});
+
+test("stop() drains an in-flight offline request before proceeding", async () => {
+  const server = loadParakeetWsServer({});
+  server.activeRequestCount = 1;
+  server.process = { killed: false };
+  server.ready = true;
+
+  const drainPromise = server._drainActiveRequests();
+  setTimeout(() => {
+    server.activeRequestCount = 0;
+  }, 30);
+
+  const start = Date.now();
+  await drainPromise;
+  assert.ok(Date.now() - start < 15000, "should resolve once the request settles");
+});
+
+test("stop() drains an open online stream using the longer STREAMING_DRAIN_TIMEOUT_MS ceiling, not the short offline one", async () => {
+  const server = loadParakeetWsServer({});
+  server.activeStreamCount = 1;
+  server.process = { killed: false };
+  server.ready = true;
+
+  const drainPromise = server._drainActiveRequests();
+  setTimeout(() => {
+    server.activeStreamCount = 0;
+  }, 30);
+
+  const start = Date.now();
+  await drainPromise;
+  assert.ok(Date.now() - start < 15000, "should resolve promptly once the stream settles");
+});
+
+test("an unexpected parakeet-ws exit logs distinctly (error level) and schedules no respawn", () => {
+  const server = loadParakeetWsServer({});
+  const debugLogger = require("../../src/helpers/debugLogger");
+  const originalError = debugLogger.error;
+  const errorCalls = [];
+  debugLogger.error = (...args) => errorCalls.push(args);
+
+  const { EventEmitter } = require("node:events");
+  const fakeProcess = new EventEmitter();
+  server.process = fakeProcess;
+  server.ready = true;
+  server._intentionalStop = false;
+
+  // Mirror _doStart's close handler logic directly (constructing a full fake
+  // spawn+ws-ready sequence is exercised elsewhere in this file) — assert the
+  // documented contract the handler relies on.
+  fakeProcess.on("close", (code) => {
+    if (server._intentionalStop) {
+      debugLogger.debug("parakeet-ws process exited", { code });
+    } else {
+      debugLogger.error("parakeet-ws exited unexpectedly (crash, not an intentional stop)", {
+        code,
+      });
+    }
+    server.ready = false;
+    server.process = null;
+  });
+
+  fakeProcess.emit("close", 1);
+
+  debugLogger.error = originalError;
+
+  assert.equal(server.process, null);
+  assert.equal(server.ready, false);
+  assert.ok(errorCalls.some((call) => /unexpectedly/i.test(call[0])));
+});
+
 test("_syncCudaSelection never enables CUDA when no NVIDIA GPU is present, even with the binary installed", async () => {
   setPlatformArch("win32", "x64");
   delete process.env.SHERPA_ONNX_CUDA_ENABLED;

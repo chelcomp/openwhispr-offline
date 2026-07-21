@@ -16,7 +16,10 @@ const HEALTH_CHECK_INTERVAL_MS = 5000;
 const HEALTH_CHECK_TIMEOUT_MS = 2000;
 const STARTUP_POLL_INTERVAL_MS = 500;
 const HEALTH_CHECK_FAILURE_THRESHOLD = 3;
-const IDLE_TIMEOUT_MS = 5 * 60 * 1000;
+// Default/fallback idle timeout, matching the pre-existing hardcoded value —
+// now overridable at runtime via setIdleTimeoutMs(ms), fed by the
+// `llmIdleTimeoutMs` setting (see docs/specs/on-demand-model-lifecycle.md).
+const DEFAULT_IDLE_TIMEOUT_MS = 5 * 60 * 1000;
 // Matches the fallback literal already used by both modelManagerBridge.js call
 // sites (runInference/prewarmServer) so the same number appears in one more
 // place, not a new arbitrary value.
@@ -91,6 +94,19 @@ class LlamaServerManager {
     this.healthCheckFailures = 0;
     this.activeBackend = null;
     this.idleTimer = null;
+    this.idleTimeoutMs = DEFAULT_IDLE_TIMEOUT_MS;
+    // Set right before any stop() this manager itself initiates (idle timeout,
+    // model switch, shutdown) so the process.on("close", ...) handler can log
+    // an unexpected exit distinctly (R7) without ever scheduling a respawn.
+    this._intentionalStop = false;
+  }
+
+  // Called whenever the `llmIdleTimeoutMs` setting changes (and once at
+  // startup-sync time); defaults to DEFAULT_IDLE_TIMEOUT_MS until then. Takes
+  // effect on the next resetIdleTimer() call — an in-flight timer keeps
+  // running on its previous duration rather than being retroactively rescheduled.
+  setIdleTimeoutMs(ms) {
+    this.idleTimeoutMs = Number.isFinite(ms) && ms > 0 ? ms : DEFAULT_IDLE_TIMEOUT_MS;
   }
 
   isAvailable() {
@@ -262,6 +278,7 @@ class LlamaServerManager {
     return new Promise((resolve, reject) => {
       debugLogger.debug("Spawning llama-server", { binary: binaryPath, port: this.port, args });
 
+      this._intentionalStop = false;
       this.process = spawn(binaryPath, args, {
         stdio: ["ignore", "pipe", "pipe"],
         windowsHide: true,
@@ -301,7 +318,17 @@ class LlamaServerManager {
       this.process.on("close", (code, signal) => {
         exitCode = code;
         exitSignal = signal;
-        debugLogger.debug("llama-server process exited", { code, signal });
+        if (this._intentionalStop) {
+          debugLogger.debug("llama-server process exited", { code, signal });
+        } else {
+          // R7 — no proactive respawn, ever: just log distinctly and let the
+          // next on-demand start() (warm-up trigger or real inference call)
+          // cold-start it normally, same as any other "no process" state.
+          debugLogger.error("llama-server exited unexpectedly (crash, not an intentional stop)", {
+            code,
+            signal,
+          });
+        }
         this.ready = false;
         this.process = null;
         this.stopHealthCheck();
@@ -365,6 +392,7 @@ class LlamaServerManager {
   async _killCurrentProcess() {
     if (!this.process) return;
 
+    this._intentionalStop = true;
     this.stopHealthCheck();
 
     try {
@@ -455,11 +483,11 @@ class LlamaServerManager {
     this.clearIdleTimer();
     this.idleTimer = setTimeout(() => {
       debugLogger.info("llama-server idle timeout reached, stopping to free VRAM", {
-        timeoutMs: IDLE_TIMEOUT_MS,
+        timeoutMs: this.idleTimeoutMs,
         model: this.modelPath ? path.basename(this.modelPath) : null,
       });
       this.stop();
-    }, IDLE_TIMEOUT_MS);
+    }, this.idleTimeoutMs);
   }
 
   clearIdleTimer() {
@@ -573,6 +601,7 @@ class LlamaServerManager {
   async stop() {
     this.clearIdleTimer();
     this.stopHealthCheck();
+    this._intentionalStop = true;
 
     if (!this.process) {
       this.ready = false;
@@ -634,6 +663,7 @@ class LlamaServerManager {
 }
 
 module.exports = LlamaServerManager;
+module.exports.DEFAULT_IDLE_TIMEOUT_MS = DEFAULT_IDLE_TIMEOUT_MS;
 module.exports.DEFAULT_CONTEXT_SIZE = DEFAULT_CONTEXT_SIZE;
 module.exports.DEFAULT_CONTEXT_CAP = DEFAULT_CONTEXT_CAP;
 module.exports.MAX_CONTEXT_SIZE = MAX_CONTEXT_SIZE;

@@ -199,6 +199,7 @@ EktosWhispr starts with Windows and runs continuously in the background, so idle
   - Falls back to system installation (`brew install whisper-cpp`)
   - GGML model downloads from HuggingFace
   - Models stored in `~/.cache/ektoswhispr/whisper-models/`
+  - Does **not** pre-warm at app startup (see §18 below) — `initializeAtStartup()` now only does stale-download cleanup and dependency-status logging; the server itself loads on-demand, kicked off by the Dictation/Meeting/Note-Recording hotkey or Upload's file-selection
 
 ### NVIDIA Parakeet Integration (via sherpa-onnx)
 
@@ -207,7 +208,7 @@ EktosWhispr starts with Windows and runs continuously in the background, so idle
   - Bundled binaries in `resources/bin/sherpa-onnx-{platform}-{arch}`
   - INT8 quantized models for efficient CPU inference
   - Models stored in `~/.cache/ektoswhispr/parakeet-models/`
-  - Server pre-warming on startup when `LOCAL_TRANSCRIPTION_PROVIDER=nvidia` is set
+  - Does **not** pre-warm at app startup (see §18 below) — same on-demand model as Whisper above
   - Provider preference persisted to `.env` via `saveAllKeysToEnvFile()` on server start/stop
   - **GPU behavior differs from Whisper**: Parakeet always attempts CUDA when a GPU is present, with no user-facing CPU/GPU toggle (unlike Whisper, which respects `WHISPER_GPU_MODE`). This is an explicit design decision in the source, not a bug — there is no equivalent env var to force Parakeet onto CPU.
 
@@ -301,6 +302,7 @@ Settings stored in localStorage with these keys:
 - `dictationKey`: Custom hotkey configuration
 - `onboardingCompleted`: Onboarding completion flag
 - `customDictionary`: JSON array of words/phrases for improved transcription accuracy
+- `transcriptionIdleTimeoutMs` / `llmIdleTimeoutMs`: idle-timeout durations (ms) for Whisper/Parakeet and llama-server respectively — see "On-Demand Model Lifecycle" (§18)
 
 Secret env vars (16 total: 7 BYOK API keys + 5 enterprise cloud creds + 4 more — `ASSEMBLYAI_API_KEY`, `DEEPGRAM_API_KEY`, `CUSTOM_TRANSCRIPTION_API_KEY`, `CUSTOM_CLEANUP_API_KEY` — see `SECRET_KEYS` in `environment.js`) are encrypted at rest via Electron `safeStorage` and stored as per-key files under `userData/secure-keys/`. They are loaded into `process.env` at startup by `EnvironmentManager.init()`. Renderer reads them via IPC (`get-*-key`) and writes via debounced IPC (`save-*-key`). On Linux without a keyring, secrets fall back to plaintext.
 
@@ -309,6 +311,7 @@ Non-secret env vars persisted to `.env` (via `saveAllKeysToEnvFile()`):
 - `LOCAL_TRANSCRIPTION_PROVIDER`: Transcription engine (`nvidia` for Parakeet)
 - `PARAKEET_MODEL`: Selected Parakeet model name (e.g., `parakeet-tdt-0.6b-v3`)
 - `AUDIO_RETENTION_DAYS`: Local audio retention window in days, mirrored from the renderer's `audioRetentionDays` setting via `get-audio-retention-days`/`save-audio-retention-days` IPC. See "Audio Retention Cleanup" immediately below for its unusual `0` semantics and fallback default.
+- `TRANSCRIPTION_IDLE_TIMEOUT_MS` / `LLM_IDLE_TIMEOUT_MS`: idle-timeout durations (ms) for Whisper/Parakeet and llama-server respectively, mirrored from the renderer's `transcriptionIdleTimeoutMs`/`llmIdleTimeoutMs` settings. See "On-Demand Model Lifecycle" (§18 above) for the full design; both default to 5 minutes and are fully independent of each other.
 
 **Audio Retention Cleanup**: `_setupAudioCleanup()` in `ipcHandlers.js` reads `environmentManager.getAudioRetentionDays()` fresh on every run — once immediately at startup and again every 6 hours — and applies it to **dictation audio only** (`AudioStorageManager.cleanupExpiredAudio()`). Two counter-intuitive, deliberate design decisions here:
 
@@ -631,6 +634,56 @@ A dedicated global hotkey that starts a dictation whose transcript is sent strai
 - Requires the dictation agent to be enabled (Settings → AI Models) for the agent route to apply
 
 **Tests**: `test/helpers/dictationRouting.test.js` (run with `node --test`)
+
+### 18. On-Demand Model Lifecycle (Whisper / Parakeet / llama-server)
+
+All three local model engines — Whisper (`whisperServer.js`), Parakeet (`parakeetWsServer.js`), and
+llama-server (`llamaServer.js`) — are purely on-demand: **nothing loads at app startup**, and every
+engine **unloads after a configurable idle timeout** counted from its last use. There is no
+permanent "pinned/always-warm" engine and no proactive crash-respawn. See
+`docs/specs/on-demand-model-lifecycle.md` for the full design (this supersedes the unimplemented
+`docs/specs/transcription-engine-lifecycle.md`, which proposed a pinned-engine model that was
+rejected).
+
+**Warm-up triggers (loading, always on-demand, never proactive)**:
+
+- Dictation hotkey-down fires `audioManager.js`'s `warmupTranscriptionEngine()` (issued first) then
+  `warmupReasoningServer()` (issued second, not awaited) — both fire-and-forget, from
+  `useAudioRecording.js`'s `performStartRecording`.
+- Meeting/Note Recording hotkey-down fires the equivalent transcription-only warm-up from
+  `meetingRecordingStore.ts`'s `startRecording()` (no LLM warm-up — Meeting/Note Recording never
+  routes through the cleanup/dictation-agent LLM pass).
+- Upload's file-selection (`UploadAudioView.tsx`'s `handleBrowse`/`handleDrop`) fires the same
+  transcription-only warm-up.
+- A model/provider switch unloads the stale process immediately but never reloads proactively — the
+  next load only happens via one of the triggers above, or a real transcription/inference request
+  arriving with no engine loaded.
+
+**Idle-timeout unload — two independent settings**:
+
+- `transcriptionIdleTimeoutMs` — governs Whisper and Parakeet together (shared).
+- `llmIdleTimeoutMs` — governs llama-server, covering all four reasoning scopes.
+- Both default to 5 minutes (300000ms), bounded 30s–60min, and are fully independent — changing one
+  never affects the other. Persisted via the renderer's `useSettingsStore` (localStorage) and mirrored
+  to the main-process env vars `TRANSCRIPTION_IDLE_TIMEOUT_MS`/`LLM_IDLE_TIMEOUT_MS`
+  (`environment.js`), synced at startup the same two-sources-of-truth way as `audioRetentionDays`
+  (see `src/helpers/modelIdleTimeoutSync.js`, mirroring `audioRetentionSync.js`). Each manager exposes
+  a `setIdleTimeoutMs(ms)` setter; `ipcHandlers.js`'s `save-transcription-idle-timeout-ms` calls it on
+  both `WhisperServerManager`/`ParakeetWsServer`, `save-llm-idle-timeout-ms` calls it only on
+  `LlamaServerManager`.
+- UI: Settings → Privacy & Data → "Local Model Performance".
+
+**Drain-before-stop and crash handling**: `WhisperServerManager`/`ParakeetWsServer` gained
+`activeRequestCount`/`DRAIN_TIMEOUT_MS` (15s; Parakeet's streaming handles use a longer
+`STREAMING_DRAIN_TIMEOUT_MS`, 5min) so an idle-timeout or settings-switch `stop()` never kills a
+request that's actually in flight — same shape `llamaServer.js` already had. An unexpected process
+exit (`_intentionalStop === false` in the `close` handler) is logged distinctly at `error` level; no
+counter, no backoff, no scheduled respawn — the next on-demand trigger just cold-starts normally.
+
+**Wake-from-sleep**: `main.js`'s `powerMonitor.on("resume", ...)` handler proactively calls
+`whisperManager.stopServer()` (not a reload) — sleep leaves the whisper-server process running with
+a dead CUDA context, so a clean unload (rather than either ignoring it or reloading proactively) is
+the correct fix; the next Dictation hotkey press cold-starts it normally via the on-demand trigger.
 
 ## Development Guidelines
 

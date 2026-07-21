@@ -765,6 +765,14 @@ declare global {
       getAudioRetentionDays: () => Promise<number>;
       saveAudioRetentionDays: (days: number) => Promise<{ success: boolean; days: number }>;
       getAudioRetentionSyncState: () => Promise<{ hasBeenSet: boolean; days: number }>;
+      getTranscriptionIdleTimeoutMs: () => Promise<number>;
+      saveTranscriptionIdleTimeoutMs: (ms: number) => Promise<{ success: boolean; ms: number }>;
+      getLlmIdleTimeoutMs: () => Promise<number>;
+      saveLlmIdleTimeoutMs: (ms: number) => Promise<{ success: boolean; ms: number }>;
+      getModelIdleTimeoutSyncState: () => Promise<{
+        transcriptionIdleTimeoutMs: { hasBeenSet: boolean; ms: number };
+        llmIdleTimeoutMs: { hasBeenSet: boolean; ms: number };
+      }>;
       saveAllKeysToEnv: () => Promise<{ success: boolean; path: string }>;
       syncStartupPreferences: (prefs: {
         useLocalWhisper: boolean;
@@ -944,6 +952,15 @@ declare global {
         models?: Array<{ value: string; label: string; vendor: string }>;
         error?: string;
       }>;
+
+      // Transcription-engine warm-up / on-demand start (see
+      // docs/specs/on-demand-model-lifecycle.md R2/R3).
+      whisperServerStart: (
+        modelName: string
+      ) => Promise<{ success: boolean; port?: number; reason?: string }>;
+      parakeetServerStart: (
+        modelName: string
+      ) => Promise<{ success: boolean; port?: number; reason?: string }>;
 
       // llama.cpp management
       llamaCppCheck: () => Promise<{ isInstalled: boolean; version?: string }>;

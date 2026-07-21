@@ -21,6 +21,14 @@ const HEALTH_CHECK_INTERVAL_MS = 5000;
 const TRANSCRIPTION_TIMEOUT_MS = 300000;
 const ONLINE_CHUNK_BYTES = 8000 * 4;
 const ONLINE_FINISH_TIMEOUT_MS = 10000;
+// Drain-before-stop ceilings (R8): bounded offline requests get the shorter
+// window; long-lived online/streaming handles (createOnlineStream()) get a
+// much longer one since a dictation can run well past 15s.
+const DRAIN_TIMEOUT_MS = 15000;
+const STREAMING_DRAIN_TIMEOUT_MS = 300000;
+// Default/fallback idle timeout — overridable at runtime via
+// setIdleTimeoutMs(ms), fed by the `transcriptionIdleTimeoutMs` setting.
+const DEFAULT_IDLE_TIMEOUT_MS = 5 * 60 * 1000;
 // Trailing silence appended when finalizing an online stream so the model's
 // lookahead window can decode the last word. A hotkey release provides no natural
 // trailing silence, so without this the final chunk of speech (up to one full
@@ -40,6 +48,55 @@ class ParakeetWsServer {
     this.healthCheckInterval = null;
     this.modelRuntime = "offline";
     this.cachedBinaryPaths = {};
+    // R5/R8: universal idle-timeout + drain-before-stop state, shared shape
+    // with whisperServer.js/llamaServer.js.
+    this.activeRequestCount = 0;
+    this.activeStreamCount = 0;
+    this.idleTimer = null;
+    this.idleTimeoutMs = DEFAULT_IDLE_TIMEOUT_MS;
+    // Set right before any stop() this manager itself initiates, so the
+    // process.on("close", ...) handler can log an unexpected exit distinctly
+    // (R7) without ever scheduling a respawn.
+    this._intentionalStop = false;
+  }
+
+  // Called whenever the `transcriptionIdleTimeoutMs` setting changes (and once
+  // at startup-sync time); defaults to DEFAULT_IDLE_TIMEOUT_MS until then.
+  setIdleTimeoutMs(ms) {
+    this.idleTimeoutMs = Number.isFinite(ms) && ms > 0 ? ms : DEFAULT_IDLE_TIMEOUT_MS;
+  }
+
+  resetIdleTimer() {
+    this.clearIdleTimer();
+    this.idleTimer = setTimeout(() => {
+      debugLogger.info("parakeet-ws idle timeout reached, stopping", {
+        timeoutMs: this.idleTimeoutMs,
+      });
+      this.stop();
+    }, this.idleTimeoutMs);
+  }
+
+  clearIdleTimer() {
+    if (this.idleTimer) {
+      clearTimeout(this.idleTimer);
+      this.idleTimer = null;
+    }
+  }
+
+  // Waits for in-flight offline requests / open online streams to settle
+  // before a stop() proceeds, so an idle-timeout/settings-switch stop never
+  // corrupts a request that's actually in flight (R8). Offline requests get
+  // the shorter DRAIN_TIMEOUT_MS ceiling; open streaming handles get the much
+  // longer STREAMING_DRAIN_TIMEOUT_MS since a dictation can run well past 15s.
+  async _drainActiveRequests() {
+    const ceiling = this.activeStreamCount > 0 ? STREAMING_DRAIN_TIMEOUT_MS : DRAIN_TIMEOUT_MS;
+    const start = Date.now();
+    while (
+      (this.activeRequestCount > 0 || this.activeStreamCount > 0) &&
+      Date.now() - start < ceiling
+    ) {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
   }
 
   getWsBinaryPath(runtime = "offline") {
@@ -180,6 +237,7 @@ class ParakeetWsServer {
       args,
     });
 
+    this._intentionalStop = false;
     this.process = spawn(wsBinary, args, {
       stdio: ["ignore", "pipe", "pipe"],
       windowsHide: true,
@@ -217,16 +275,27 @@ class ParakeetWsServer {
 
     this.process.on("close", (code) => {
       exitCode = code;
-      debugLogger.debug("parakeet-ws process exited", { code });
+      if (this._intentionalStop) {
+        debugLogger.debug("parakeet-ws process exited", { code });
+      } else {
+        // R7 — no proactive respawn, ever: just log distinctly and let the
+        // next on-demand start() (warm-up trigger or a real transcription
+        // request) cold-start it normally.
+        debugLogger.error("parakeet-ws exited unexpectedly (crash, not an intentional stop)", {
+          code,
+        });
+      }
       this.ready = false;
       this.process = null;
       this.stopHealthCheck();
+      this.clearIdleTimer();
       sidecarPidFile.clear("parakeet");
       readyResolve(false);
     });
 
     await this._waitForReady(readyFromStderr, () => ({ stderr: stderrBuffer, exitCode }));
     this._startHealthCheck();
+    this.resetIdleTimer();
 
     debugLogger.info("parakeet-ws server started successfully", {
       port: this.port,
@@ -340,7 +409,17 @@ class ParakeetWsServer {
   }
 
   _transcribeOffline(samplesBuffer, sampleRate) {
-    return new Promise((resolve, reject) => {
+    // A real request is in flight — the idle timer must not fire mid-request,
+    // and _drainActiveRequests() (called from stop()) needs to know this
+    // request hasn't settled yet (R8).
+    this.clearIdleTimer();
+    this.activeRequestCount++;
+    const settleRequest = () => {
+      this.activeRequestCount = Math.max(0, this.activeRequestCount - 1);
+      this.resetIdleTimer();
+    };
+
+    const promise = new Promise((resolve, reject) => {
       const startTime = Date.now();
       let result = "";
 
@@ -397,6 +476,8 @@ class ParakeetWsServer {
         reject(new Error(`parakeet-ws transcription failed: ${error.message}`));
       });
     });
+
+    return promise.finally(settleRequest);
   }
 
   async _transcribeOnline(samplesBuffer) {
@@ -434,6 +515,20 @@ class ParakeetWsServer {
     if (this.modelRuntime !== "online")
       throw new Error("createOnlineStream requires an online-runtime model");
 
+    // A real streaming request is in flight — the idle timer must not fire
+    // mid-stream, and _drainActiveRequests() (called from stop()) needs to
+    // know this stream hasn't settled yet (R8). Decremented in settle()
+    // below, whichever way the stream ends (finish/abort/dirty close).
+    this.clearIdleTimer();
+    this.activeStreamCount++;
+    let streamCounted = true;
+    const uncountStream = () => {
+      if (!streamCounted) return;
+      streamCounted = false;
+      this.activeStreamCount = Math.max(0, this.activeStreamCount - 1);
+      this.resetIdleTimer();
+    };
+
     const results = createOnlineAccumulator();
     const pendingChunks = [];
     let finishResolve = null;
@@ -461,6 +556,7 @@ class ParakeetWsServer {
     const settle = () => {
       if (closed) return;
       closed = true;
+      uncountStream();
       if (finishResolve) finishResolve(buildResult());
     };
 
@@ -555,13 +651,19 @@ class ParakeetWsServer {
   }
 
   async stop() {
+    this.clearIdleTimer();
     this.stopHealthCheck();
+    this._intentionalStop = true;
 
     if (!this.process) {
       this.ready = false;
       this.modelRuntime = "offline";
       return;
     }
+
+    // R8: never corrupt a request/stream that's actually in flight — wait
+    // (bounded) for it to settle before killing the process.
+    await this._drainActiveRequests();
 
     debugLogger.debug("Stopping parakeet-ws server");
 
@@ -590,3 +692,6 @@ class ParakeetWsServer {
 }
 
 module.exports = ParakeetWsServer;
+module.exports.DEFAULT_IDLE_TIMEOUT_MS = DEFAULT_IDLE_TIMEOUT_MS;
+module.exports.DRAIN_TIMEOUT_MS = DRAIN_TIMEOUT_MS;
+module.exports.STREAMING_DRAIN_TIMEOUT_MS = STREAMING_DRAIN_TIMEOUT_MS;

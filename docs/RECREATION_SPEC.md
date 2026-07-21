@@ -130,13 +130,9 @@ registerSidecars()                // registra stop-functions no sidecarRegistry
     - `clipboardManager.preWarmAccessibility()`.
     - `trayManager = new TrayManager()`.
     - `globeKeyManager = new GlobeKeyManager()`; erro → `dialog.showMessageBox` uma única vez.
-13. `powerMonitor.on("resume", ...)` — agenda (`WHISPER_WAKE_REWARM_DELAY_MS = 3000`) `whisperManager.onWakeFromSleep()` (sleep expulsa o modelo local da VRAM).
-14. **Pré-aquecimento não bloqueante de servidores locais** (todos `.catch()` non-fatal):
-    - `whisperManager.initializeAtStartup(...)`.
-    - `parakeetManager.initializeAtStartup(...)`.
-    - Se `CLEANUP_PROVIDER === "local"`: `modelManagerBridge.prewarmServer(cleanupLocalModel)`.
-    - Se `DICTATION_AGENT_PROVIDER === "local"` e o modelo do agente for **diferente** do de cleanup: pré-aquece também.
-    - Diarização: baixa modelos em background se ausentes.
+13. `powerMonitor.on("resume", ...)` — agenda (`WHISPER_WAKE_REWARM_DELAY_MS = 3000`) `whisperManager.stopServer()` (não mais um reload — ver §14 abaixo/`docs/specs/on-demand-model-lifecycle.md` R9: sleep deixa o processo do whisper-server rodando com um contexto CUDA morto, então a ação correta é descarregar, não recarregar; o próximo hotkey de Dictation faz o cold-start normal via warm-up on-demand).
+14. **Nenhum pré-aquecimento no startup** (revertido — ver `docs/specs/on-demand-model-lifecycle.md`, que superseder `docs/specs/transcription-engine-lifecycle.md`): `whisperManager.initializeAtStartup(...)`/`parakeetManager.initializeAtStartup(...)` continuam sendo chamados aqui, mas agora fazem apenas limpeza de downloads incompletos + log de dependências — nenhuma chamada a `serverManager.start()`. Os blocos que pré-aqueciam `llama-server` via `modelManagerBridge.prewarmServer(...)` (para `CLEANUP_PROVIDER`/`DICTATION_AGENT_PROVIDER === "local"`) foram removidos por completo. Todo carregamento de modelo (Whisper, Parakeet, llama-server) agora é on-demand: disparado no hotkey-down de Dictation/Meeting/Note Recording ou na seleção de arquivo do Upload (`audioManager.js`'s `warmupTranscriptionEngine()`/`warmupReasoningServer()`, `meetingRecordingStore.ts`, `UploadAudioView.tsx`), e cada engine descarrega sozinho após um timeout de inatividade configurável (`transcriptionIdleTimeoutMs` para Whisper/Parakeet, `llmIdleTimeoutMs` para llama-server — ambos padrão 5 minutos, limites 30s–60min, totalmente independentes).
+    - Diarização: baixa modelos em background se ausentes (isso continua igual).
 15. **Limpeza única de dados órfãos do Qdrant/embeddings** (`src/helpers/qdrantDataCleanup.js`, adicionada na remoção do subsistema — ver `docs/specs/remove-qdrant-dependency.md`): best-effort, não bloqueante, apaga `~/.cache/ektoswhispr/qdrant-data/` e `~/.cache/ektoswhispr/embedding-models/` uma única vez (sentinela `.qdrant-removed` em `userData`) para quem atualiza de uma versão que tinha o Qdrant instalado.
 16–21. Tray, Update, handlers macOS de Globe key (push-to-talk, right-modifier, mouse buttons, accessibility check), handlers Windows/Linux de tecla nativa compartilhados entre slots.
 
@@ -362,6 +358,17 @@ O pipeline de ditado tem duas metades em processos diferentes:
 - **Main**: `src/helpers/whisper.js` (`WhisperManager`), `src/helpers/whisperServer.js` (`WhisperServerManager`), `src/helpers/parakeet.js` (`ParakeetManager`), `src/helpers/parakeetServer.js`/`parakeetWsServer.js` — spawnam e gerenciam os binários nativos que fazem a inferência real.
 
 Hook de entrada: `src/hooks/useAudioRecording.js`.
+
+**Lifecycle on-demand (ver `docs/specs/on-demand-model-lifecycle.md`)**: nenhum dos três engines locais
+(Whisper, Parakeet, llama-server) pré-aquece no startup do app. `performStartRecording()` dispara
+`AudioManager.warmupTranscriptionEngine()` (issued primeiro) e depois `warmupReasoningServer()`
+(issued em seguida, sem aguardar o primeiro) — ambos fire-and-forget via
+`whisperServerStart`/`parakeetServerStart`/`llamaServerStart` IPC, idempotentes. Meeting/Note
+Recording (`meetingRecordingStore.ts`) e Upload (`UploadAudioView.tsx`) disparam o warm-up de
+transcrição equivalente (sem warm-up de LLM, já que esses caminhos nunca passam pelo cleanup/agente).
+Cada engine descarrega sozinho após um timeout de inatividade configurável —
+`transcriptionIdleTimeoutMs` (Whisper/Parakeet, padrão 5min) e `llmIdleTimeoutMs` (llama-server,
+padrão 5min), ambos com limites 30s–60min e totalmente independentes entre si.
 
 Fluxo de alto nível (local, sem streaming):
 ```
@@ -1022,10 +1029,10 @@ Repo `ggml-org/llama.cpp`, tag fixa `b9763`. Só variantes CPU aqui (`darwin-arm
 **Cadeia de fallback**: `darwin→[Metal]`; `"cpu"→[CPU]`; `"gpu-intel"→[Vulkan,CPU]`; `"gpu-nvidia"/"auto"→[CUDA,Vulkan,CPU]`. `llamaServer.js` filtra por `isAvailable()` e tenta cada backend em ordem — degradação graciosa automática.
 
 #### 5.11.3 `llamaServer.js`
-Porta **8221–8240**. Health check `/health` a cada 5s. **Idle timeout de 5 minutos** — para automaticamente (libera VRAM). `inference()`: POST `/v1/chat/completions` `stream:false`, timeout 300s, coerção explícita `Number(...)` em parâmetros numéricos.
+Porta **8221–8240**. Health check `/health` a cada 5s. **Idle timeout configurável** (`setIdleTimeoutMs(ms)`, padrão 5 minutos = `DEFAULT_IDLE_TIMEOUT_MS`, alimentado pela setting `llmIdleTimeoutMs` — ver `docs/specs/on-demand-model-lifecycle.md`) — para automaticamente (libera VRAM). `inference()`: POST `/v1/chat/completions` `stream:false`, timeout 300s, coerção explícita `Number(...)` em parâmetros numéricos. Saída inesperada do processo (`close` com `_intentionalStop === false`) é logada distintamente em nível `error`; nenhum respawn automático é agendado.
 
 #### 5.11.4 `modelManagerBridge.js`
-`~/.cache/ektoswhispr/models`. `downloadModel`: valida espaço em disco, `AbortSignal` cancelável, revalida tamanho mínimo pós-download. `prewarmServer(modelId)`: só quando `CLEANUP_PROVIDER==="local" && LOCAL_CLEANUP_MODEL` e separadamente `DICTATION_AGENT_PROVIDER==="local" && LOCAL_DICTATION_AGENT_MODEL` (se diferente do de cleanup).
+`~/.cache/ektoswhispr/models`. `downloadModel`: valida espaço em disco, `AbortSignal` cancelável, revalida tamanho mínimo pós-download. `prewarmServer(modelId)` **não é mais chamado no startup** (removido de `main.js` — ver `docs/specs/on-demand-model-lifecycle.md` R1); a função permanece disponível como alvo de implementação dos warm-up hooks on-demand (hotkey-down/file-select).
 
 ### 5.12 Decisões-Chave para Recriação
 

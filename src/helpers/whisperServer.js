@@ -19,6 +19,13 @@ const STARTUP_TIMEOUT_MS = 30000;
 const HEALTH_CHECK_INTERVAL_MS = 5000;
 const HEALTH_CHECK_TIMEOUT_MS = 2000;
 const DEFAULT_WHISPER_THREADS = 4;
+// How long stop() waits for an in-flight transcribe() request to settle
+// before force-killing the process anyway, so an idle-timeout/settings-switch
+// stop never corrupts a request that's actually in flight (R8).
+const DRAIN_TIMEOUT_MS = 15000;
+// Default/fallback idle timeout — overridable at runtime via
+// setIdleTimeoutMs(ms), fed by the `transcriptionIdleTimeoutMs` setting.
+const DEFAULT_IDLE_TIMEOUT_MS = 5 * 60 * 1000;
 const MAX_AUTO_WHISPER_THREADS = 12;
 const MAX_MANUAL_WHISPER_THREADS = 64;
 const AUTO_THREAD_RATIO = 0.75;
@@ -181,6 +188,49 @@ class WhisperServerManager extends EventEmitter {
     this.vadSignature = "vad:off";
     this.threadSignature = "threads:default";
     this.lastStartOptions = {};
+    // R5/R8: universal idle-timeout + drain-before-stop state, shared shape
+    // with parakeetWsServer.js/llamaServer.js.
+    this.activeRequestCount = 0;
+    this.idleTimer = null;
+    this.idleTimeoutMs = DEFAULT_IDLE_TIMEOUT_MS;
+    // Set right before any stop() this manager itself initiates, so the
+    // process.on("close", ...) handler can log an unexpected exit distinctly
+    // (R7) without ever scheduling a respawn.
+    this._intentionalStop = false;
+  }
+
+  // Called whenever the `transcriptionIdleTimeoutMs` setting changes (and once
+  // at startup-sync time); defaults to DEFAULT_IDLE_TIMEOUT_MS until then.
+  setIdleTimeoutMs(ms) {
+    this.idleTimeoutMs = Number.isFinite(ms) && ms > 0 ? ms : DEFAULT_IDLE_TIMEOUT_MS;
+  }
+
+  resetIdleTimer() {
+    this.clearIdleTimer();
+    this.idleTimer = setTimeout(() => {
+      debugLogger.info("whisper-server idle timeout reached, stopping", {
+        timeoutMs: this.idleTimeoutMs,
+      });
+      this.stop();
+    }, this.idleTimeoutMs);
+  }
+
+  clearIdleTimer() {
+    if (this.idleTimer) {
+      clearTimeout(this.idleTimer);
+      this.idleTimer = null;
+    }
+  }
+
+  // Waits (up to DRAIN_TIMEOUT_MS) for any in-flight transcribe() calls to
+  // settle before a stop() proceeds, so an idle-timeout/settings-switch stop
+  // never corrupts a request that's actually in flight (R8).
+  async _drainActiveRequests() {
+    if (this.activeRequestCount <= 0) return;
+    const start = Date.now();
+    while (this.activeRequestCount > 0 && Date.now() - start < DRAIN_TIMEOUT_MS) {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
   }
 
   getFFmpegPath() {
@@ -483,6 +533,7 @@ class WhisperServerManager extends EventEmitter {
 
     const startTime = Date.now();
 
+    this._intentionalStop = false;
     this.process = spawn(serverBinary, args, {
       stdio: ["ignore", "pipe", "pipe"],
       windowsHide: true,
@@ -514,10 +565,20 @@ class WhisperServerManager extends EventEmitter {
     this.process.on("close", (code) => {
       exitCode = code;
       if (Date.now() - startTime < 10000) earlyExit = true;
-      debugLogger.debug("whisper-server process exited", { code });
+      if (this._intentionalStop) {
+        debugLogger.debug("whisper-server process exited", { code });
+      } else {
+        // R7 — no proactive respawn, ever: just log distinctly and let the
+        // next on-demand start() (warm-up trigger or a real transcription
+        // request) cold-start it normally.
+        debugLogger.error("whisper-server exited unexpectedly (crash, not an intentional stop)", {
+          code,
+        });
+      }
       this.ready = false;
       this.process = null;
       this.stopHealthCheck();
+      this.clearIdleTimer();
       sidecarPidFile.clear("whisper");
     });
 
@@ -554,6 +615,7 @@ class WhisperServerManager extends EventEmitter {
     }
 
     this.startHealthCheck();
+    this.resetIdleTimer();
 
     debugLogger.info("whisper-server started successfully", {
       port: this.port,
@@ -650,6 +712,12 @@ class WhisperServerManager extends EventEmitter {
       throw new Error("whisper-server is not running");
     }
 
+    // A real request is in flight — the idle timer must not fire mid-request,
+    // and _drainActiveRequests() (called from stop()) needs to know this
+    // request hasn't settled yet (R8).
+    this.clearIdleTimer();
+    this.activeRequestCount++;
+
     // Debug: Log audio buffer info
     debugLogger.debug("whisper-server transcribe called", {
       bufferLength: audioBuffer?.length || 0,
@@ -712,6 +780,13 @@ class WhisperServerManager extends EventEmitter {
     const bodyParts = parts.map((part) => (typeof part === "string" ? Buffer.from(part) : part));
     const body = Buffer.concat(bodyParts);
 
+    return this._doTranscribeRequest(boundary, body).finally(() => {
+      this.activeRequestCount = Math.max(0, this.activeRequestCount - 1);
+      this.resetIdleTimer();
+    });
+  }
+
+  _doTranscribeRequest(boundary, body) {
     return new Promise((resolve, reject) => {
       const startTime = Date.now();
 
@@ -789,7 +864,9 @@ class WhisperServerManager extends EventEmitter {
   }
 
   async stop() {
+    this.clearIdleTimer();
     this.stopHealthCheck();
+    this._intentionalStop = true;
 
     if (this.isRemote) {
       debugLogger.debug("Disconnecting from remote whisper-server");
@@ -804,6 +881,10 @@ class WhisperServerManager extends EventEmitter {
       this.ready = false;
       return;
     }
+
+    // R8: never corrupt a request that's actually in flight — wait (bounded)
+    // for it to settle before killing the process.
+    await this._drainActiveRequests();
 
     debugLogger.debug("Stopping whisper-server");
 
@@ -855,3 +936,5 @@ module.exports = WhisperServerManager;
 module.exports.buildWhisperServerArgs = buildWhisperServerArgs;
 module.exports.getVadSignature = getVadSignature;
 module.exports.resolveWhisperThreads = resolveWhisperThreads;
+module.exports.DEFAULT_IDLE_TIMEOUT_MS = DEFAULT_IDLE_TIMEOUT_MS;
+module.exports.DRAIN_TIMEOUT_MS = DRAIN_TIMEOUT_MS;
