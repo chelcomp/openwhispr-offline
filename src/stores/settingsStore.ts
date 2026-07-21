@@ -9,6 +9,7 @@ import type { LocalTranscriptionProvider, InferenceMode, SelfHostedType } from "
 import { PROMPT_KIND_LIST, type PromptKind } from "../config/prompts/registry";
 import { deriveReasoningMode, buildReasoningScopePatches } from "../helpers/reasoningRouting";
 import { resolveAudioRetentionStartupSync } from "../helpers/audioRetentionSync";
+import { resolveMigratedParakeetModelId } from "../helpers/parakeetModelMigration";
 import {
   INFERENCE_SCOPES,
   type InferenceScope,
@@ -142,6 +143,29 @@ function migrateMeetingFollowFlags() {
 
 migrateMeetingFollowFlags();
 
+// One-time-per-launch migration for the three `runtime: "online"` Parakeet
+// models removed entirely from the product (Option A, see
+// docs/specs/audio-transcription-batching.md Design §13). Idempotent, run on
+// every launch — no sentinel needed since re-checking an already-valid ID is
+// a no-op.
+const PARAKEET_MODEL_STORAGE_KEYS = [
+  "parakeetModel",
+  "meetingParakeetModel",
+  "uploadParakeetModel",
+] as const;
+
+function migrateRemovedParakeetModels() {
+  if (!isBrowser) return;
+  for (const key of PARAKEET_MODEL_STORAGE_KEYS) {
+    const current = localStorage.getItem(key);
+    if (!current) continue;
+    const migrated = resolveMigratedParakeetModelId(current);
+    if (migrated !== current) localStorage.setItem(key, migrated);
+  }
+}
+
+migrateRemovedParakeetModels();
+
 const BOOLEAN_SETTINGS = new Set([
   "useLocalWhisper",
   "meetingUseLocalWhisper",
@@ -171,7 +195,6 @@ const BOOLEAN_SETTINGS = new Set([
   "saveDiscardedTranscriptions",
   "noteFilesEnabled",
   "showTranscriptionPreview",
-  "parakeetStreamingBeta",
   "cleanupDisableThinking",
   "dictationAgentDisableThinking",
   "noteFormattingDisableThinking",
@@ -181,11 +204,7 @@ const BOOLEAN_SETTINGS = new Set([
   "notifyUpdates",
 ]);
 
-const ARRAY_SETTINGS = new Set([
-  "customDictionary",
-  "snippets",
-  "onboardingUseCases",
-]);
+const ARRAY_SETTINGS = new Set(["customDictionary", "snippets", "onboardingUseCases"]);
 
 const NUMERIC_SETTINGS = new Set([
   "audioRetentionDays",
@@ -461,7 +480,6 @@ export interface SettingsState
   whisperVadSamplesOverlap: number;
   panelStartPosition: "bottom-right" | "center" | "bottom-left";
   showTranscriptionPreview: boolean;
-  parakeetStreamingBeta: boolean;
   autoPasteEnabled: boolean;
   autoUnmuteMicEnabled: boolean;
   keepTranscriptionInClipboard: boolean;
@@ -700,7 +718,6 @@ export interface SettingsState
   resetWhisperVad: () => void;
   setPanelStartPosition: (position: "bottom-right" | "center" | "bottom-left") => void;
   setShowTranscriptionPreview: (value: boolean) => void;
-  setParakeetStreamingBeta: (value: boolean) => void;
   setAutoPasteEnabled: (value: boolean) => void;
   setAutoUnmuteMicEnabled: (value: boolean) => void;
   setKeepTranscriptionInClipboard: (value: boolean) => void;
@@ -870,14 +887,7 @@ const STALE_SECRET_LOCALSTORAGE_KEYS = [
 ] as const;
 
 function invalidateApiKeyCaches(
-  provider?:
-    | "openai"
-    | "anthropic"
-    | "gemini"
-    | "groq"
-    | "mistral"
-    | "custom"
-    | "openrouter"
+  provider?: "openai" | "anthropic" | "gemini" | "groq" | "mistral" | "custom" | "openrouter"
 ) {
   if (provider) {
     if (_ReasoningService) {
@@ -911,7 +921,7 @@ function createSecretSetter(
 }
 
 export const useSettingsStore = create<SettingsState>()((set, get) => ({
-  uiLanguage: normalizeUiLanguage(isBrowser ? localStorage.getItem("uiLanguage") ?? "en" : "en"),
+  uiLanguage: normalizeUiLanguage(isBrowser ? (localStorage.getItem("uiLanguage") ?? "en") : "en"),
   useLocalWhisper: readBoolean("useLocalWhisper", true),
   whisperModel: readString("whisperModel", "base"),
   localTranscriptionProvider: (readString("localTranscriptionProvider", "whisper") === "nvidia"
@@ -1103,7 +1113,6 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
     return "center" as const;
   })(),
   showTranscriptionPreview: readBoolean("showTranscriptionPreview", false),
-  parakeetStreamingBeta: readBoolean("parakeetStreamingBeta", false),
   autoPasteEnabled: readBoolean("autoPasteEnabled", true),
   autoUnmuteMicEnabled: readBoolean("autoUnmuteMicEnabled", false),
   keepTranscriptionInClipboard: readBoolean("keepTranscriptionInClipboard", false),
@@ -1718,7 +1727,6 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
   },
 
   setShowTranscriptionPreview: createBooleanSetter("showTranscriptionPreview"),
-  setParakeetStreamingBeta: createBooleanSetter("parakeetStreamingBeta"),
   setAutoPasteEnabled: createBooleanSetter("autoPasteEnabled"),
   setAutoUnmuteMicEnabled: createBooleanSetter("autoUnmuteMicEnabled"),
   setKeepTranscriptionInClipboard: createBooleanSetter("keepTranscriptionInClipboard"),
@@ -1769,8 +1777,6 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
       s.setAssemblyAiStreaming(settings.assemblyAiStreaming);
     if (settings.showTranscriptionPreview !== undefined)
       s.setShowTranscriptionPreview(settings.showTranscriptionPreview);
-    if (settings.parakeetStreamingBeta !== undefined)
-      s.setParakeetStreamingBeta(settings.parakeetStreamingBeta);
   },
 
   // Apply a transcription config to dictation, then mirror its cloud routing to
@@ -2025,8 +2031,8 @@ export const selectResolvedLLMConfig = (
   return {
     scope,
     mode,
-    provider: useSharedLocal ? state.localProvider : (read("provider") || fallback?.provider || ""),
-    model: useSharedLocal ? state.localModel : (read("model") || fallback?.model || ""),
+    provider: useSharedLocal ? state.localProvider : read("provider") || fallback?.provider || "",
+    model: useSharedLocal ? state.localModel : read("model") || fallback?.model || "",
     cloudMode: read("cloudMode") || fallback?.cloudMode,
     cloudBaseUrl: read("cloudBaseUrl") || fallback?.cloudBaseUrl,
     remoteUrl: read("remoteUrl") || fallback?.remoteUrl,
@@ -2200,10 +2206,7 @@ export async function initializeSettings(): Promise<void> {
     // so the toggle mirrors real startup behavior and toggling it always persists.
     try {
       const envStartMinimized = await window.electronAPI.getStartMinimized?.();
-      if (
-        typeof envStartMinimized === "boolean" &&
-        envStartMinimized !== state.startMinimized
-      ) {
+      if (typeof envStartMinimized === "boolean" && envStartMinimized !== state.startMinimized) {
         localStorage.setItem("startMinimized", String(envStartMinimized));
         useSettingsStore.setState({ startMinimized: envStartMinimized });
       }
@@ -2382,9 +2385,7 @@ export async function initializeSettings(): Promise<void> {
         } else if (dbSnippets.length > 0) {
           // If any SQLite row is missing apps data that localStorage has, merge and
           // write back so future restarts don't need this recovery step.
-          const localByTrigger = new Map(
-            currentSnippets.map((s) => [s.trigger.toLowerCase(), s])
-          );
+          const localByTrigger = new Map(currentSnippets.map((s) => [s.trigger.toLowerCase(), s]));
           const needsMerge = dbSnippets.some((s) => {
             if (s.apps?.length) return false;
             return !!localByTrigger.get(s.trigger.toLowerCase())?.apps?.length;

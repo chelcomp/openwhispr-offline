@@ -1994,9 +1994,7 @@
         "deleteModels": "Delete Models"
       },
       "transcriptionPreview": "Live Transcription Preview",
-      "transcriptionPreviewDescription": "Show transcription in a floating window before cleanup",
-      "parakeetStreamingBeta": "Real-Time Streaming",
-      "parakeetStreamingBetaDescription": "Paste text progressively as NVIDIA Parakeet transcribes, instead of waiting for the full result. Experimental — may behave unexpectedly.",
+      "transcriptionPreviewDescription": "Show a live caption overlay while dictating. Dictation speed no longer depends on this toggle — the fast, quality-checked transcription pipeline always runs in the background, with or without the overlay.",
       "aec": {
         "toggle": {
           "title": "Echo cancellation for meetings",
@@ -2067,9 +2065,7 @@
     "descriptions": {
       "parakeet": {
         "parakeet_tdt_0_6b_v3": "Fast multilingual ASR with auto language detection (25 languages)",
-        "parakeet_unified_en_0_6b": "English-only ASR with state-of-the-art accuracy (5.91% avg WER)",
-        "nemotron_speech_streaming_en_0_6b": "English streaming ASR from NVIDIA Nemotron",
-        "nemotron_3_5_asr_streaming_0_6b": "Multilingual streaming ASR from NVIDIA Nemotron with auto language detection (15 languages)"
+        "parakeet_unified_en_0_6b": "English-only ASR with state-of-the-art accuracy (5.91% avg WER)"
       },
       "diarization": {
         "segmentation": "Speech boundary detection for speaker diarization",

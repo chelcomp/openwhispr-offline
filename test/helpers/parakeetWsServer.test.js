@@ -73,15 +73,6 @@ test("getWsBinaryPath resolves the offline binary name for the current platform"
   assert.equal(server.getWsBinaryPath("offline"), "/resolved/offline.exe");
 });
 
-test("getWsBinaryPath resolves the online binary with its own prefix", () => {
-  setPlatformArch("linux", "x64");
-  const server = loadParakeetWsServer({
-    resolvedNames: { "sherpa-onnx-online-ws-linux-x64": "/resolved/online" },
-  });
-
-  assert.equal(server.getWsBinaryPath("online"), "/resolved/online");
-});
-
 test("getWsBinaryPath resolves once per runtime and serves the rest from cache", () => {
   setPlatformArch("linux", "x64");
   let resolveCalls = 0;
@@ -134,26 +125,15 @@ test("getWsBinaryPath falls back to the CPU binary when the CUDA binary is missi
   assert.equal(server.getWsBinaryPath("offline"), "/resolved/offline-cpu.exe");
 });
 
-test("getWsBinaryPath applies the CUDA opt-in to the online runtime too", () => {
-  setPlatformArch("linux", "x64");
-  process.env.SHERPA_ONNX_CUDA_ENABLED = "true";
-  const server = loadParakeetWsServer({
-    resolvedNames: { "sherpa-onnx-online-ws-linux-x64-cuda": "/resolved/online-cuda" },
-  });
-
-  assert.equal(server.getWsBinaryPath("online"), "/resolved/online-cuda");
-});
-
 // --- isCudaBinaryAvailable ----------------------------------------------
 
-test("isCudaBinaryAvailable checks the runtime-specific cuda binary name", () => {
+test("isCudaBinaryAvailable checks the offline cuda binary name", () => {
   setPlatformArch("win32", "x64");
   const server = loadParakeetWsServer({
-    resolvedNames: { "sherpa-onnx-online-ws-win32-x64-cuda.exe": "/resolved/online-cuda.exe" },
+    resolvedNames: { "sherpa-onnx-ws-win32-x64-cuda.exe": "/resolved/offline-cuda.exe" },
   });
 
-  assert.equal(server.isCudaBinaryAvailable("online"), true);
-  assert.equal(server.isCudaBinaryAvailable("offline"), false);
+  assert.equal(server.isCudaBinaryAvailable("offline"), true);
 });
 
 // --- _isCudaEligible: GPU present is the deciding factor, not just the binary ---

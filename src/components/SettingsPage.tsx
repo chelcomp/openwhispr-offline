@@ -99,15 +99,8 @@ import { formatBytes } from "../utils/formatBytes";
 import { useSettingsStore } from "../stores/settingsStore";
 import { canManageSystemAudioInApp } from "../utils/systemAudioAccess";
 
-
 export type SettingsSectionType =
-  | "general"
-  | "hotkeys"
-  | "speechToText"
-  | "llms"
-  | "localModel"
-  | "privacyData"
-  | "system";
+  "general" | "hotkeys" | "speechToText" | "llms" | "localModel" | "privacyData" | "system";
 
 interface SettingsPageProps {
   activeSection?: SettingsSectionType;
@@ -149,8 +142,6 @@ interface TranscriptionSectionProps {
   setRemoteTranscriptionModel: (model: string) => void;
   showTranscriptionPreview: boolean;
   setShowTranscriptionPreview: (value: boolean) => void;
-  parakeetStreamingBeta: boolean;
-  setParakeetStreamingBeta: (value: boolean) => void;
   toast: (opts: {
     title: string;
     description: string;
@@ -185,8 +176,6 @@ function TranscriptionSection({
   setRemoteTranscriptionModel,
   showTranscriptionPreview,
   setShowTranscriptionPreview,
-  parakeetStreamingBeta,
-  setParakeetStreamingBeta,
   toast,
 }: TranscriptionSectionProps) {
   const { t } = useTranslation();
@@ -194,28 +183,11 @@ function TranscriptionSection({
   const selectedLocalTranscriptionModelId =
     localTranscriptionProvider === "nvidia" ? parakeetModel : whisperModel;
   const activeLocalTranscriptionModelName = selectedLocalTranscriptionModelId
-    ? (localTranscriptionProvider === "nvidia"
+    ? ((localTranscriptionProvider === "nvidia"
         ? PARAKEET_MODEL_INFO[selectedLocalTranscriptionModelId]?.name
-        : WHISPER_MODEL_INFO[selectedLocalTranscriptionModelId]?.name) ?? selectedLocalTranscriptionModelId
+        : WHISPER_MODEL_INFO[selectedLocalTranscriptionModelId]?.name) ??
+      selectedLocalTranscriptionModelId)
     : undefined;
-
-  const selectedParakeetModelSupportsStreaming =
-    PARAKEET_MODEL_INFO[parakeetModel]?.runtime === "online";
-
-  useEffect(() => {
-    if (
-      localTranscriptionProvider === "nvidia" &&
-      parakeetStreamingBeta &&
-      !selectedParakeetModelSupportsStreaming
-    ) {
-      setParakeetStreamingBeta(false);
-    }
-  }, [
-    localTranscriptionProvider,
-    parakeetStreamingBeta,
-    selectedParakeetModelSupportsStreaming,
-    setParakeetStreamingBeta,
-  ]);
 
   const transcriptionModes: InferenceModeOption[] = [
     {
@@ -246,11 +218,12 @@ function TranscriptionSection({
     updateTranscriptionSettings({ useLocalWhisper: mode === "local" });
     setCloudTranscriptionMode("byok");
 
-    const toastKey = {
-      providers: "switchedProviders",
-      local: "switchedLocal",
-      "self-hosted": "switchedSelfHosted",
-    }[mode as "providers" | "local" | "self-hosted"] ?? "switchedProviders";
+    const toastKey =
+      {
+        providers: "switchedProviders",
+        local: "switchedLocal",
+        "self-hosted": "switchedSelfHosted",
+      }[mode as "providers" | "local" | "self-hosted"] ?? "switchedProviders";
     toast({
       title: t(`settingsPage.transcription.toasts.${toastKey}.title`),
       description: t(`settingsPage.transcription.toasts.${toastKey}.description`),
@@ -278,20 +251,6 @@ function TranscriptionSection({
           description={t("settingsPage.transcription.transcriptionPreviewDescription")}
         >
           <Toggle checked={showTranscriptionPreview} onChange={setShowTranscriptionPreview} />
-        </SettingsRow>
-      </SettingsPanelRow>
-    </SettingsPanel>
-  );
-
-  const renderParakeetStreamingToggle = () => (
-    <SettingsPanel>
-      <SettingsPanelRow>
-        <SettingsRow
-          label={t("settingsPage.transcription.parakeetStreamingBeta")}
-          description={t("settingsPage.transcription.parakeetStreamingBetaDescription")}
-          badge={t("common.beta")}
-        >
-          <Toggle checked={parakeetStreamingBeta} onChange={setParakeetStreamingBeta} />
         </SettingsRow>
       </SettingsPanelRow>
     </SettingsPanel>
@@ -336,9 +295,6 @@ function TranscriptionSection({
       {transcriptionMode === "local" && (
         <>
           {renderTranscriptionPicker("local")}
-          {localTranscriptionProvider === "nvidia" &&
-            selectedParakeetModelSupportsStreaming &&
-            renderParakeetStreamingToggle()}
           {renderPreviewToggle()}
         </>
       )}
@@ -710,8 +666,6 @@ export default function SettingsPage({
     setPauseMediaOnDictation,
     showTranscriptionPreview,
     setShowTranscriptionPreview,
-    parakeetStreamingBeta,
-    setParakeetStreamingBeta,
     autoPasteEnabled,
     setAutoPasteEnabled,
     keepTranscriptionInClipboard,
@@ -768,7 +722,6 @@ export default function SettingsPage({
     typeof navigator !== "undefined" && /Windows/i.test(navigator.userAgent)
       ? "%USERPROFILE%\\.cache\\ektoswhispr"
       : "~/.cache/ektoswhispr";
-
 
   const { checkWhisperInstallation } = useWhisper();
   const permissionsHook = usePermissions(showAlertDialog);
@@ -1115,7 +1068,6 @@ export default function SettingsPage({
     });
     return () => cleanup?.();
   }, [toast, t, setActivationMode]);
-
 
   const resetAccessibilityPermissions = () => {
     const message = t("settingsPage.permissions.resetAccessibility.description");
@@ -2347,7 +2299,6 @@ EOF`,
                 </SettingsPanelRow>
               </SettingsPanel>
             </div>
-
           </div>
         );
 
@@ -2773,8 +2724,6 @@ EOF`,
                   setRemoteTranscriptionModel={setRemoteTranscriptionModel}
                   showTranscriptionPreview={showTranscriptionPreview}
                   setShowTranscriptionPreview={setShowTranscriptionPreview}
-                  parakeetStreamingBeta={parakeetStreamingBeta}
-                  setParakeetStreamingBeta={setParakeetStreamingBeta}
                   toast={toast}
                 />
                 {transcriptionMode === "local" &&

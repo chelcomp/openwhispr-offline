@@ -23,7 +23,7 @@ import {
   isCloudCleanupMode,
   isCloudDictationAgentMode,
 } from "../stores/settingsStore";
-import { getTranscriptionProvider } from "../models/ModelRegistry";
+import { getTranscriptionProvider, PARAKEET_MODEL_INFO } from "../models/ModelRegistry";
 import { shouldSkipTranscriptionApiKey } from "./transcriptionAuth";
 import {
   isSelfHostedTranscription,
@@ -41,6 +41,16 @@ import { getDictionaryHintWords } from "../utils/snippets";
 const REASONING_CACHE_TTL = 30000; // 30 seconds
 const RECORDING_TIMESLICE_MS = 250; // flush chunks periodically so short recordings still carry audio frames. See #871.
 const PCM_COLLECTOR_SAMPLE_RATE = 16000;
+
+// Renderer-side mirror of parakeetModelInfo.js's getModelRuntime() — no model
+// in the registry can have runtime "online" anymore (the three streaming-only
+// Nemotron models were removed entirely, see
+// docs/specs/audio-transcription-batching.md Design §13), so this always
+// resolves to "offline" today. Kept as an explicit check (not assumed) so a
+// future model addition can't silently bypass the dictation batching pipeline.
+function getParakeetModelRuntime(modelId) {
+  return PARAKEET_MODEL_INFO?.[modelId]?.runtime === "online" ? "online" : "offline";
+}
 
 /**
  * Assembles an array of Int16Array chunks captured at 16 kHz mono into a
@@ -86,23 +96,28 @@ function buildWavFromPcmChunks(chunks) {
   const dataBytes = totalSamples * 2;
   const wav = new ArrayBuffer(44 + dataBytes);
   const v = new DataView(wav);
-  const w = (off, s) => { for (let i = 0; i < s.length; i++) v.setUint8(off + i, s.charCodeAt(i)); };
+  const w = (off, s) => {
+    for (let i = 0; i < s.length; i++) v.setUint8(off + i, s.charCodeAt(i));
+  };
   w(0, "RIFF");
   v.setUint32(4, 36 + dataBytes, true);
   w(8, "WAVE");
   w(12, "fmt ");
-  v.setUint32(16, 16, true);                          // fmt chunk size
-  v.setUint16(20, 1, true);                           // PCM
-  v.setUint16(22, 1, true);                           // mono
-  v.setUint32(24, PCM_COLLECTOR_SAMPLE_RATE, true);   // 16000 Hz
+  v.setUint32(16, 16, true); // fmt chunk size
+  v.setUint16(20, 1, true); // PCM
+  v.setUint16(22, 1, true); // mono
+  v.setUint32(24, PCM_COLLECTOR_SAMPLE_RATE, true); // 16000 Hz
   v.setUint32(28, PCM_COLLECTOR_SAMPLE_RATE * 2, true); // byteRate
-  v.setUint16(32, 2, true);                           // blockAlign
-  v.setUint16(34, 16, true);                          // bitsPerSample
+  v.setUint16(32, 2, true); // blockAlign
+  v.setUint16(34, 16, true); // bitsPerSample
   w(36, "data");
   v.setUint32(40, dataBytes, true);
   let off = 44;
   for (const chunk of chunks) {
-    for (let i = 0; i < chunk.length; i++) { v.setInt16(off, chunk[i], true); off += 2; }
+    for (let i = 0; i < chunk.length; i++) {
+      v.setInt16(off, chunk[i], true);
+      off += 2;
+    }
   }
   return wav;
 }
@@ -386,7 +401,9 @@ class PCMCollectorProcessor extends AudioWorkletProcessor {
 }
 registerProcessor("pcm-collector-processor", PCMCollectorProcessor);
 `;
-    this._pcmCollectorBlobUrl = URL.createObjectURL(new Blob([code], { type: "application/javascript" }));
+    this._pcmCollectorBlobUrl = URL.createObjectURL(
+      new Blob([code], { type: "application/javascript" })
+    );
     return this._pcmCollectorBlobUrl;
   }
 
@@ -432,7 +449,9 @@ registerProcessor("pcm-collector-processor", PCMCollectorProcessor);
   }
 
   getStreamingProvider() {
-    return STREAMING_PROVIDERS[this.getStreamingProviderName()] || STREAMING_PROVIDERS["openai-realtime"];
+    return (
+      STREAMING_PROVIDERS[this.getStreamingProviderName()] || STREAMING_PROVIDERS["openai-realtime"]
+    );
   }
 
   getStreamingProviderName() {
@@ -779,9 +798,21 @@ registerProcessor("pcm-collector-processor", PCMCollectorProcessor);
         parakeetModel,
       } = getSettings();
 
+      // The dictation batching pipeline (VAD-chunked progressive transcription
+      // + confidence gate) is now the always-on default mechanism for eligible
+      // local engines — not gated behind the showTranscriptionPreview toggle,
+      // which only controls whether the live caption overlay is shown (see
+      // docs/specs/audio-transcription-batching.md Requirement 6/Design §7).
+      // Excluded only for a Parakeet model with runtime "online" — none exist
+      // in the registry today (Design §13), but the check stays explicit.
+      const batchingEligible =
+        useLocalWhisper &&
+        (localTranscriptionProvider !== "nvidia" ||
+          getParakeetModelRuntime(parakeetModel) !== "online");
+
       // Pre-load worklet modules BEFORE starting capture so no audio is missed.
       if (this._gateCtx && this._gateSource) {
-        if (showTranscriptionPreview && useLocalWhisper && !this._gateWorkletLoaded) {
+        if (batchingEligible && !this._gateWorkletLoaded) {
           try {
             await this._gateCtx.audioWorklet.addModule(this.getWorkletBlobUrl());
             this._gateWorkletLoaded = true;
@@ -818,7 +849,11 @@ registerProcessor("pcm-collector-processor", PCMCollectorProcessor);
           };
           this._gainNode.connect(this._pcmCollector);
         } catch (e) {
-          logger.warn("PCM collector setup failed, will fall back to WebM", { error: e.message }, "audio");
+          logger.warn(
+            "PCM collector setup failed, will fall back to WebM",
+            { error: e.message },
+            "audio"
+          );
           this._pcmCollector = null;
         }
       }
@@ -828,8 +863,8 @@ registerProcessor("pcm-collector-processor", PCMCollectorProcessor);
       this.isRecording = true;
       this.onStateChange?.({ isRecording: true, isProcessing: false });
 
-      // Connect preview worklet after start (non-critical; small delay acceptable).
-      if (showTranscriptionPreview && useLocalWhisper && this._gateCtx && this._gainNode && this._gateWorkletLoaded) {
+      // Connect batching worklet after start (non-critical; small delay acceptable).
+      if (batchingEligible && this._gateCtx && this._gainNode && this._gateWorkletLoaded) {
         try {
           this._previewProcessor = new AudioWorkletNode(this._gateCtx, "pcm-streaming-processor");
           this._previewProcessor.port.onmessage = (event) => {
@@ -839,7 +874,7 @@ registerProcessor("pcm-collector-processor", PCMCollectorProcessor);
 
           const provider = localTranscriptionProvider === "nvidia" ? "nvidia" : "whisper";
           const model = provider === "nvidia" ? parakeetModel : whisperModel;
-          const { preferredLanguage, parakeetStreamingBeta } = getSettings();
+          const { preferredLanguage } = getSettings();
           const language = getBaseLanguageCode(preferredLanguage);
           const langHint = getMultiLanguagePromptHint(preferredLanguage);
           const dictionaryWords = this.getCustomDictionaryPrompt();
@@ -849,10 +884,10 @@ registerProcessor("pcm-collector-processor", PCMCollectorProcessor);
             model,
             language,
             initialPrompt,
-            streamingBeta: !!parakeetStreamingBeta,
+            showOverlay: !!showTranscriptionPreview,
           });
         } catch (e) {
-          logger.warn("Preview worklet setup failed", { error: e.message }, "audio");
+          logger.warn("Batching worklet setup failed", { error: e.message }, "audio");
         }
       }
 
@@ -926,20 +961,28 @@ registerProcessor("pcm-collector-processor", PCMCollectorProcessor);
       this._silenceInterval = null;
     }
     if (this._silenceAnalyser) {
-      try { this._silenceAnalyser.disconnect(); } catch {}
+      try {
+        this._silenceAnalyser.disconnect();
+      } catch {}
       this._silenceAnalyser = null;
     }
     if (this._pcmCollector) {
-      try { this._pcmCollector.disconnect(); } catch {}
+      try {
+        this._pcmCollector.disconnect();
+      } catch {}
       this._pcmCollector = null;
     }
     if (this._gainNode) {
-      try { this._gainNode.disconnect(); } catch {}
+      try {
+        this._gainNode.disconnect();
+      } catch {}
       this._gainNode = null;
     }
     // If no preview worklet is active, cleanupPreview won't be called — disconnect source here.
     if (this._gateSource && !this._previewProcessor) {
-      try { this._gateSource.disconnect(); } catch {}
+      try {
+        this._gateSource.disconnect();
+      } catch {}
       this._gateSource = null;
       if (this._gateCtx && this._gateCtx.state !== "closed") {
         this._gateCtx.close().catch(() => {});
@@ -1048,17 +1091,23 @@ registerProcessor("pcm-collector-processor", PCMCollectorProcessor);
       if (useLocalWhisper) {
         if (localProvider === "nvidia") {
           activeModel = parakeetModel;
-          const streamingText = await this._resolveStreamingParakeetText(settings, metadata);
+          const streamingText = await this._resolveBatchedTranscriptionText(settings, metadata);
           if (streamingText) {
-            result = await this._buildStreamingParakeetResult(streamingText);
+            result = await this._buildBatchedTranscriptionResult(
+              streamingText,
+              "local-parakeet-live"
+            );
           } else {
             result = await this.processWithLocalParakeet(audioBlob, parakeetModel, metadata);
           }
         } else {
           activeModel = whisperModel;
-          const streamingText = await this._resolveStreamingWhisperText(settings, metadata);
+          const streamingText = await this._resolveBatchedTranscriptionText(settings, metadata);
           if (streamingText) {
-            result = await this._buildStreamingWhisperResult(streamingText);
+            result = await this._buildBatchedTranscriptionResult(
+              streamingText,
+              "local-whisper-live"
+            );
           } else {
             result = await this.processWithLocalWhisper(audioBlob, whisperModel, metadata);
           }
@@ -1081,7 +1130,6 @@ registerProcessor("pcm-collector-processor", PCMCollectorProcessor);
       };
 
       this.onTranscriptionComplete?.(result);
-
 
       const roundTripDurationMs = Math.round(performance.now() - pipelineStart);
 
@@ -1231,18 +1279,18 @@ registerProcessor("pcm-collector-processor", PCMCollectorProcessor);
     }
   }
 
-  // When NVIDIA real-time streaming preview is active, the online stream's
-  // transcript is already finalized at stop time (see stop-dictation-preview).
-  // Reuse it as the paste result instead of paying a full offline re-transcription
-  // of the whole clip. Returns "" when unavailable so the caller falls back to
-  // the offline path (streaming beta off, preview off, model without an online
-  // runtime, or an empty/failed stream).
-  async _resolveStreamingParakeetText(settings, metadata) {
-    if (
-      !settings.parakeetStreamingBeta ||
-      !settings.showTranscriptionPreview ||
-      !metadata?.stopPreviewResult
-    ) {
+  // The dictation batching pipeline's committed transcript (VAD-chunked,
+  // confidence-gated, merge-retried — see dictationBatchingSession.js) is
+  // already finalized at stop time (see stop-dictation-preview). Reuse it as
+  // the paste result instead of paying a full offline re-transcription of the
+  // whole clip. Returns "" when unavailable so the caller falls back to the
+  // offline path — no batching session (e.g. an excluded model), or the
+  // session's aggregate quality wasn't good enough (main process returns ""
+  // for streamingText in that case). The mechanism is always eligible for
+  // eligible engine/model combos now — not gated behind showTranscriptionPreview,
+  // which only controls the live caption overlay (Requirement 6/Design §7).
+  async _resolveBatchedTranscriptionText(settings, metadata) {
+    if (!metadata?.stopPreviewResult) {
       return "";
     }
     try {
@@ -1254,16 +1302,17 @@ registerProcessor("pcm-collector-processor", PCMCollectorProcessor);
     }
   }
 
-  // Wraps the finalized streaming transcript in the same result shape the offline
-  // parakeet path produces, running cleanup/agent routing (a no-op when disabled)
-  // so both paths behave identically downstream.
-  async _buildStreamingParakeetResult(rawText) {
+  // Wraps the finalized batched transcript in the same result shape the
+  // offline path produces, running cleanup/agent routing (a no-op when
+  // disabled) so both paths behave identically downstream. `source` is the
+  // only thing that differs between engines here (Requirement 1/8d).
+  async _buildBatchedTranscriptionResult(rawText, source) {
     if (this.isDictionaryEcho(rawText)) {
       throw new Error("No audio detected");
     }
     const timings = { transcriptionProcessingDurationMs: 0 };
     const reasoningStart = performance.now();
-    const text = await this.processTranscription(rawText, "local-parakeet-live");
+    const text = await this.processTranscription(rawText, source);
     timings.reasoningProcessingDurationMs = Math.round(performance.now() - reasoningStart);
     if (text === null || text === undefined) {
       throw new Error("No text transcribed");
@@ -1272,49 +1321,7 @@ registerProcessor("pcm-collector-processor", PCMCollectorProcessor);
       success: true,
       text: text || rawText,
       rawText,
-      source: "local-parakeet-live",
-      timings,
-    };
-  }
-
-  // When the whisper VAD streaming preview is active, the utterances committed
-  // during capture already form the full transcript. Reuse it as the paste result
-  // instead of re-transcribing the whole clip offline. Returns "" when unavailable
-  // (preview off, no stop result, or the session did not finalize cleanly — the
-  // main process returns "" for streamingText in that case), so the caller falls
-  // back to the authoritative offline pass.
-  async _resolveStreamingWhisperText(settings, metadata) {
-    if (!settings.showTranscriptionPreview || !metadata?.stopPreviewResult) {
-      return "";
-    }
-    try {
-      const res = await metadata.stopPreviewResult;
-      const text = res?.streamingText;
-      return typeof text === "string" ? text.trim() : "";
-    } catch {
-      return "";
-    }
-  }
-
-  // Wraps the finalized streaming transcript in the same result shape the offline
-  // whisper path produces, running cleanup/agent routing (a no-op when disabled)
-  // so both paths behave identically downstream.
-  async _buildStreamingWhisperResult(rawText) {
-    if (this.isDictionaryEcho(rawText)) {
-      throw new Error("No audio detected");
-    }
-    const timings = { transcriptionProcessingDurationMs: 0 };
-    const reasoningStart = performance.now();
-    const text = await this.processTranscription(rawText, "local-whisper-live");
-    timings.reasoningProcessingDurationMs = Math.round(performance.now() - reasoningStart);
-    if (text === null || text === undefined) {
-      throw new Error("No text transcribed");
-    }
-    return {
-      success: true,
-      text: text || rawText,
-      rawText,
-      source: "local-whisper-live",
+      source,
       timings,
     };
   }
@@ -1875,8 +1882,6 @@ registerProcessor("pcm-collector-processor", PCMCollectorProcessor);
 
     return result;
   }
-
-  
 
   getCustomDictionaryArray() {
     return getSettings().customDictionary;
@@ -2679,10 +2684,7 @@ registerProcessor("pcm-collector-processor", PCMCollectorProcessor);
       const [, wsResult] = await Promise.all([
         this.cacheMicrophoneDeviceId(),
         withSessionRefresh(async () => {
-          const {
-            preferredLanguage: warmupLang,
-            cloudTranscriptionModel,
-          } = getSettings();
+          const { preferredLanguage: warmupLang, cloudTranscriptionModel } = getSettings();
           const warmupBaseLang = getBaseLanguageCode(warmupLang);
           const res = await provider.warmup({
             sampleRate: 16000,
@@ -3312,11 +3314,15 @@ registerProcessor("pcm-collector-processor", PCMCollectorProcessor);
     }
     // Disconnect the shared gate source and suspend the persistent context.
     if (this._gainNode) {
-      try { this._gainNode.disconnect(); } catch {}
+      try {
+        this._gainNode.disconnect();
+      } catch {}
       this._gainNode = null;
     }
     if (this._gateSource) {
-      try { this._gateSource.disconnect(); } catch {}
+      try {
+        this._gateSource.disconnect();
+      } catch {}
       this._gateSource = null;
     }
     if (this._gateCtx && this._gateCtx.state !== "closed") {
@@ -3433,7 +3439,9 @@ registerProcessor("pcm-collector-processor", PCMCollectorProcessor);
       this.workletBlobUrl = null;
     }
     if (this._pcmCollector) {
-      try { this._pcmCollector.disconnect(); } catch {}
+      try {
+        this._pcmCollector.disconnect();
+      } catch {}
       this._pcmCollector = null;
     }
     if (this._pcmCollectorBlobUrl) {

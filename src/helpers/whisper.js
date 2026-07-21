@@ -11,6 +11,9 @@ const {
 } = require("./downloadUtils");
 const WhisperServerManager = require("./whisperServer");
 const { getModelsDirForService } = require("./modelDirUtils");
+const {
+  isHallucinatedText: sharedIsHallucinatedText,
+} = require("../utils/transcriptionQualityHeuristics");
 
 const modelRegistryData = require("../models/modelRegistryData.json");
 
@@ -391,7 +394,11 @@ class WhisperManager {
 
     const startTime = Date.now();
     const verboseJson = options.verboseJson === true;
-    const result = await this.serverManager.transcribe(audioBuffer, { language, initialPrompt, verboseJson });
+    const result = await this.serverManager.transcribe(audioBuffer, {
+      language,
+      initialPrompt,
+      verboseJson,
+    });
     const elapsed = Date.now() - startTime;
 
     debugLogger.logWhisperPipeline("transcribeViaServer - completed", {
@@ -507,49 +514,14 @@ class WhisperManager {
     return normalized === "[blank_audio]" || normalized === "[ blank_audio ]";
   }
 
-  // Detect whisper hallucination patterns — returns true if the text should be discarded
+  // Detect whisper hallucination patterns — returns true if the text should
+  // be discarded. Thin delegating wrapper: the real (engine-agnostic)
+  // implementation now lives in transcriptionQualityHeuristics.js (Design §3
+  // of docs/specs/audio-transcription-batching.md), shared with Parakeet’s
+  // equivalent. Kept here so every existing call site keeps working
+  // unchanged.
   isHallucinatedText(text, language) {
-    if (!text || !text.trim()) return false;
-
-    // Musical note characters — whisper hallucinates these on music/noise
-    if (/[♪♫♩♬]/.test(text)) return true;
-
-    // Known boilerplate hallucinations whisper emits on silence/noise
-    const KNOWN_HALLUCINATIONS = [
-      /^[\s.,!?]*thanks? for watching[\s.,!?]*$/i,
-      /^[\s.,!?]*thank you[\s.,!?]*$/i,
-      /^[\s.,!?]*please subscribe[\s.,!?]*$/i,
-      /^[\s.,!?]*subtitles by[\s.,!?]*/i,
-      /^[\s.,!?]*transcribed by[\s.,!?]*/i,
-      /^[\s.,!?]*www\./i,
-    ];
-    if (KNOWN_HALLUCINATIONS.some((re) => re.test(text.trim()))) return true;
-
-    // When a latin-script language is selected, reject text that is predominantly non-latin.
-    // Greek/Cyrillic/Arabic output on a pt-BR or en-US session is always a hallucination.
-    const LATIN_SCRIPT_LANGUAGES = new Set([
-      "af","sq","az","bs","ca","cs","cy","da","de","en","eo","es","et","eu",
-      "fi","fr","gl","hr","hu","id","is","it","lt","lv","mk","ms","mt","nl",
-      "no","pl","pt","ro","sk","sl","sq","sr","sv","sw","tl","tr","uz","vi",
-    ]);
-    const baseLang = language ? language.split("-")[0].toLowerCase() : null;
-    if (baseLang && LATIN_SCRIPT_LANGUAGES.has(baseLang)) {
-      const stripped = text.replace(/\s/g, "");
-      if (stripped.length > 0) {
-        // Count characters outside the Latin Extended-B range (U+0000–U+024F)
-        const nonLatin = (stripped.match(/[^ -ɏ]/g) || []).length;
-        if (nonLatin / stripped.length > 0.3) return true;
-      }
-    }
-
-    // Repetition loop: whisper sometimes emits the same phrase back-to-back
-    const words = text.trim().split(/\s+/);
-    if (words.length >= 8) {
-      const half = Math.floor(words.length / 2);
-      if (words.slice(0, half).join(" ") === words.slice(half, half * 2).join(" ")) return true;
-    }
-
-    return false;
+    return sharedIsHallucinatedText(text, language);
   }
 
   async downloadWhisperModel(modelName, progressCallback = null) {

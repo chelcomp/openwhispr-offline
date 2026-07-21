@@ -14,8 +14,6 @@ const BINARIES = {
     archiveName: `sherpa-onnx-v${SHERPA_ONNX_VERSION}-osx-universal2-shared.tar.bz2`,
     binaryPath: "sherpa-onnx-offline-websocket-server",
     outputName: "sherpa-onnx-ws-darwin-arm64",
-    onlineBinaryPath: "sherpa-onnx-online-websocket-server",
-    onlineOutputName: "sherpa-onnx-online-ws-darwin-arm64",
     diarizeBinaryPath: "sherpa-onnx-offline-speaker-diarization",
     diarizeOutputName: "sherpa-onnx-diarize-darwin-arm64",
     libPattern: "*.dylib",
@@ -24,8 +22,6 @@ const BINARIES = {
     archiveName: `sherpa-onnx-v${SHERPA_ONNX_VERSION}-osx-universal2-shared.tar.bz2`,
     binaryPath: "sherpa-onnx-offline-websocket-server",
     outputName: "sherpa-onnx-ws-darwin-x64",
-    onlineBinaryPath: "sherpa-onnx-online-websocket-server",
-    onlineOutputName: "sherpa-onnx-online-ws-darwin-x64",
     diarizeBinaryPath: "sherpa-onnx-offline-speaker-diarization",
     diarizeOutputName: "sherpa-onnx-diarize-darwin-x64",
     libPattern: "*.dylib",
@@ -34,8 +30,6 @@ const BINARIES = {
     archiveName: `sherpa-onnx-v${SHERPA_ONNX_VERSION}-win-x64-shared-MD-Release.tar.bz2`,
     binaryPath: "sherpa-onnx-offline-websocket-server.exe",
     outputName: "sherpa-onnx-ws-win32-x64.exe",
-    onlineBinaryPath: "sherpa-onnx-online-websocket-server.exe",
-    onlineOutputName: "sherpa-onnx-online-ws-win32-x64.exe",
     diarizeBinaryPath: "sherpa-onnx-offline-speaker-diarization.exe",
     diarizeOutputName: "sherpa-onnx-diarize-win32-x64.exe",
     libPattern: "*.dll",
@@ -44,8 +38,6 @@ const BINARIES = {
     archiveName: `sherpa-onnx-v${SHERPA_ONNX_VERSION}-linux-x64-shared.tar.bz2`,
     binaryPath: "sherpa-onnx-offline-websocket-server",
     outputName: "sherpa-onnx-ws-linux-x64",
-    onlineBinaryPath: "sherpa-onnx-online-websocket-server",
-    onlineOutputName: "sherpa-onnx-online-ws-linux-x64",
     diarizeBinaryPath: "sherpa-onnx-offline-speaker-diarization",
     diarizeOutputName: "sherpa-onnx-diarize-linux-x64",
     libPattern: "*.so*",
@@ -60,16 +52,12 @@ const CUDA_BINARIES = {
     archiveName: `sherpa-onnx-v${SHERPA_ONNX_VERSION}-win-x64-cuda.tar.bz2`,
     binaryPath: "sherpa-onnx-offline-websocket-server.exe",
     outputName: "sherpa-onnx-ws-win32-x64-cuda.exe",
-    onlineBinaryPath: "sherpa-onnx-online-websocket-server.exe",
-    onlineOutputName: "sherpa-onnx-online-ws-win32-x64-cuda.exe",
     libPattern: "*.dll",
   },
   "linux-x64": {
     archiveName: `sherpa-onnx-v${SHERPA_ONNX_VERSION}-cuda-12.x-cudnn-9.x-linux-x64-gpu.tar.bz2`,
     binaryPath: "sherpa-onnx-offline-websocket-server",
     outputName: "sherpa-onnx-ws-linux-x64-cuda",
-    onlineBinaryPath: "sherpa-onnx-online-websocket-server",
-    onlineOutputName: "sherpa-onnx-online-ws-linux-x64-cuda",
     libPattern: "*.so*",
   },
 };
@@ -151,17 +139,12 @@ async function downloadBinary(platformArch, config, isForce = false) {
   }
 
   const outputPath = path.join(BIN_DIR, config.outputName);
-  const onlineOutputPath = config.onlineOutputName
-    ? path.join(BIN_DIR, config.onlineOutputName)
-    : null;
   const diarizeOutputPath = config.diarizeOutputName
     ? path.join(BIN_DIR, config.diarizeOutputName)
     : null;
 
   const allExist =
-    fs.existsSync(outputPath) &&
-    (!onlineOutputPath || fs.existsSync(onlineOutputPath)) &&
-    (!diarizeOutputPath || fs.existsSync(diarizeOutputPath));
+    fs.existsSync(outputPath) && (!diarizeOutputPath || fs.existsSync(diarizeOutputPath));
   if (allExist && !isForce) {
     console.log(`  ${platformArch}: Already exists (use --force to re-download)`);
     return true;
@@ -188,23 +171,13 @@ async function downloadBinary(platformArch, config, isForce = false) {
       console.log(`  ${platformArch}: ${config.outputName} already exists — skipped`);
     }
 
-    // Online WebSocket server (streaming models)
-    if (config.onlineBinaryPath && onlineOutputPath) {
-      if (isForce || !fs.existsSync(onlineOutputPath)) {
-        const onlineBinaryName = path.basename(config.onlineBinaryPath);
-        const onlineFound = findBinaryInDir(extractDir, onlineBinaryName);
-        if (!tryCopyBinary(onlineFound, onlineOutputPath, config.onlineOutputName, platformArch)) return false;
-      } else {
-        console.log(`  ${platformArch}: ${config.onlineOutputName} already exists — skipped`);
-      }
-    }
-
     // Diarization binary (optional for CUDA builds)
     if (config.diarizeBinaryPath && diarizeOutputPath) {
       if (isForce || !fs.existsSync(diarizeOutputPath)) {
         const diarizeBinaryName = path.basename(config.diarizeBinaryPath);
         const diarizeFound = findBinaryInDir(extractDir, diarizeBinaryName);
-        if (!tryCopyBinary(diarizeFound, diarizeOutputPath, config.diarizeOutputName, platformArch)) return false;
+        if (!tryCopyBinary(diarizeFound, diarizeOutputPath, config.diarizeOutputName, platformArch))
+          return false;
       } else {
         console.log(`  ${platformArch}: ${config.diarizeOutputName} already exists — skipped`);
       }
@@ -287,7 +260,9 @@ async function main() {
     if (!ok) {
       process.exitCode = 1;
     } else {
-      console.log("\nCUDA binary ready. Enable in the app: Settings → Speech to Text → NVIDIA Parakeet → Use CUDA.");
+      console.log(
+        "\nCUDA binary ready. Enable in the app: Settings → Speech to Text → NVIDIA Parakeet → Use CUDA."
+      );
     }
     return;
   }
@@ -320,7 +295,6 @@ async function main() {
     if (args.shouldCleanup) {
       const keepPrefixes = [
         `sherpa-onnx-ws-${args.platformArch}`,
-        `sherpa-onnx-online-ws-${args.platformArch}`,
         `sherpa-onnx-diarize-${args.platformArch}`,
       ];
       const files = fs.readdirSync(BIN_DIR).filter((f) => f.startsWith("sherpa-onnx"));

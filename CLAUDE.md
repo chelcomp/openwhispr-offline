@@ -632,6 +632,70 @@ A dedicated global hotkey that starts a dictation whose transcript is sent strai
 
 **Tests**: `test/helpers/dictationRouting.test.js` (run with `node --test`)
 
+### 18. Dictation Progressive VAD Batching (Whisper + Parakeet)
+
+Local Dictation's *pasted* transcript is produced by progressive, VAD-chunked transcription
+during recording, confidence-gated per chunk, with bounded merge-and-retry on low confidence —
+not a single full-clip inference call at hotkey release. This is the always-on default mechanism
+for eligible local engines (Whisper, and offline-runtime Parakeet), not an opt-in preview toggle.
+See `docs/specs/audio-transcription-batching.md` for the full design.
+
+**Shared mechanism (`src/helpers/dictationBatchingSession.js`)**:
+
+- One engine-agnostic `DictationBatchingSession` segments live PCM by silence (energy-RMS VAD
+  with adaptive noise floor, pure JS, no Electron/engine dependency) and transcribes each closed
+  utterance exactly once via a caller-supplied `transcribe(pcm16Buffer)` callback.
+- A low-confidence chunk (per the engine's `isLowQuality` callback) is held and merged with the
+  *next* utterance for a retranscription with more acoustic context, bounded by `maxMerges=2` /
+  `maxMergedMs=20000` — reused unchanged from the mechanism's original Whisper-only preview.
+- **New**: `TAIL_FINALIZE_BUDGET_MS = 300ms` — a wall-clock budget that applies only while
+  `finish()` (called at hotkey release) is deciding whether to defer the last, still-open
+  utterance. Once exceeded, the tail commits best-effort immediately instead of merging further —
+  bounding the Speed premise's ≤500ms budget even when the tail is still within
+  `maxMerges`/`maxMergedMs`. This is a separate, narrower trigger from the session-wide
+  `lowQualityRatio`/`coverageRatio` gate below; exhausting the tail's own budget only affects that
+  one chunk's confidence bookkeeping, never the whole-session fallback decision.
+- Full-audio fallback (a single offline re-transcription of the whole clip) triggers only when the
+  whole session's aggregate quality is poor: `lowQualityRatio > 0.5` or `coverageRatio < 0.4`
+  (`ipcHandlers.js`'s `stop-dictation-preview` handler).
+
+**Confidence signal per engine (`src/utils/transcriptionQualityHeuristics.js`)**:
+
+- Whisper: whisper.cpp's real `avg_logprob`/`compression_ratio`/`no_speech_prob` fields
+  (`isWhisperSegmentLowQuality`, thresholds `avg_logprob < -1.0` / `compression_ratio > 2.4`).
+- Parakeet (offline-runtime only — see below): no native confidence field exists in the vendored
+  sherpa-onnx offline-websocket-server protocol. `isParakeetSegmentLowQuality` uses a deliberate,
+  flagged deviation instead: a zlib-based text-compression-ratio (the same technique whisper.cpp
+  itself uses, applied to any engine's output text), the shared `isHallucinatedText` pattern
+  detector, and chunk RMS — reusing the same `2.4` ceiling as Whisper as a starting value.
+- `isHallucinatedText` (regex hallucination patterns, non-Latin-script rejection,
+  word-repetition-loop detection) lives here as the canonical implementation;
+  `WhisperManager.isHallucinatedText` (`whisper.js`) is now a thin delegating wrapper so existing
+  call sites keep working unchanged.
+
+**`showTranscriptionPreview`** now only controls whether the live caption overlay window is shown
+— it does not gate whether the batching session itself runs. The overlay's cosmetic 1500ms partial
+re-transcription of the still-open utterance (`requestPartial()`) is the one piece of the
+mechanism that stays gated behind this toggle, since a volatile partial has no purpose with no
+overlay to show it in; it never affects the committed/pasted transcript either way.
+
+**Parakeet online-runtime models removed entirely**: the three previously-shipped
+`runtime: "online"` Parakeet models (`nemotron-speech-streaming-en-0.6b`,
+`nemotron-3.5-asr-streaming-0.6b`, `nemotron-3.5-asr-streaming-0.6b-1120ms`) had no offline/batch
+sherpa-onnx execution path available and have been removed from the product entirely, along with
+the `parakeetStreamingBeta` setting/toggle and the now-dead-code online-streaming primitives
+(`ParakeetWsServer.createOnlineStream()`/`_transcribeOnline()`/`_warmUpOnline()`, the
+`sherpa-onnx-online-websocket-server` binary/download-script entries). Every remaining Parakeet
+model is offline-runtime, so there is exactly one unified batching/quality mechanism across all
+local engines — no per-model streaming exception. Users previously persisted on one of the three
+removed model IDs (`.env`'s `PARAKEET_MODEL`, or `localStorage`'s `parakeetModel`/
+`meetingParakeetModel`/`uploadParakeetModel`) are migrated to `parakeet-tdt-0.6b-v3` on next launch
+(`src/helpers/parakeetModelMigration.js`, checked on every launch — idempotent, no sentinel file).
+
+**Tests**: `test/utils/transcriptionQualityHeuristics.test.js`,
+`test/helpers/dictationBatchingSession.test.js`, `test/helpers/parakeetModelMigration.test.js`,
+`test/components/parakeetModelMigration.test.js` (run with `node --test`)
+
 ## Development Guidelines
 
 ### AI Assistant Workflow — Spec-Driven Development (Mandatory)
