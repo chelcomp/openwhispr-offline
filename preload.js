@@ -746,6 +746,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
     ipcRenderer.invoke("meeting-set-session-speaker-config", config),
   getWhisperVadConfig: () => ipcRenderer.invoke("whisper-vad-get-config"),
   setWhisperVadConfig: (config) => ipcRenderer.invoke("whisper-vad-set-config", config),
+  getPreviewVadConfig: () => ipcRenderer.invoke("preview-vad-get-config"),
+  setPreviewVadConfig: (config) => ipcRenderer.invoke("preview-vad-set-config", config),
   getPendingMeetingNoteNavigation: () => ipcRenderer.invoke("get-pending-meeting-note-navigation"),
   onMeetingNoteNavigationPending: registerListener(
     "meeting-note-navigation-pending",

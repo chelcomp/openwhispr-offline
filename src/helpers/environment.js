@@ -6,6 +6,7 @@ const debugLogger = require("./debugLogger");
 const { normalizeUiLanguage } = require("./i18nMain");
 const secretCrypto = require("./secretCrypto");
 const { BYOK_API_KEYS } = require("../config/secretKeys");
+const { resolveMigratedParakeetModelId } = require("./parakeetModelMigration");
 
 const SECRET_KEYS = [
   ...BYOK_API_KEYS.map((k) => k.env),
@@ -93,6 +94,20 @@ class EnvironmentManager {
           require("dotenv").config({ path: envPath });
         }
       } catch {}
+    }
+
+    // Migrate any user persisted on a removed runtime:"online" Parakeet model
+    // (see parakeetModelMigration.js) to the default offline model. Idempotent,
+    // run on every launch — no sentinel file needed.
+    if (process.env.PARAKEET_MODEL) {
+      const migrated = resolveMigratedParakeetModelId(process.env.PARAKEET_MODEL);
+      if (migrated !== process.env.PARAKEET_MODEL) {
+        debugLogger.info("Migrating removed Parakeet model to default", {
+          from: process.env.PARAKEET_MODEL,
+          to: migrated,
+        });
+        process.env.PARAKEET_MODEL = migrated;
+      }
     }
   }
 

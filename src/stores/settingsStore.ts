@@ -5,10 +5,12 @@ import { ensureAgentNameInDictionary } from "../utils/agentName";
 import { useStreamingProvidersStore } from "./streamingProvidersStore";
 import logger from "../utils/logger";
 import whisperVadConstants from "../constants/whisperVad.json";
+import previewVadConstants from "../constants/previewVad.json";
 import type { LocalTranscriptionProvider, InferenceMode, SelfHostedType } from "../types/electron";
 import { PROMPT_KIND_LIST, type PromptKind } from "../config/prompts/registry";
 import { deriveReasoningMode, buildReasoningScopePatches } from "../helpers/reasoningRouting";
 import { resolveAudioRetentionStartupSync } from "../helpers/audioRetentionSync";
+import { resolveMigratedParakeetModelId } from "../helpers/parakeetModelMigration";
 import {
   resolveModelIdleTimeoutMs,
   resolveModelIdleTimeoutStartupSync,
@@ -147,6 +149,29 @@ function migrateMeetingFollowFlags() {
 
 migrateMeetingFollowFlags();
 
+// One-time-per-launch migration for the three `runtime: "online"` Parakeet
+// models removed entirely from the product (Option A, see
+// docs/specs/audio-transcription-batching.md Design §13). Idempotent, run on
+// every launch — no sentinel needed since re-checking an already-valid ID is
+// a no-op.
+const PARAKEET_MODEL_STORAGE_KEYS = [
+  "parakeetModel",
+  "meetingParakeetModel",
+  "uploadParakeetModel",
+] as const;
+
+function migrateRemovedParakeetModels() {
+  if (!isBrowser) return;
+  for (const key of PARAKEET_MODEL_STORAGE_KEYS) {
+    const current = localStorage.getItem(key);
+    if (!current) continue;
+    const migrated = resolveMigratedParakeetModelId(current);
+    if (migrated !== current) localStorage.setItem(key, migrated);
+  }
+}
+
+migrateRemovedParakeetModels();
+
 const BOOLEAN_SETTINGS = new Set([
   "useLocalWhisper",
   "meetingUseLocalWhisper",
@@ -176,7 +201,6 @@ const BOOLEAN_SETTINGS = new Set([
   "saveDiscardedTranscriptions",
   "noteFilesEnabled",
   "showTranscriptionPreview",
-  "parakeetStreamingBeta",
   "cleanupDisableThinking",
   "dictationAgentDisableThinking",
   "noteFormattingDisableThinking",
@@ -186,11 +210,7 @@ const BOOLEAN_SETTINGS = new Set([
   "notifyUpdates",
 ]);
 
-const ARRAY_SETTINGS = new Set([
-  "customDictionary",
-  "snippets",
-  "onboardingUseCases",
-]);
+const ARRAY_SETTINGS = new Set(["customDictionary", "snippets", "onboardingUseCases"]);
 
 const NUMERIC_SETTINGS = new Set([
   "audioRetentionDays",
@@ -202,6 +222,17 @@ const NUMERIC_SETTINGS = new Set([
   "whisperVadMaxSpeechDurationS",
   "whisperVadSpeechPadMs",
   "whisperVadSamplesOverlap",
+  "previewVadMinSpeechDurationMs",
+  "previewVadMinSilenceDurationMs",
+  "previewVadSpeechPadMs",
+  "previewVadMaxSpeechDurationS",
+  "previewVadSamplesOverlap",
+  "previewVadEnergyThreshold",
+  "previewVadMinSegmentRms",
+  "previewVadNoiseFloorFactor",
+  "previewVadNoiseFloorAlpha",
+  "previewVadMaxMerges",
+  "previewVadMaxMergedMs",
 ]);
 
 const WHISPER_VAD_DEFAULTS = whisperVadConstants.DEFAULTS;
@@ -214,6 +245,20 @@ const clampVadValue = (key: WhisperVadKey, raw: unknown): number => {
   const n = raw === null || raw === undefined || raw === "" ? fallback : Number(raw);
   if (!Number.isFinite(n)) return fallback;
   const { min, max, round } = WHISPER_VAD_LIMITS[key];
+  const clamped = Math.min(max, Math.max(min, n));
+  return round ? Math.round(clamped) : clamped;
+};
+
+const PREVIEW_VAD_DEFAULTS = previewVadConstants.DEFAULTS;
+const PREVIEW_VAD_LIMITS = previewVadConstants.LIMITS;
+
+type PreviewVadKey = keyof typeof PREVIEW_VAD_DEFAULTS;
+
+const clampPreviewVadValue = (key: PreviewVadKey, raw: unknown): number => {
+  const fallback = PREVIEW_VAD_DEFAULTS[key];
+  const n = raw === null || raw === undefined || raw === "" ? fallback : Number(raw);
+  if (!Number.isFinite(n)) return fallback;
+  const { min, max, round } = PREVIEW_VAD_LIMITS[key];
   const clamped = Math.min(max, Math.max(min, n));
   return round ? Math.round(clamped) : clamped;
 };
@@ -466,9 +511,19 @@ export interface SettingsState
   whisperVadMaxSpeechDurationS: number;
   whisperVadSpeechPadMs: number;
   whisperVadSamplesOverlap: number;
+  previewVadMinSpeechDurationMs: number;
+  previewVadMinSilenceDurationMs: number;
+  previewVadSpeechPadMs: number;
+  previewVadMaxSpeechDurationS: number;
+  previewVadSamplesOverlap: number;
+  previewVadEnergyThreshold: number;
+  previewVadMinSegmentRms: number;
+  previewVadNoiseFloorFactor: number;
+  previewVadNoiseFloorAlpha: number;
+  previewVadMaxMerges: number;
+  previewVadMaxMergedMs: number;
   panelStartPosition: "bottom-right" | "center" | "bottom-left";
   showTranscriptionPreview: boolean;
-  parakeetStreamingBeta: boolean;
   autoPasteEnabled: boolean;
   autoUnmuteMicEnabled: boolean;
   keepTranscriptionInClipboard: boolean;
@@ -707,9 +762,20 @@ export interface SettingsState
   setWhisperVadSpeechPadMs: (value: number) => void;
   setWhisperVadSamplesOverlap: (value: number) => void;
   resetWhisperVad: () => void;
+  setPreviewVadMinSpeechDurationMs: (value: number) => void;
+  setPreviewVadMinSilenceDurationMs: (value: number) => void;
+  setPreviewVadSpeechPadMs: (value: number) => void;
+  setPreviewVadMaxSpeechDurationS: (value: number) => void;
+  setPreviewVadSamplesOverlap: (value: number) => void;
+  setPreviewVadEnergyThreshold: (value: number) => void;
+  setPreviewVadMinSegmentRms: (value: number) => void;
+  setPreviewVadNoiseFloorFactor: (value: number) => void;
+  setPreviewVadNoiseFloorAlpha: (value: number) => void;
+  setPreviewVadMaxMerges: (value: number) => void;
+  setPreviewVadMaxMergedMs: (value: number) => void;
+  resetPreviewVadDefaults: () => void;
   setPanelStartPosition: (position: "bottom-right" | "center" | "bottom-left") => void;
   setShowTranscriptionPreview: (value: boolean) => void;
-  setParakeetStreamingBeta: (value: boolean) => void;
   setAutoPasteEnabled: (value: boolean) => void;
   setAutoUnmuteMicEnabled: (value: boolean) => void;
   setKeepTranscriptionInClipboard: (value: boolean) => void;
@@ -879,14 +945,7 @@ const STALE_SECRET_LOCALSTORAGE_KEYS = [
 ] as const;
 
 function invalidateApiKeyCaches(
-  provider?:
-    | "openai"
-    | "anthropic"
-    | "gemini"
-    | "groq"
-    | "mistral"
-    | "custom"
-    | "openrouter"
+  provider?: "openai" | "anthropic" | "gemini" | "groq" | "mistral" | "custom" | "openrouter"
 ) {
   if (provider) {
     if (_ReasoningService) {
@@ -920,7 +979,7 @@ function createSecretSetter(
 }
 
 export const useSettingsStore = create<SettingsState>()((set, get) => ({
-  uiLanguage: normalizeUiLanguage(isBrowser ? localStorage.getItem("uiLanguage") ?? "en" : "en"),
+  uiLanguage: normalizeUiLanguage(isBrowser ? (localStorage.getItem("uiLanguage") ?? "en") : "en"),
   useLocalWhisper: readBoolean("useLocalWhisper", true),
   whisperModel: readString("whisperModel", "base"),
   localTranscriptionProvider: (readString("localTranscriptionProvider", "whisper") === "nvidia"
@@ -1123,13 +1182,56 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
     "samplesOverlap",
     readString("whisperVadSamplesOverlap", "0.5")
   ),
+  previewVadMinSpeechDurationMs: clampPreviewVadValue(
+    "minSpeechDurationMs",
+    readString("previewVadMinSpeechDurationMs", "80")
+  ),
+  previewVadMinSilenceDurationMs: clampPreviewVadValue(
+    "minSilenceDurationMs",
+    readString("previewVadMinSilenceDurationMs", "500")
+  ),
+  previewVadSpeechPadMs: clampPreviewVadValue(
+    "speechPadMs",
+    readString("previewVadSpeechPadMs", "100")
+  ),
+  previewVadMaxSpeechDurationS: clampPreviewVadValue(
+    "maxSpeechDurationS",
+    readString("previewVadMaxSpeechDurationS", "20")
+  ),
+  previewVadSamplesOverlap: clampPreviewVadValue(
+    "samplesOverlap",
+    readString("previewVadSamplesOverlap", "0.3")
+  ),
+  previewVadEnergyThreshold: clampPreviewVadValue(
+    "energyThreshold",
+    readString("previewVadEnergyThreshold", "0.006")
+  ),
+  previewVadMinSegmentRms: clampPreviewVadValue(
+    "minSegmentRms",
+    readString("previewVadMinSegmentRms", "0.003")
+  ),
+  previewVadNoiseFloorFactor: clampPreviewVadValue(
+    "noiseFloorFactor",
+    readString("previewVadNoiseFloorFactor", "3")
+  ),
+  previewVadNoiseFloorAlpha: clampPreviewVadValue(
+    "noiseFloorAlpha",
+    readString("previewVadNoiseFloorAlpha", "0.05")
+  ),
+  previewVadMaxMerges: clampPreviewVadValue(
+    "maxMerges",
+    readString("previewVadMaxMerges", "2")
+  ),
+  previewVadMaxMergedMs: clampPreviewVadValue(
+    "maxMergedMs",
+    readString("previewVadMaxMergedMs", "20000")
+  ),
   panelStartPosition: (() => {
     const v = readString("panelStartPosition", "center");
     if (v === "bottom-right" || v === "center" || v === "bottom-left") return v;
     return "center" as const;
   })(),
   showTranscriptionPreview: readBoolean("showTranscriptionPreview", false),
-  parakeetStreamingBeta: readBoolean("parakeetStreamingBeta", false),
   autoPasteEnabled: readBoolean("autoPasteEnabled", true),
   autoUnmuteMicEnabled: readBoolean("autoUnmuteMicEnabled", false),
   keepTranscriptionInClipboard: readBoolean("keepTranscriptionInClipboard", false),
@@ -1762,6 +1864,131 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
       });
     }
   },
+  setPreviewVadMinSpeechDurationMs: (value: number) => {
+    const next = clampPreviewVadValue("minSpeechDurationMs", value);
+    if (isBrowser) localStorage.setItem("previewVadMinSpeechDurationMs", String(next));
+    useSettingsStore.setState({ previewVadMinSpeechDurationMs: next });
+    if (isBrowser) {
+      window.electronAPI?.setPreviewVadConfig?.({ minSpeechDurationMs: next });
+    }
+  },
+  setPreviewVadMinSilenceDurationMs: (value: number) => {
+    const next = clampPreviewVadValue("minSilenceDurationMs", value);
+    if (isBrowser) localStorage.setItem("previewVadMinSilenceDurationMs", String(next));
+    useSettingsStore.setState({ previewVadMinSilenceDurationMs: next });
+    if (isBrowser) {
+      window.electronAPI?.setPreviewVadConfig?.({ minSilenceDurationMs: next });
+    }
+  },
+  setPreviewVadSpeechPadMs: (value: number) => {
+    const next = clampPreviewVadValue("speechPadMs", value);
+    if (isBrowser) localStorage.setItem("previewVadSpeechPadMs", String(next));
+    useSettingsStore.setState({ previewVadSpeechPadMs: next });
+    if (isBrowser) {
+      window.electronAPI?.setPreviewVadConfig?.({ speechPadMs: next });
+    }
+  },
+  setPreviewVadMaxSpeechDurationS: (value: number) => {
+    const next = clampPreviewVadValue("maxSpeechDurationS", value);
+    if (isBrowser) localStorage.setItem("previewVadMaxSpeechDurationS", String(next));
+    useSettingsStore.setState({ previewVadMaxSpeechDurationS: next });
+    if (isBrowser) {
+      window.electronAPI?.setPreviewVadConfig?.({ maxSpeechDurationS: next });
+    }
+  },
+  setPreviewVadSamplesOverlap: (value: number) => {
+    const next = clampPreviewVadValue("samplesOverlap", value);
+    if (isBrowser) localStorage.setItem("previewVadSamplesOverlap", String(next));
+    useSettingsStore.setState({ previewVadSamplesOverlap: next });
+    if (isBrowser) {
+      window.electronAPI?.setPreviewVadConfig?.({ samplesOverlap: next });
+    }
+  },
+  setPreviewVadEnergyThreshold: (value: number) => {
+    const next = clampPreviewVadValue("energyThreshold", value);
+    if (isBrowser) localStorage.setItem("previewVadEnergyThreshold", String(next));
+    useSettingsStore.setState({ previewVadEnergyThreshold: next });
+    if (isBrowser) {
+      window.electronAPI?.setPreviewVadConfig?.({ energyThreshold: next });
+    }
+  },
+  setPreviewVadMinSegmentRms: (value: number) => {
+    const next = clampPreviewVadValue("minSegmentRms", value);
+    if (isBrowser) localStorage.setItem("previewVadMinSegmentRms", String(next));
+    useSettingsStore.setState({ previewVadMinSegmentRms: next });
+    if (isBrowser) {
+      window.electronAPI?.setPreviewVadConfig?.({ minSegmentRms: next });
+    }
+  },
+  setPreviewVadNoiseFloorFactor: (value: number) => {
+    const next = clampPreviewVadValue("noiseFloorFactor", value);
+    if (isBrowser) localStorage.setItem("previewVadNoiseFloorFactor", String(next));
+    useSettingsStore.setState({ previewVadNoiseFloorFactor: next });
+    if (isBrowser) {
+      window.electronAPI?.setPreviewVadConfig?.({ noiseFloorFactor: next });
+    }
+  },
+  setPreviewVadNoiseFloorAlpha: (value: number) => {
+    const next = clampPreviewVadValue("noiseFloorAlpha", value);
+    if (isBrowser) localStorage.setItem("previewVadNoiseFloorAlpha", String(next));
+    useSettingsStore.setState({ previewVadNoiseFloorAlpha: next });
+    if (isBrowser) {
+      window.electronAPI?.setPreviewVadConfig?.({ noiseFloorAlpha: next });
+    }
+  },
+  setPreviewVadMaxMerges: (value: number) => {
+    const next = clampPreviewVadValue("maxMerges", value);
+    if (isBrowser) localStorage.setItem("previewVadMaxMerges", String(next));
+    useSettingsStore.setState({ previewVadMaxMerges: next });
+    if (isBrowser) {
+      window.electronAPI?.setPreviewVadConfig?.({ maxMerges: next });
+    }
+  },
+  setPreviewVadMaxMergedMs: (value: number) => {
+    const next = clampPreviewVadValue("maxMergedMs", value);
+    if (isBrowser) localStorage.setItem("previewVadMaxMergedMs", String(next));
+    useSettingsStore.setState({ previewVadMaxMergedMs: next });
+    if (isBrowser) {
+      window.electronAPI?.setPreviewVadConfig?.({ maxMergedMs: next });
+    }
+  },
+  resetPreviewVadDefaults: () => {
+    const d = PREVIEW_VAD_DEFAULTS;
+    const next = {
+      previewVadMinSpeechDurationMs: d.minSpeechDurationMs,
+      previewVadMinSilenceDurationMs: d.minSilenceDurationMs,
+      previewVadSpeechPadMs: d.speechPadMs,
+      previewVadMaxSpeechDurationS: d.maxSpeechDurationS,
+      previewVadSamplesOverlap: d.samplesOverlap,
+      previewVadEnergyThreshold: d.energyThreshold,
+      previewVadMinSegmentRms: d.minSegmentRms,
+      previewVadNoiseFloorFactor: d.noiseFloorFactor,
+      previewVadNoiseFloorAlpha: d.noiseFloorAlpha,
+      previewVadMaxMerges: d.maxMerges,
+      previewVadMaxMergedMs: d.maxMergedMs,
+    };
+    if (isBrowser) {
+      for (const [key, value] of Object.entries(next)) {
+        localStorage.setItem(key, String(value));
+      }
+    }
+    useSettingsStore.setState(next);
+    if (isBrowser) {
+      window.electronAPI?.setPreviewVadConfig?.({
+        minSpeechDurationMs: d.minSpeechDurationMs,
+        minSilenceDurationMs: d.minSilenceDurationMs,
+        speechPadMs: d.speechPadMs,
+        maxSpeechDurationS: d.maxSpeechDurationS,
+        samplesOverlap: d.samplesOverlap,
+        energyThreshold: d.energyThreshold,
+        minSegmentRms: d.minSegmentRms,
+        noiseFloorFactor: d.noiseFloorFactor,
+        noiseFloorAlpha: d.noiseFloorAlpha,
+        maxMerges: d.maxMerges,
+        maxMergedMs: d.maxMergedMs,
+      });
+    }
+  },
   setPanelStartPosition: (position: "bottom-right" | "center" | "bottom-left") => {
     if (get().panelStartPosition === position) return;
     if (isBrowser) localStorage.setItem("panelStartPosition", position);
@@ -1772,7 +1999,6 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
   },
 
   setShowTranscriptionPreview: createBooleanSetter("showTranscriptionPreview"),
-  setParakeetStreamingBeta: createBooleanSetter("parakeetStreamingBeta"),
   setAutoPasteEnabled: createBooleanSetter("autoPasteEnabled"),
   setAutoUnmuteMicEnabled: createBooleanSetter("autoUnmuteMicEnabled"),
   setKeepTranscriptionInClipboard: createBooleanSetter("keepTranscriptionInClipboard"),
@@ -1823,8 +2049,6 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
       s.setAssemblyAiStreaming(settings.assemblyAiStreaming);
     if (settings.showTranscriptionPreview !== undefined)
       s.setShowTranscriptionPreview(settings.showTranscriptionPreview);
-    if (settings.parakeetStreamingBeta !== undefined)
-      s.setParakeetStreamingBeta(settings.parakeetStreamingBeta);
   },
 
   // Apply a transcription config to dictation, then mirror its cloud routing to
@@ -2079,8 +2303,8 @@ export const selectResolvedLLMConfig = (
   return {
     scope,
     mode,
-    provider: useSharedLocal ? state.localProvider : (read("provider") || fallback?.provider || ""),
-    model: useSharedLocal ? state.localModel : (read("model") || fallback?.model || ""),
+    provider: useSharedLocal ? state.localProvider : read("provider") || fallback?.provider || "",
+    model: useSharedLocal ? state.localModel : read("model") || fallback?.model || "",
     cloudMode: read("cloudMode") || fallback?.cloudMode,
     cloudBaseUrl: read("cloudBaseUrl") || fallback?.cloudBaseUrl,
     remoteUrl: read("remoteUrl") || fallback?.remoteUrl,
@@ -2254,10 +2478,7 @@ export async function initializeSettings(): Promise<void> {
     // so the toggle mirrors real startup behavior and toggling it always persists.
     try {
       const envStartMinimized = await window.electronAPI.getStartMinimized?.();
-      if (
-        typeof envStartMinimized === "boolean" &&
-        envStartMinimized !== state.startMinimized
-      ) {
+      if (typeof envStartMinimized === "boolean" && envStartMinimized !== state.startMinimized) {
         localStorage.setItem("startMinimized", String(envStartMinimized));
         useSettingsStore.setState({ startMinimized: envStartMinimized });
       }
@@ -2486,9 +2707,7 @@ export async function initializeSettings(): Promise<void> {
         } else if (dbSnippets.length > 0) {
           // If any SQLite row is missing apps data that localStorage has, merge and
           // write back so future restarts don't need this recovery step.
-          const localByTrigger = new Map(
-            currentSnippets.map((s) => [s.trigger.toLowerCase(), s])
-          );
+          const localByTrigger = new Map(currentSnippets.map((s) => [s.trigger.toLowerCase(), s]));
           const needsMerge = dbSnippets.some((s) => {
             if (s.apps?.length) return false;
             return !!localByTrigger.get(s.trigger.toLowerCase())?.apps?.length;
@@ -2559,6 +2778,29 @@ export async function initializeSettings(): Promise<void> {
     } catch (err) {
       logger.warn(
         "Failed to sync whisper VAD config on startup",
+        { error: (err as Error).message },
+        "settings"
+      );
+    }
+
+    try {
+      const currentState = useSettingsStore.getState();
+      await window.electronAPI.setPreviewVadConfig?.({
+        minSpeechDurationMs: currentState.previewVadMinSpeechDurationMs,
+        minSilenceDurationMs: currentState.previewVadMinSilenceDurationMs,
+        speechPadMs: currentState.previewVadSpeechPadMs,
+        maxSpeechDurationS: currentState.previewVadMaxSpeechDurationS,
+        samplesOverlap: currentState.previewVadSamplesOverlap,
+        energyThreshold: currentState.previewVadEnergyThreshold,
+        minSegmentRms: currentState.previewVadMinSegmentRms,
+        noiseFloorFactor: currentState.previewVadNoiseFloorFactor,
+        noiseFloorAlpha: currentState.previewVadNoiseFloorAlpha,
+        maxMerges: currentState.previewVadMaxMerges,
+        maxMergedMs: currentState.previewVadMaxMergedMs,
+      });
+    } catch (err) {
+      logger.warn(
+        "Failed to sync preview VAD config on startup",
         { error: (err as Error).message },
         "settings"
       );

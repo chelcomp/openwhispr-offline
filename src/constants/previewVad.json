@@ -1,0 +1,28 @@
+{
+  "DEFAULTS": {
+    "minSpeechDurationMs": 80,
+    "minSilenceDurationMs": 500,
+    "speechPadMs": 100,
+    "maxSpeechDurationS": 20,
+    "samplesOverlap": 0.3,
+    "energyThreshold": 0.006,
+    "minSegmentRms": 0.003,
+    "noiseFloorFactor": 3,
+    "noiseFloorAlpha": 0.05,
+    "maxMerges": 2,
+    "maxMergedMs": 20000
+  },
+  "LIMITS": {
+    "minSpeechDurationMs": { "min": 20, "max": 500, "round": true },
+    "minSilenceDurationMs": { "min": 100, "max": 2000, "round": true },
+    "speechPadMs": { "min": 0, "max": 500, "round": true },
+    "maxSpeechDurationS": { "min": 5, "max": 60, "round": true },
+    "samplesOverlap": { "min": 0, "max": 0.95, "round": false },
+    "energyThreshold": { "min": 0.001, "max": 0.05, "round": false },
+    "minSegmentRms": { "min": 0.0005, "max": 0.05, "round": false },
+    "noiseFloorFactor": { "min": 1, "max": 10, "round": false },
+    "noiseFloorAlpha": { "min": 0.01, "max": 0.5, "round": false },
+    "maxMerges": { "min": 0, "max": 10, "round": true },
+    "maxMergedMs": { "min": 5000, "max": 60000, "round": true }
+  }
+}

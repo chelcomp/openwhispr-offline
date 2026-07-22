@@ -217,10 +217,6 @@ class ParakeetServerManager {
     }
   }
 
-  createOnlineStream(options) {
-    return this.wsServer.createOnlineStream(options);
-  }
-
   async stopServer() {
     await this.wsServer.stop();
   }

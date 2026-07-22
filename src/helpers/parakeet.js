@@ -98,7 +98,7 @@ class ParakeetManager {
     const status = {
       sherpaOnnx: {
         available: this.serverManager.hasAnyWsBinary(),
-        path: this.serverManager.getBinaryPath("offline") || this.serverManager.getBinaryPath("online"),
+        path: this.serverManager.getBinaryPath("offline"),
       },
       models: [],
     };
@@ -132,26 +132,12 @@ class ParakeetManager {
   }
 
   async checkInstallation() {
-    const binaryPath =
-      this.serverManager.getBinaryPath("offline") || this.serverManager.getBinaryPath("online");
+    const binaryPath = this.serverManager.getBinaryPath("offline");
     if (!binaryPath) {
       return { installed: false, working: false };
     }
 
     return { installed: true, working: true, path: binaryPath };
-  }
-
-  supportsOnlineStreaming(modelName) {
-    return getModelRuntime(modelName) === "online";
-  }
-
-  async createOnlineStream(modelName, options = {}) {
-    this.validateModelName(modelName);
-    const started = await this.serverManager.startServer(modelName);
-    if (!started.success) {
-      throw new Error(started.reason || "Failed to start parakeet streaming server");
-    }
-    return this.serverManager.createOnlineStream(options);
   }
 
   async startServer(modelName) {
@@ -174,9 +160,8 @@ class ParakeetManager {
     const serverAvailable = this.serverManager.isAvailable(runtime);
 
     if (!serverAvailable) {
-      const binaryLabel = runtime === "online" ? "sherpa-onnx online WebSocket server" : "sherpa-onnx";
       throw new Error(
-        `${binaryLabel} binary not found. Run "npm run download:sherpa-onnx" or reinstall the app.`
+        `sherpa-onnx binary not found. Run "npm run download:sherpa-onnx" or reinstall the app.`
       );
     }
 
@@ -279,7 +264,10 @@ class ParakeetManager {
 
       for (const turn of turns) {
         const startByte = Math.max(0, Math.floor(turn.start * SAMPLE_RATE) * BYTES_PER_SAMPLE);
-        const endByte = Math.min(samples.length, Math.ceil(turn.end * SAMPLE_RATE) * BYTES_PER_SAMPLE);
+        const endByte = Math.min(
+          samples.length,
+          Math.ceil(turn.end * SAMPLE_RATE) * BYTES_PER_SAMPLE
+        );
         if (endByte <= startByte) continue;
 
         const slice = samples.subarray(startByte, endByte);
@@ -670,8 +658,7 @@ class ParakeetManager {
       models: [],
     };
 
-    const binaryPath =
-      this.serverManager.getBinaryPath("offline") || this.serverManager.getBinaryPath("online");
+    const binaryPath = this.serverManager.getBinaryPath("offline");
     if (binaryPath) {
       diagnostics.sherpaOnnx = { available: true, path: binaryPath };
     }

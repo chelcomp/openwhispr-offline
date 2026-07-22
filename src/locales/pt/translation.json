@@ -1708,6 +1708,10 @@
         "noteRecording": "Gravação de notas",
         "upload": "Enviar áudio"
       },
+      "vadTabs": {
+        "live": "Ao vivo",
+        "silero": "Detecção de atividade de voz"
+      },
       "selfHostedStreamingNote": "Requer um servidor que suporte transcrição em streaming."
     },
     "llms": {
@@ -1808,9 +1812,7 @@
         "deleteModels": "Excluir modelos"
       },
       "transcriptionPreview": "Pré-visualização ao vivo",
-      "transcriptionPreviewDescription": "Mostrar transcrição em janela flutuante antes da limpeza",
-      "parakeetStreamingBeta": "Streaming em Tempo Real",
-      "parakeetStreamingBetaDescription": "Cola o texto progressivamente enquanto o NVIDIA Parakeet transcreve, em vez de esperar o resultado completo. Experimental — pode se comportar de forma inesperada.",
+      "transcriptionPreviewDescription": "Mostra uma sobreposição de legendas ao vivo durante a ditado. A velocidade da ditado não depende mais desta opção — o pipeline de transcrição rápido e com verificação de qualidade sempre roda em segundo plano, com ou sem a sobreposição.",
       "aec": {
         "toggle": {
           "title": "Cancelamento de eco para reuniões",
@@ -1859,6 +1861,57 @@
           "samplesOverlap": {
             "label": "Sobreposição de amostras (s)",
             "info": "Áudio estendido de um segmento para o próximo, evitando cortes bruscos na concatenação."
+          }
+        }
+      },
+      "previewVad": {
+        "title": "Sensibilidade da prévia ao vivo",
+        "description": "Controla a rapidez com que a prévia \"Ouvindo...\" reconhece e reflete sua fala enquanto você ainda está falando. Este é um detector separado, mais simples e mais rápido do que o usado na sua transcrição final — ajustar um não afeta o outro. Se a prévia ao vivo raramente mostra texto enquanto você fala, tente diminuir os valores abaixo.",
+        "resetDefaults": "Repor predefinições",
+        "fields": {
+          "minSpeechDurationMs": {
+            "label": "Duração mínima da fala (ms)",
+            "info": "Menor = a prévia começa a mostrar texto mais rápido depois que você começa a falar, mas também pode reagir mais facilmente a ruídos de fundo."
+          },
+          "minSilenceDurationMs": {
+            "label": "Duração mínima de silêncio (ms)",
+            "info": "Menor = a prévia divide sua fala em segmentos com mais frequência durante as pausas."
+          },
+          "speechPadMs": {
+            "label": "Preenchimento de fala (ms)",
+            "info": "Quanto áudio imediatamente antes da sua fala é mantido, para que o início de uma frase não seja cortado."
+          },
+          "maxSpeechDurationS": {
+            "label": "Duração máxima da fala (s)",
+            "info": "A prévia ao vivo forçará um corte e iniciará um novo segmento se você falar continuamente por mais tempo do que isso, sem pausar."
+          },
+          "samplesOverlap": {
+            "label": "Sobreposição de amostras",
+            "info": "Quanto áudio é repetido em um corte forçado, para que uma palavra dividida pelo corte não seja perdida."
+          },
+          "energyThreshold": {
+            "label": "Limiar de energia (RMS)",
+            "info": "O volume mínimo que um instante de áudio deve atingir para ser tratado como fala. Um valor menor capta falas mais baixas, mas também pode captar ruído de fundo."
+          },
+          "minSegmentRms": {
+            "label": "Volume mínimo do segmento (RMS)",
+            "info": "Um segmento reconhecido inteiro mais silencioso do que isso é descartado em vez de ser enviado para transcrição, para evitar transcrever quase silêncio."
+          },
+          "noiseFloorFactor": {
+            "label": "Fator de piso de ruído",
+            "info": "O quanto sua voz precisa subir acima do nível de ruído ambiente do seu ambiente para contar como fala. Um valor menor é mais sensível em ambientes barulhentos, mas pode captar mais ruído."
+          },
+          "noiseFloorAlpha": {
+            "label": "Taxa de adaptação do piso de ruído",
+            "info": "Com que rapidez o detector atualiza sua percepção do nível de ruído ambiente do seu ambiente. Um valor maior reage mais rápido a um ambiente ficando mais alto ou mais silencioso, mas pode deixar o detector menos estável momento a momento."
+          },
+          "maxMerges": {
+            "label": "Máximo de mesclagens",
+            "info": "Quantas frases consecutivas de baixa confiança podem ser combinadas com a próxima antes de serem aceitas como estão."
+          },
+          "maxMergedMs": {
+            "label": "Duração máxima mesclada (ms)",
+            "info": "O tempo máximo que um trecho de fala combinado/mesclado pode crescer antes de ser finalizado de qualquer forma."
           }
         }
       }
@@ -1966,9 +2019,7 @@
     "descriptions": {
       "parakeet": {
         "parakeet_tdt_0_6b_v3": "ASR multilíngue rápido com detecção automática de idioma (25 idiomas)",
-        "parakeet_unified_en_0_6b": "ASR apenas em inglês com precisão de ponta (5,91% WER médio)",
-        "nemotron_speech_streaming_en_0_6b": "ASR em inglês por streaming da NVIDIA Nemotron",
-        "nemotron_3_5_asr_streaming_0_6b": "ASR multilíngue por streaming da NVIDIA Nemotron com detecção automática de idioma (15 idiomas)"
+        "parakeet_unified_en_0_6b": "ASR apenas em inglês com precisão de ponta (5,91% WER médio)"
       },
       "whisper": {
         "tiny": "Mais rápido, qualidade inferior",

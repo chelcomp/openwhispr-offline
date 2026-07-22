@@ -46,6 +46,32 @@ Module._extensions[".jsx"] = tsxLoader;
 // whatever's registered here.
 Module._extensions[".ts"] = tsxLoader;
 
+// Mirror vite.config.mjs's `@` -> `src/` alias (Vite/esbuild-only resolution,
+// invisible to Node's plain CJS `require`) so component modules under test
+// that use `@/...` imports (e.g. `src/components/ui/ProviderIcon.tsx`) can be
+// required directly by `node --test`.
+// Vite resolves a bare `import x from "./icon.svg"` to a build-time asset URL
+// string (never parsed as XML) — Node's plain `require` has no such loader,
+// so stub `.svg`/`.css` requires with an inert placeholder value. Only
+// exercised transitively (e.g. `src/utils/providerIcons.ts`) by component
+// tests that `require()` a whole page-level component module.
+Module._extensions[".svg"] = function svgStubLoader(module) {
+  module.exports = "data:image/svg+xml;base64,";
+};
+Module._extensions[".css"] = function cssStubLoader(module) {
+  module.exports = {};
+};
+
+const srcRoot = path.resolve(__dirname, "..", "..", "src");
+const originalResolveFilename = Module._resolveFilename;
+Module._resolveFilename = function aliasedResolveFilename(request, ...rest) {
+  if (request === "@" || request.startsWith("@/")) {
+    const aliased = path.join(srcRoot, request.slice(1));
+    return originalResolveFilename.call(this, aliased, ...rest);
+  }
+  return originalResolveFilename.call(this, request, ...rest);
+};
+
 after(async () => {
   await GlobalRegistrator.unregister();
 });

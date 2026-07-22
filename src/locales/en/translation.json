@@ -1902,6 +1902,10 @@
         "noteRecording": "Note Recording",
         "upload": "Audio Upload"
       },
+      "vadTabs": {
+        "live": "Live",
+        "silero": "Voice Activity Detection"
+      },
       "selfHostedStreamingNote": "Requires a server that supports streaming transcription."
     },
     "llms": {
@@ -2002,9 +2006,7 @@
         "deleteModels": "Delete Models"
       },
       "transcriptionPreview": "Live Transcription Preview",
-      "transcriptionPreviewDescription": "Show transcription in a floating window before cleanup",
-      "parakeetStreamingBeta": "Real-Time Streaming",
-      "parakeetStreamingBetaDescription": "Paste text progressively as NVIDIA Parakeet transcribes, instead of waiting for the full result. Experimental — may behave unexpectedly.",
+      "transcriptionPreviewDescription": "Show a live caption overlay while dictating. Dictation speed no longer depends on this toggle — the fast, quality-checked transcription pipeline always runs in the background, with or without the overlay.",
       "aec": {
         "toggle": {
           "title": "Echo cancellation for meetings",
@@ -2055,6 +2057,57 @@
             "info": "Audio carried from each segment into the next to avoid abrupt cuts when concatenating."
           }
         }
+      },
+      "previewVad": {
+        "title": "Live Preview Sensitivity",
+        "description": "Controls how quickly the live \"Listening...\" preview recognizes and reflects your speech while you're still talking. This is a separate, simpler, faster detector than the one used for your final transcription — tuning one does not affect the other. If the live preview rarely shows text while you speak, try lowering the values below.",
+        "resetDefaults": "Reset to defaults",
+        "fields": {
+          "minSpeechDurationMs": {
+            "label": "Minimum speech duration (ms)",
+            "info": "Lower = the preview starts showing text sooner after you begin speaking, but may also react to background noise more easily."
+          },
+          "minSilenceDurationMs": {
+            "label": "Minimum silence duration (ms)",
+            "info": "Lower = the preview breaks your speech into segments more eagerly during pauses."
+          },
+          "speechPadMs": {
+            "label": "Speech padding (ms)",
+            "info": "How much audio just before your speech is kept, so the start of a sentence isn't clipped."
+          },
+          "maxSpeechDurationS": {
+            "label": "Maximum speech duration (s)",
+            "info": "The live preview will force-cut and start a new segment if you speak continuously longer than this, without pausing."
+          },
+          "samplesOverlap": {
+            "label": "Samples overlap",
+            "info": "How much audio is repeated across a forced cut, so a word split across the cut isn't lost."
+          },
+          "energyThreshold": {
+            "label": "Energy threshold (RMS)",
+            "info": "The minimum loudness a moment of audio must reach to be treated as speech at all. Lower catches quieter speech but may also catch background noise."
+          },
+          "minSegmentRms": {
+            "label": "Minimum segment loudness (RMS)",
+            "info": "A whole recognized segment quieter than this is dropped instead of being sent for transcription, to avoid transcribing near-silence."
+          },
+          "noiseFloorFactor": {
+            "label": "Noise floor factor",
+            "info": "How far above your room's background noise level your voice must rise to count as speech. Lower is more sensitive in noisy rooms but may pick up more noise."
+          },
+          "noiseFloorAlpha": {
+            "label": "Noise floor adaptation rate",
+            "info": "How quickly the detector updates its sense of your room's background noise level. Higher reacts faster to a room getting louder or quieter, but can make the detector itself less steady moment to moment."
+          },
+          "maxMerges": {
+            "label": "Maximum merges",
+            "info": "How many low-confidence phrases in a row may be combined with the next one before being accepted as-is."
+          },
+          "maxMergedMs": {
+            "label": "Maximum merged duration (ms)",
+            "info": "The longest a combined/merged stretch of speech is allowed to grow before being finalized regardless."
+          }
+        }
       }
     },
     "intelligence": {
@@ -2075,9 +2128,7 @@
     "descriptions": {
       "parakeet": {
         "parakeet_tdt_0_6b_v3": "Fast multilingual ASR with auto language detection (25 languages)",
-        "parakeet_unified_en_0_6b": "English-only ASR with state-of-the-art accuracy (5.91% avg WER)",
-        "nemotron_speech_streaming_en_0_6b": "English streaming ASR from NVIDIA Nemotron",
-        "nemotron_3_5_asr_streaming_0_6b": "Multilingual streaming ASR from NVIDIA Nemotron with auto language detection (15 languages)"
+        "parakeet_unified_en_0_6b": "English-only ASR with state-of-the-art accuracy (5.91% avg WER)"
       },
       "diarization": {
         "segmentation": "Speech boundary detection for speaker diarization",

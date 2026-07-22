@@ -28,6 +28,8 @@ import {
   Wand2,
   Upload,
   Download,
+  Radio,
+  AudioWaveform,
 } from "lucide-react";
 import { signOut } from "../lib/auth";
 import MicPermissionWarning from "./ui/MicPermissionWarning";
@@ -99,15 +101,8 @@ import { formatBytes } from "../utils/formatBytes";
 import { useSettingsStore } from "../stores/settingsStore";
 import { canManageSystemAudioInApp } from "../utils/systemAudioAccess";
 
-
 export type SettingsSectionType =
-  | "general"
-  | "hotkeys"
-  | "speechToText"
-  | "llms"
-  | "localModel"
-  | "privacyData"
-  | "system";
+  "general" | "hotkeys" | "speechToText" | "llms" | "localModel" | "privacyData" | "system";
 
 interface SettingsPageProps {
   activeSection?: SettingsSectionType;
@@ -149,8 +144,6 @@ interface TranscriptionSectionProps {
   setRemoteTranscriptionModel: (model: string) => void;
   showTranscriptionPreview: boolean;
   setShowTranscriptionPreview: (value: boolean) => void;
-  parakeetStreamingBeta: boolean;
-  setParakeetStreamingBeta: (value: boolean) => void;
   toast: (opts: {
     title: string;
     description: string;
@@ -185,8 +178,6 @@ function TranscriptionSection({
   setRemoteTranscriptionModel,
   showTranscriptionPreview,
   setShowTranscriptionPreview,
-  parakeetStreamingBeta,
-  setParakeetStreamingBeta,
   toast,
 }: TranscriptionSectionProps) {
   const { t } = useTranslation();
@@ -194,28 +185,11 @@ function TranscriptionSection({
   const selectedLocalTranscriptionModelId =
     localTranscriptionProvider === "nvidia" ? parakeetModel : whisperModel;
   const activeLocalTranscriptionModelName = selectedLocalTranscriptionModelId
-    ? (localTranscriptionProvider === "nvidia"
+    ? ((localTranscriptionProvider === "nvidia"
         ? PARAKEET_MODEL_INFO[selectedLocalTranscriptionModelId]?.name
-        : WHISPER_MODEL_INFO[selectedLocalTranscriptionModelId]?.name) ?? selectedLocalTranscriptionModelId
+        : WHISPER_MODEL_INFO[selectedLocalTranscriptionModelId]?.name) ??
+      selectedLocalTranscriptionModelId)
     : undefined;
-
-  const selectedParakeetModelSupportsStreaming =
-    PARAKEET_MODEL_INFO[parakeetModel]?.runtime === "online";
-
-  useEffect(() => {
-    if (
-      localTranscriptionProvider === "nvidia" &&
-      parakeetStreamingBeta &&
-      !selectedParakeetModelSupportsStreaming
-    ) {
-      setParakeetStreamingBeta(false);
-    }
-  }, [
-    localTranscriptionProvider,
-    parakeetStreamingBeta,
-    selectedParakeetModelSupportsStreaming,
-    setParakeetStreamingBeta,
-  ]);
 
   const transcriptionModes: InferenceModeOption[] = [
     {
@@ -246,11 +220,12 @@ function TranscriptionSection({
     updateTranscriptionSettings({ useLocalWhisper: mode === "local" });
     setCloudTranscriptionMode("byok");
 
-    const toastKey = {
-      providers: "switchedProviders",
-      local: "switchedLocal",
-      "self-hosted": "switchedSelfHosted",
-    }[mode as "providers" | "local" | "self-hosted"] ?? "switchedProviders";
+    const toastKey =
+      {
+        providers: "switchedProviders",
+        local: "switchedLocal",
+        "self-hosted": "switchedSelfHosted",
+      }[mode as "providers" | "local" | "self-hosted"] ?? "switchedProviders";
     toast({
       title: t(`settingsPage.transcription.toasts.${toastKey}.title`),
       description: t(`settingsPage.transcription.toasts.${toastKey}.description`),
@@ -278,20 +253,6 @@ function TranscriptionSection({
           description={t("settingsPage.transcription.transcriptionPreviewDescription")}
         >
           <Toggle checked={showTranscriptionPreview} onChange={setShowTranscriptionPreview} />
-        </SettingsRow>
-      </SettingsPanelRow>
-    </SettingsPanel>
-  );
-
-  const renderParakeetStreamingToggle = () => (
-    <SettingsPanel>
-      <SettingsPanelRow>
-        <SettingsRow
-          label={t("settingsPage.transcription.parakeetStreamingBeta")}
-          description={t("settingsPage.transcription.parakeetStreamingBetaDescription")}
-          badge={t("common.beta")}
-        >
-          <Toggle checked={parakeetStreamingBeta} onChange={setParakeetStreamingBeta} />
         </SettingsRow>
       </SettingsPanelRow>
     </SettingsPanel>
@@ -336,9 +297,6 @@ function TranscriptionSection({
       {transcriptionMode === "local" && (
         <>
           {renderTranscriptionPicker("local")}
-          {localTranscriptionProvider === "nvidia" &&
-            selectedParakeetModelSupportsStreaming &&
-            renderParakeetStreamingToggle()}
           {renderPreviewToggle()}
         </>
       )}
@@ -521,6 +479,52 @@ function SpeechToTextTabs({
       <TabPanel active={tab === "dictation"}>{renderDictation()}</TabPanel>
       <TabPanel active={tab === "noteRecording"}>{renderNoteRecording()}</TabPanel>
       <TabPanel active={tab === "upload"}>{renderUpload()}</TabPanel>
+    </div>
+  );
+}
+
+export function DictationVadTabs({
+  initialTab,
+  renderPreviewVadSettings,
+  renderWhisperVadSettings,
+}: {
+  initialTab?: "live" | "silero";
+  renderPreviewVadSettings: () => React.ReactNode;
+  renderWhisperVadSettings?: () => React.ReactNode;
+}) {
+  const { t } = useTranslation();
+  const VAD_TABS = ["live", "silero"] as const;
+  const [tab, setTab] = useSubTab<"live" | "silero">(
+    "settings.dictationVadTab",
+    VAD_TABS,
+    initialTab
+  );
+
+  if (!renderWhisperVadSettings) {
+    return <div className="space-y-4">{renderPreviewVadSettings()}</div>;
+  }
+
+  const subTabs = [
+    { id: "live", name: t("settingsPage.speechToText.vadTabs.live") },
+    { id: "silero", name: t("settingsPage.speechToText.vadTabs.silero") },
+  ];
+
+  return (
+    <div className="space-y-4">
+      <ProviderTabs
+        providers={subTabs}
+        selectedId={tab}
+        onSelect={(id) => setTab(id as "live" | "silero")}
+        renderIcon={(id) =>
+          id === "live" ? (
+            <Radio className="w-3.5 h-3.5" />
+          ) : (
+            <AudioWaveform className="w-3.5 h-3.5" />
+          )
+        }
+      />
+      <TabPanel active={tab === "live"}>{renderPreviewVadSettings()}</TabPanel>
+      <TabPanel active={tab === "silero"}>{renderWhisperVadSettings()}</TabPanel>
     </div>
   );
 }
@@ -710,8 +714,6 @@ export default function SettingsPage({
     setPauseMediaOnDictation,
     showTranscriptionPreview,
     setShowTranscriptionPreview,
-    parakeetStreamingBeta,
-    setParakeetStreamingBeta,
     autoPasteEnabled,
     setAutoPasteEnabled,
     keepTranscriptionInClipboard,
@@ -758,11 +760,34 @@ export default function SettingsPage({
     setWhisperVadSpeechPadMs,
     whisperVadSamplesOverlap,
     setWhisperVadSamplesOverlap,
+    previewVadMinSpeechDurationMs,
+    setPreviewVadMinSpeechDurationMs,
+    previewVadMinSilenceDurationMs,
+    setPreviewVadMinSilenceDurationMs,
+    previewVadSpeechPadMs,
+    setPreviewVadSpeechPadMs,
+    previewVadMaxSpeechDurationS,
+    setPreviewVadMaxSpeechDurationS,
+    previewVadSamplesOverlap,
+    setPreviewVadSamplesOverlap,
+    previewVadEnergyThreshold,
+    setPreviewVadEnergyThreshold,
+    previewVadMinSegmentRms,
+    setPreviewVadMinSegmentRms,
+    previewVadNoiseFloorFactor,
+    setPreviewVadNoiseFloorFactor,
+    previewVadNoiseFloorAlpha,
+    setPreviewVadNoiseFloorAlpha,
+    previewVadMaxMerges,
+    setPreviewVadMaxMerges,
+    previewVadMaxMergedMs,
+    setPreviewVadMaxMergedMs,
   } = useSettings();
 
   const voiceAgentKey = useSettingsStore((s) => s.voiceAgentKey);
   const setVoiceAgentKey = useSettingsStore((s) => s.setVoiceAgentKey);
   const resetWhisperVad = useSettingsStore((s) => s.resetWhisperVad);
+  const resetPreviewVadDefaults = useSettingsStore((s) => s.resetPreviewVadDefaults);
 
   const { t, i18n } = useTranslation();
   const { toast } = useToast();
@@ -772,7 +797,6 @@ export default function SettingsPage({
     typeof navigator !== "undefined" && /Windows/i.test(navigator.userAgent)
       ? "%USERPROFILE%\\.cache\\ektoswhispr"
       : "~/.cache/ektoswhispr";
-
 
   const { checkWhisperInstallation } = useWhisper();
   const permissionsHook = usePermissions(showAlertDialog);
@@ -1120,7 +1144,6 @@ export default function SettingsPage({
     return () => cleanup?.();
   }, [toast, t, setActivationMode]);
 
-
   const resetAccessibilityPermissions = () => {
     const message = t("settingsPage.permissions.resetAccessibility.description");
 
@@ -1383,6 +1406,205 @@ export default function SettingsPage({
             <Button variant="ghost" size="sm" onClick={resetWhisperVad}>
               <RotateCw className="mr-1.5 h-3.5 w-3.5" />
               {t("settingsPage.transcription.vad.resetDefaults")}
+            </Button>
+          </div>
+        </SettingsPanelRow>
+      </SettingsPanel>
+    </div>
+  );
+
+  const renderPreviewVadSettings = () => (
+    <div>
+      <SectionHeader
+        title={t("settingsPage.transcription.previewVad.title")}
+        description={t("settingsPage.transcription.previewVad.description")}
+      />
+      <SettingsPanel>
+        <SettingsPanelRow>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 w-full">
+            <div className="space-y-1.5">
+              <VADLabelWithInfo
+                label={t("settingsPage.transcription.previewVad.fields.minSpeechDurationMs.label")}
+                description={t(
+                  "settingsPage.transcription.previewVad.fields.minSpeechDurationMs.info"
+                )}
+              />
+              <Input
+                type="number"
+                step="10"
+                min="20"
+                max="500"
+                value={previewVadMinSpeechDurationMs}
+                onChange={(e) => setPreviewVadMinSpeechDurationMs(Number(e.target.value))}
+              />
+            </div>
+            <div className="space-y-1.5">
+              <VADLabelWithInfo
+                label={t(
+                  "settingsPage.transcription.previewVad.fields.minSilenceDurationMs.label"
+                )}
+                description={t(
+                  "settingsPage.transcription.previewVad.fields.minSilenceDurationMs.info"
+                )}
+              />
+              <Input
+                type="number"
+                step="10"
+                min="100"
+                max="2000"
+                value={previewVadMinSilenceDurationMs}
+                onChange={(e) => setPreviewVadMinSilenceDurationMs(Number(e.target.value))}
+              />
+            </div>
+            <div className="space-y-1.5">
+              <VADLabelWithInfo
+                label={t("settingsPage.transcription.previewVad.fields.speechPadMs.label")}
+                description={t("settingsPage.transcription.previewVad.fields.speechPadMs.info")}
+              />
+              <Input
+                type="number"
+                step="10"
+                min="0"
+                max="500"
+                value={previewVadSpeechPadMs}
+                onChange={(e) => setPreviewVadSpeechPadMs(Number(e.target.value))}
+              />
+            </div>
+            <div className="space-y-1.5">
+              <VADLabelWithInfo
+                label={t(
+                  "settingsPage.transcription.previewVad.fields.maxSpeechDurationS.label"
+                )}
+                description={t(
+                  "settingsPage.transcription.previewVad.fields.maxSpeechDurationS.info"
+                )}
+              />
+              <Input
+                type="number"
+                step="1"
+                min="5"
+                max="60"
+                value={previewVadMaxSpeechDurationS}
+                onChange={(e) => setPreviewVadMaxSpeechDurationS(Number(e.target.value))}
+              />
+            </div>
+            <div className="space-y-1.5">
+              <VADLabelWithInfo
+                label={t("settingsPage.transcription.previewVad.fields.samplesOverlap.label")}
+                description={t(
+                  "settingsPage.transcription.previewVad.fields.samplesOverlap.info"
+                )}
+              />
+              <Input
+                type="number"
+                step="0.05"
+                min="0"
+                max="0.95"
+                value={previewVadSamplesOverlap}
+                onChange={(e) => setPreviewVadSamplesOverlap(Number(e.target.value))}
+              />
+            </div>
+            <div className="space-y-1.5">
+              <VADLabelWithInfo
+                label={t("settingsPage.transcription.previewVad.fields.energyThreshold.label")}
+                description={t(
+                  "settingsPage.transcription.previewVad.fields.energyThreshold.info"
+                )}
+              />
+              <Input
+                type="number"
+                step="0.001"
+                min="0.001"
+                max="0.05"
+                value={previewVadEnergyThreshold}
+                onChange={(e) => setPreviewVadEnergyThreshold(Number(e.target.value))}
+              />
+            </div>
+            <div className="space-y-1.5">
+              <VADLabelWithInfo
+                label={t("settingsPage.transcription.previewVad.fields.minSegmentRms.label")}
+                description={t(
+                  "settingsPage.transcription.previewVad.fields.minSegmentRms.info"
+                )}
+              />
+              <Input
+                type="number"
+                step="0.0005"
+                min="0.0005"
+                max="0.05"
+                value={previewVadMinSegmentRms}
+                onChange={(e) => setPreviewVadMinSegmentRms(Number(e.target.value))}
+              />
+            </div>
+            <div className="space-y-1.5">
+              <VADLabelWithInfo
+                label={t(
+                  "settingsPage.transcription.previewVad.fields.noiseFloorFactor.label"
+                )}
+                description={t(
+                  "settingsPage.transcription.previewVad.fields.noiseFloorFactor.info"
+                )}
+              />
+              <Input
+                type="number"
+                step="0.5"
+                min="1"
+                max="10"
+                value={previewVadNoiseFloorFactor}
+                onChange={(e) => setPreviewVadNoiseFloorFactor(Number(e.target.value))}
+              />
+            </div>
+            <div className="space-y-1.5">
+              <VADLabelWithInfo
+                label={t("settingsPage.transcription.previewVad.fields.noiseFloorAlpha.label")}
+                description={t(
+                  "settingsPage.transcription.previewVad.fields.noiseFloorAlpha.info"
+                )}
+              />
+              <Input
+                type="number"
+                step="0.01"
+                min="0.01"
+                max="0.5"
+                value={previewVadNoiseFloorAlpha}
+                onChange={(e) => setPreviewVadNoiseFloorAlpha(Number(e.target.value))}
+              />
+            </div>
+            <div className="space-y-1.5">
+              <VADLabelWithInfo
+                label={t("settingsPage.transcription.previewVad.fields.maxMerges.label")}
+                description={t("settingsPage.transcription.previewVad.fields.maxMerges.info")}
+              />
+              <Input
+                type="number"
+                step="1"
+                min="0"
+                max="10"
+                value={previewVadMaxMerges}
+                onChange={(e) => setPreviewVadMaxMerges(Number(e.target.value))}
+              />
+            </div>
+            <div className="space-y-1.5">
+              <VADLabelWithInfo
+                label={t("settingsPage.transcription.previewVad.fields.maxMergedMs.label")}
+                description={t("settingsPage.transcription.previewVad.fields.maxMergedMs.info")}
+              />
+              <Input
+                type="number"
+                step="1000"
+                min="5000"
+                max="60000"
+                value={previewVadMaxMergedMs}
+                onChange={(e) => setPreviewVadMaxMergedMs(Number(e.target.value))}
+              />
+            </div>
+          </div>
+        </SettingsPanelRow>
+        <SettingsPanelRow>
+          <div className="flex justify-end w-full">
+            <Button variant="ghost" size="sm" onClick={resetPreviewVadDefaults}>
+              <RotateCw className="mr-1.5 h-3.5 w-3.5" />
+              {t("settingsPage.transcription.previewVad.resetDefaults")}
             </Button>
           </div>
         </SettingsPanelRow>
@@ -2351,7 +2573,6 @@ EOF`,
                 </SettingsPanelRow>
               </SettingsPanel>
             </div>
-
           </div>
         );
 
@@ -2865,13 +3086,18 @@ EOF`,
                   setRemoteTranscriptionModel={setRemoteTranscriptionModel}
                   showTranscriptionPreview={showTranscriptionPreview}
                   setShowTranscriptionPreview={setShowTranscriptionPreview}
-                  parakeetStreamingBeta={parakeetStreamingBeta}
-                  setParakeetStreamingBeta={setParakeetStreamingBeta}
                   toast={toast}
                 />
-                {transcriptionMode === "local" &&
-                  localTranscriptionProvider !== "nvidia" &&
-                  renderWhisperVadSettings()}
+                {transcriptionMode === "local" && (
+                  <DictationVadTabs
+                    renderPreviewVadSettings={renderPreviewVadSettings}
+                    renderWhisperVadSettings={
+                      localTranscriptionProvider !== "nvidia"
+                        ? renderWhisperVadSettings
+                        : undefined
+                    }
+                  />
+                )}
               </div>
             )}
             renderNoteRecording={() => (

@@ -60,3 +60,35 @@ test("Llama 3.1 Nemotron Nano 8B is registered under the existing llama provider
   assert.equal(model.providerId, "llama");
   assert.ok(model.sizeBytes < FIVE_GB, "sizeBytes must be under the 5GB ceiling");
 });
+
+// Registry regression guard (docs/specs/audio-transcription-batching.md, Option A
+// decision): the three `runtime: "online"` Parakeet models have no offline/batch
+// sherpa-onnx execution path and were removed from the product entirely. Guards
+// against accidentally reintroducing a streaming-only model without an equivalent
+// batch/offline execution path.
+test("modelRegistryData.json contains zero runtime:\"online\" Parakeet entries", () => {
+  const parakeetModels = modelRegistryData.parakeetModels || {};
+  const onlineRuntimeModels = Object.entries(parakeetModels).filter(
+    ([, model]) => model.runtime === "online"
+  );
+  assert.deepEqual(
+    onlineRuntimeModels.map(([id]) => id),
+    [],
+    "no Parakeet model may have runtime:\"online\" — see Design §13"
+  );
+});
+
+test("the three removed online-runtime Parakeet model IDs no longer exist in the registry", () => {
+  const parakeetModels = modelRegistryData.parakeetModels || {};
+  for (const removedId of [
+    "nemotron-speech-streaming-en-0.6b",
+    "nemotron-3.5-asr-streaming-0.6b",
+    "nemotron-3.5-asr-streaming-0.6b-1120ms",
+  ]) {
+    assert.equal(
+      parakeetModels[removedId],
+      undefined,
+      `${removedId} must not exist in the registry`
+    );
+  }
+});

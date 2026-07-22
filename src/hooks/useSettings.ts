@@ -27,7 +27,6 @@ export interface TranscriptionSettings {
   snippets: Snippet[];
   assemblyAiStreaming: boolean;
   showTranscriptionPreview: boolean;
-  parakeetStreamingBeta: boolean;
 }
 
 export interface CleanupSettings {
@@ -353,8 +352,6 @@ function useSettingsInternal() {
     setAutoLearnCorrections,
     showTranscriptionPreview: store.showTranscriptionPreview,
     setShowTranscriptionPreview: store.setShowTranscriptionPreview,
-    parakeetStreamingBeta: store.parakeetStreamingBeta,
-    setParakeetStreamingBeta: store.setParakeetStreamingBeta,
     autoPasteEnabled: store.autoPasteEnabled,
     setAutoPasteEnabled: store.setAutoPasteEnabled,
     keepTranscriptionInClipboard: store.keepTranscriptionInClipboard,
@@ -383,6 +380,28 @@ function useSettingsInternal() {
     setWhisperVadSpeechPadMs: store.setWhisperVadSpeechPadMs,
     whisperVadSamplesOverlap: store.whisperVadSamplesOverlap,
     setWhisperVadSamplesOverlap: store.setWhisperVadSamplesOverlap,
+    previewVadMinSpeechDurationMs: store.previewVadMinSpeechDurationMs,
+    setPreviewVadMinSpeechDurationMs: store.setPreviewVadMinSpeechDurationMs,
+    previewVadMinSilenceDurationMs: store.previewVadMinSilenceDurationMs,
+    setPreviewVadMinSilenceDurationMs: store.setPreviewVadMinSilenceDurationMs,
+    previewVadSpeechPadMs: store.previewVadSpeechPadMs,
+    setPreviewVadSpeechPadMs: store.setPreviewVadSpeechPadMs,
+    previewVadMaxSpeechDurationS: store.previewVadMaxSpeechDurationS,
+    setPreviewVadMaxSpeechDurationS: store.setPreviewVadMaxSpeechDurationS,
+    previewVadSamplesOverlap: store.previewVadSamplesOverlap,
+    setPreviewVadSamplesOverlap: store.setPreviewVadSamplesOverlap,
+    previewVadEnergyThreshold: store.previewVadEnergyThreshold,
+    setPreviewVadEnergyThreshold: store.setPreviewVadEnergyThreshold,
+    previewVadMinSegmentRms: store.previewVadMinSegmentRms,
+    setPreviewVadMinSegmentRms: store.setPreviewVadMinSegmentRms,
+    previewVadNoiseFloorFactor: store.previewVadNoiseFloorFactor,
+    setPreviewVadNoiseFloorFactor: store.setPreviewVadNoiseFloorFactor,
+    previewVadNoiseFloorAlpha: store.previewVadNoiseFloorAlpha,
+    setPreviewVadNoiseFloorAlpha: store.setPreviewVadNoiseFloorAlpha,
+    previewVadMaxMerges: store.previewVadMaxMerges,
+    setPreviewVadMaxMerges: store.setPreviewVadMaxMerges,
+    previewVadMaxMergedMs: store.previewVadMaxMergedMs,
+    setPreviewVadMaxMergedMs: store.setPreviewVadMaxMergedMs,
     cloudBackupEnabled: store.cloudBackupEnabled,
     setCloudBackupEnabled: store.setCloudBackupEnabled,
     telemetryEnabled: store.telemetryEnabled,

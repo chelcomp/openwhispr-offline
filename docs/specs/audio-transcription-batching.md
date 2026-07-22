@@ -1,7 +1,43 @@
 # Dictation Audio Transcription: Progressive VAD Batching with Confidence-Gated Retry
 
 ## Status
-Draft
+Implemented
+
+## TL;DR
+
+- Local Dictation transcription gets one shared, engine-agnostic mechanism for both Whisper and
+  Parakeet: progressive VAD-chunked transcription during recording, confidence-gated per chunk,
+  with bounded merge-and-retry on low confidence, falling back to a single full-clip
+  re-transcription only when the whole session's aggregate quality is poor. This generalizes a
+  mechanism that already exists today for Whisper only, behind an opt-in "preview" toggle
+  (`showTranscriptionPreview`), to be the *default, always-on* Dictation behavior for both engines.
+- **Resolved decision (project owner, 2026-07-20)**: the three shipped Parakeet models with
+  `runtime: "online"` (`nemotron-speech-streaming-en-0.6b`, `nemotron-3.5-asr-streaming-0.6b`,
+  `nemotron-3.5-asr-streaming-0.6b-1120ms`) — which have no offline/batch sherpa-onnx execution
+  path and were the spec's one blocking open question — are **removed from the product entirely**
+  (Option A). There is now exactly **one** unified batching/quality mechanism across all local
+  engines, with no per-model streaming exception anywhere.
+- Concrete decisions:
+  - The three online-runtime models are deleted from `modelRegistryData.json`, Settings UI, and
+    `download-sherpa-onnx.js`. Existing users on one of these models are migrated on next launch to
+    `parakeet-tdt-0.6b-v3` (both the main-process `.env`/`PARAKEET_MODEL` copy and the renderer's
+    `localStorage` copies) — no user data is lost, per CLAUDE.md's Migration Safety premise.
+  - `parakeetStreamingBeta` (setting + UI toggle) is removed, as already planned.
+  - Since no model in the product can ever have `runtime: "online"` again, the underlying
+    `sherpa-onnx-online-websocket-server` binary, its download-script entries, and
+    `ParakeetWsServer.createOnlineStream()`/`_transcribeOnline()` are now dead code with zero
+    remaining callers (Dictation, Meeting, and Upload all route through the same
+    `ParakeetWsServer.transcribe()`) — this spec now removes them too, not just the Dictation
+    preview call site.
+  - The former scope-boundary carve-out (Design §6, old Non-goals bullet "true streaming is not
+    removed") is deleted — it no longer applies to anything.
+- No blocking open questions remain. This spec is ready for the project owner to review and flip
+  `Status` to `Approved`.
+- Practical impact: users see faster, higher-quality Dictation pasting for both Whisper and
+  Parakeet by default (no toggle needed); the three ultra-low-latency streaming Parakeet models are
+  no longer selectable (a real, acknowledged product-surface reduction, accepted by the project
+  owner in favor of one consistent, quality-first mechanism); any user previously on one of those
+  three models is auto-migrated to `parakeet-tdt-0.6b-v3` transparently on upgrade.
 
 ## Problem / Goal
 
@@ -65,17 +101,24 @@ in `src/models/modelRegistryData.json` are `runtime: "online"`: `nemotron-speech
 encoder/decoder/joiner ONNX graphs are exported for sherpa-onnx's *online* (streaming, causal,
 chunked-state) runtime — there is no offline-websocket-server binary or model export that can serve
 them; "no true streaming, ever" cannot be honored for these three specific models without removing
-support for them from the product. That is a different, larger, and separate decision from "prefer
-batching over streaming as the Dictation speed mechanism," and this spec does **not** make it
-unilaterally — see Design §6 and Open Questions.
+support for them from the product. That was a different, larger, and separate decision from "prefer
+batching over streaming as the Dictation speed mechanism," which this spec could not make
+unilaterally — it was escalated to the project owner as Open Question #1, with three options laid
+out in Design §12. **The project owner has now resolved it directly: Option A — drop the three
+models from the product entirely.** See Design §12/§13 and Open Questions #1 (resolved) for the
+decision record and its implementation design.
 
 ## Requirements
 
-1. **A single shared batching/confidence mechanism for both engines.** Whisper and offline-runtime
+1. **A single shared batching/confidence mechanism for both engines — this is the central, resolved
+   decision this spec exists to implement, restated in the project owner's own words: "Let's keep a
+   single logic — the same one already applied to the OpenAI [local Whisper] models."** Whisper and
    Parakeet dictation both go through the same VAD-segmentation → per-chunk transcribe →
-   confidence-gate → commit-or-merge-and-retry pipeline, via one shared, engine-agnostic module.
-   The only engine-specific code permitted is the confidence-signal-extraction (Requirement 3) and
-   the raw `transcribe(pcmChunk)` call each engine already exposes.
+   confidence-gate → commit-or-merge-and-retry pipeline, via one shared, engine-agnostic module,
+   with **no per-model or per-engine exception** (this supersedes the earlier draft's carve-out for
+   `runtime: "online"` Parakeet models — see Requirement 9 and Open Questions #1). The only
+   engine-specific code permitted is the confidence-signal-extraction (Requirement 3) and the raw
+   `transcribe(pcmChunk)` call each engine already exposes.
 2. **Progressive, VAD-chunked transcription during recording, not fixed-interval polling of a
    growing buffer.** Replace Parakeet's fixed-3-second-timer/growing-buffer preview mechanism with
    the same energy-RMS VAD segmentation Whisper's preview already uses (Design §1 explains why this
@@ -111,10 +154,9 @@ unilaterally — see Design §6 and Open Questions.
    window" toggle; it no longer gates whether the progressive batching pipeline itself runs.
 7. **Retire the Parakeet online-streaming beta path from Dictation** (`parakeetStreamingBeta`
    setting, its Settings UI toggle, `createOnlineStream()`/`_transcribeOnline()` call sites reached
-   from the dictation-preview handlers) per decision #1 — see Design §6 for the precise, narrower
-   scope of what's actually retired (the Dictation fast-path call site) versus what is explicitly
-   *not* touched (the three online-runtime models' baseline, non-progressive transcription, which
-   has no alternative implementation available).
+   from the dictation-preview handlers). Strengthened by the resolved decision: this is no longer a
+   narrow call-site retirement leaving the underlying online-runtime models and primitives in place
+   — see Requirement 9.
 8. **Regression tests proving, at minimum:**
    a. VAD-based chunk boundary detection produces reasonable segment splits on a sample audio
       fixture.
@@ -124,24 +166,64 @@ unilaterally — see Design §6 and Open Questions.
       acceptable confidence within budget (aggregate `lowQualityRatio`/`coverageRatio` gate).
    d. Both Whisper and offline-runtime Parakeet go through the identical batching module and
       code path — no per-engine special-casing beyond the confidence-signal-extraction functions.
+9. **[New, per resolved Option A decision] Remove the three `runtime: "online"` Parakeet models and
+   their now-dead-code primitives entirely** — not just exclude them from the new mechanism:
+   - Delete `nemotron-speech-streaming-en-0.6b`, `nemotron-3.5-asr-streaming-0.6b`, and
+     `nemotron-3.5-asr-streaming-0.6b-1120ms` from `src/models/modelRegistryData.json`'s
+     `localProviders` Parakeet list, so they no longer appear in the Settings model dropdown.
+   - In `scripts/download-sherpa-onnx.js`, delete the `onlineBinaryPath`/`onlineOutputName`
+     properties from all 6 per-platform config objects (`BINARIES`'s 4 platform entries and
+     `CUDA_BINARIES`'s 2 entries) — these are already optional, falsy-guarded properties (the same
+     pattern as `diarizeBinaryPath`/`diarizeOutputName` for platforms without a diarization binary),
+     so deleting them is sufficient; `downloadBinary()`'s "Online WebSocket server" extraction block
+     (gated on `config.onlineBinaryPath && onlineOutputPath`) then never runs and can be deleted too.
+   - Remove the now-uncallable primitives in `ParakeetWsServer`
+     (`src/helpers/parakeetWsServer.js`) **by symbol, not line number** (line numbers drift on the
+     next unrelated edit to this file — a prior draft of this requirement cited specific lines that
+     turned out to be wrong, e.g. attributing a line inside `isCudaBinaryAvailable()` to
+     `getWsBinaryPath()`): `createOnlineStream()`, `_transcribeOnline()`, and `_warmUpOnline()` in
+     full; the `runtime === "online"` / `modelRuntime === "online"` branches inside
+     `getWsBinaryPath()`, `isCudaBinaryAvailable()`, `_doStart()` (both its launch-args branch and
+     its `_warmUp()`-vs-`_warmUpOnline()` dispatch), `transcribe()`, and `hasAnyWsBinary()`; and every
+     module-level constant/import whose only remaining consumer is one of the above (at minimum
+     `TAIL_SILENCE`, `ONLINE_CHUNK_BYTES`, `ONLINE_FINISH_TIMEOUT_MS`, and the `createOnlineAccumulator`
+     import from `parakeetWsResult.js` — `createOnlineAccumulator`'s export there becomes unused too
+     and should be dropped in the same pass, verified by grepping for its remaining callers first).
+     Also remove `parakeet.js`'s `supportsOnlineStreaming()` and the `sherpa-onnx-online-ws-` fragment
+     from the `parakeet` array in `sidecarReaper.js`'s `EXPECTED_BINARY_FRAGMENTS`.
+     **Verification step, not just a list to follow**: after removal, grep
+     `parakeetWsServer.js` (and `parakeetWsResult.js`) for `online`/`Online` — anything the grep still
+     turns up is either a deliberate remnant (e.g. the `modelRuntime` field itself, which stays a
+     general two-value field even though only `"offline"` is reachable now) or something this list
+     missed. This matters because standard lint/typecheck does **not** flag unused class methods, so
+     an orphaned `_warmUpOnline()`-style leftover would silently pass `pr-reviewer`'s automated gates
+     without this explicit check.
+   - Confirmed via Grep (this spec's own research, Design §11/§13): Dictation, Meeting, and Upload all
+     call the same `ParakeetWsServer.transcribe()`, which — once no model can ever have
+     `runtime: "online"` — simplifies to always route through `_transcribeOffline()`; there is no
+     remaining caller of the online-path primitives anywhere in the app. See Design §13 for the full
+     removal/migration design.
+10. **[New, per resolved Option A decision] Migrate existing users off the removed model IDs with no
+    data loss**, per CLAUDE.md's Migration Safety premise — see Design §13 and Requirement 9's
+    detail. This is not optional cleanup; it is a hard requirement because real users may currently
+    be persisted on one of the three removed model IDs in both the main-process `.env` and the
+    renderer's `localStorage`.
 
 ## Non-goals
 
-- **True streaming for the three `runtime: "online"` Parakeet models is not removed.** These
-  models have no non-streaming sherpa-onnx execution path available in this codebase; removing
-  `createOnlineStream()`/`_transcribeOnline()` from `ParakeetWsServer.transcribe()` entirely would
-  drop product support for them, which is a separate, larger product decision this spec does not
-  make. They are simply **excluded** from the new progressive-batching mechanism (no VAD chunking,
-  no confidence gating, no committed fast-path text) and keep exactly today's one-shot-at-release
-  behavior, same as before this spec. This is a new, explicit Speed-premise exception, the same
-  class as CLAUDE.md §3's documented medium/large-Whisper exception — see Design §6 and Open
-  Questions #1.
-- **Removing the `sherpa-onnx-online-websocket-server` binary, its download-script entries, or
-  `ParakeetWsServer.createOnlineStream()`/`_transcribeOnline()` as low-level primitives.** They stay
-  in place because the three online-runtime models still need them for their baseline
-  transcription (see above). Only the Dictation-preview call site
-  (`ipcHandlers.js`'s `provider === "nvidia" && streamingBeta` branch) and the
-  `parakeetStreamingBeta` setting are retired.
+- **~~True streaming for the three `runtime: "online"` Parakeet models is not removed.~~ Superseded
+  by the resolved Option A decision**: the three models are removed from the product entirely (see
+  Requirement 9, Design §13, Open Questions #1), so there is no remaining streaming exception to
+  preserve.
+- **~~Removing the `sherpa-onnx-online-websocket-server` binary, its download-script entries, or
+  `ParakeetWsServer.createOnlineStream()`/`_transcribeOnline()` as low-level primitives.~~ Superseded
+  by the resolved Option A decision**: this spec now *does* remove these primitives, since Option A
+  leaves them with zero remaining callers anywhere in the app (Dictation, Meeting, and Upload all
+  route through the same `ParakeetWsServer.transcribe()`). See Requirement 9 and Design §13.
+- **Option C (routing the three online models' VAD-chunked/merge-retry calls through independent,
+  state-free `_transcribeOnline()` invocations per chunk, so they gain the new mechanism without
+  true streaming) is not adopted.** It was a technically-feasible alternative (Design §12) but is
+  mooted by removing the models entirely — there's nothing left to route.
 - **Meeting transcription and Upload transcription are out of scope.** Meeting already has its own,
   separate confidence-gated chunk pipeline (`NO_SPEECH_THRESHOLD` segment filtering,
   `avg_logprob`/`compression_ratio` merge-once logic around `ipcHandlers.js:5230-6500`) built for a
@@ -189,6 +271,14 @@ Since Parakeet has no native VAD to reuse, and the existing JS VAD is already en
 practice, **the answer to "should VAD happen at the shared app/pipeline level" is yes, and it
 already does for Whisper — this spec generalizes the same JS-level VAD to Parakeet** rather than
 inventing a second chunking mechanism. This directly satisfies Requirement 2.
+
+> **Superseded note**: at the time this spec was implemented, the JS energy-RMS VAD's
+> `minSpeechDurationMs`/`minSilenceDurationMs` (and other fields) were sourced from
+> `_resolveWhisperVadOptions("dictation")` — i.e. borrowed from the Silero VAD settings
+> described above. `docs/specs/live-preview-vad-sensitivity.md` (implemented) replaced this
+> with a separate, independent, user-visible "Live Preview Sensitivity" settings namespace;
+> the energy-RMS VAD no longer reads any Silero-sourced value for any field. See that spec
+> for the current, correct config-sourcing design.
 
 ### 2. Confidence signal per engine — what was actually found
 
@@ -290,10 +380,11 @@ confidence (defeats the bounded-retry requirement).
   `this.parakeetManager.transcribeLocalParakeet(wav, {model})`, and returns
   `{ text, quality: summarizeParakeetQuality(text, bufferRms(pcmBuffer)) }`) and
   `isLowQuality: isParakeetSegmentLowQuality` — the same wiring shape already used for Whisper, just
-  with different callbacks (Requirement 1/8d). If the model is online-runtime, create **no**
-  session at all (Design §6): the handler simply returns success with no batching state, so
-  `stop-dictation-preview` later returns `streamingText: ""` and the renderer falls back to
-  today's unchanged one-shot-at-release Parakeet behavior for that model.
+  with different callbacks (Requirement 1/8d). **Note (per resolved Option A decision, Design §13):
+  once Requirement 9's model removal lands, no model can ever have `runtime: "online"` again, so
+  this `getModelRuntime(model) !== "online"` guard becomes unconditionally true** — spec-executor's
+  call whether to simplify/remove the now-dead-condition check or leave it as harmless defensive
+  code against a future model addition.
 - Add a `showOverlay` boolean to the handler's params (renderer passes the current
   `showTranscriptionPreview` setting value explicitly, decoupled from whether a session is created
   at all — Requirement 6). Every `windowManager.showTranscriptionPreview()` /
@@ -311,20 +402,17 @@ confidence (defeats the bounded-retry requirement).
   `transcribeDictationPreviewChunk()` (the fixed-3-second-timer function) — all dead once both
   engines share one VAD session.
 
-### 6. Scope boundary for the three `runtime: "online"` Parakeet models
+### 6. ~~Scope boundary for the three `runtime: "online"` Parakeet models~~ — retired
 
-To make the boundary from Non-goals concrete and impossible to miss during implementation:
-`ParakeetWsServer.transcribe()` keeps routing to `_transcribeOnline()`/`createOnlineStream()`
-exactly as it does today whenever the loaded model's runtime is `"online"` — this code path is
-**not modified by this spec** and continues to serve the final, one-shot, non-progressive
-transcription for `nemotron-speech-streaming-en-0.6b`, `nemotron-3.5-asr-streaming-0.6b`, and
-`nemotron-3.5-asr-streaming-0.6b-1120ms` (Meeting/Upload/Dictation all unaffected for these three
-models). What changes is only that the **Dictation-preview/batching call site** never invokes it
-(§5's model-runtime check), so these three models simply don't participate in progressive batching
-— they keep today's exact behavior, full stop. `SettingsPage.tsx`'s
-`selectedParakeetModelSupportsStreaming` check and its `parakeetStreamingBeta` auto-disable
-`useEffect` are removed along with the setting itself (Requirement 7), since there is no longer a
-beta toggle to auto-disable.
+This section originally carved out an exception for the three `runtime: "online"` Parakeet models,
+letting them keep their existing one-shot streaming behavior outside the new batching mechanism.
+**That carve-out no longer applies**: the resolved Option A decision (Open Questions #1) removes
+these three models from the product entirely, so there is nothing left to draw a scope boundary
+around. See Design §13 for the removal/migration design that supersedes this section.
+
+`SettingsPage.tsx`'s `selectedParakeetModelSupportsStreaming` check and its `parakeetStreamingBeta`
+auto-disable `useEffect` are removed along with the setting itself (Requirement 7), since there is
+no longer a beta toggle to auto-disable, and no online-runtime model left to check for.
 
 ### 7. `audioManager.js` changes
 
@@ -334,7 +422,10 @@ beta toggle to auto-disable.
   "online")` (a small renderer-side helper mirrors `parakeetModelInfo.js`'s runtime lookup via the
   already-imported `ModelRegistry`/`PARAKEET_MODEL_INFO`), independent of
   `showTranscriptionPreview`. Pass `showOverlay: !!showTranscriptionPreview` through
-  `startDictationPreview`'s options (§5).
+  `startDictationPreview`'s options (§5). **Note (per resolved Option A decision)**: once
+  Requirement 9's model removal lands, `getModelRuntime(parakeetModel) !== "online"` is
+  unconditionally true here too, for the same reason as §5 — same "simplify or leave as dead code"
+  call for spec-executor.
 - `_resolveStreamingWhisperText`/`_resolveStreamingParakeetText`: drop the
   `settings.showTranscriptionPreview`/`settings.parakeetStreamingBeta` gates (the mechanism is now
   always eligible for eligible engine/model combos); keep the `metadata?.stopPreviewResult`
@@ -375,6 +466,17 @@ already accounts for; no change is needed there, but implementers of *this* spec
 spec's Design §3 (`activeRequestCount`, `resetIdleTimer()`) to confirm the new call sites wrap
 correctly once both specs are implemented, in whichever order they land.
 
+**Strengthened note (per resolved Option A decision)**: this is no longer just a caller-narrowing
+concern. `transcription-engine-lifecycle.md`'s Design §3 currently describes
+`createOnlineStream()` as "used directly for realtime dictation preview" — but Requirement 9 of
+*this* spec removes `createOnlineStream()`/`_transcribeOnline()` entirely as dead code (zero
+remaining callers once the three online-runtime models are gone). Whoever next touches
+`transcription-engine-lifecycle.md` needs to make a real edit there, not just note a narrower
+caller — the primitive itself won't exist anymore. (Separately, that spec's own header already
+marks it "Superseded by `docs/specs/on-demand-model-lifecycle.md`" and "never implemented" — this
+note is for whoever maintains its historical record or the superseding doc, not a claim that this
+spec depends on it being implemented.)
+
 ### 10. Performance note (CLAUDE.md §2)
 
 This spec knowingly increases the number of small transcription calls issued **during active
@@ -393,6 +495,11 @@ this is the one piece of the mechanism that legitimately stays gated behind the 
 does not affect the committed/pasted transcript either way).
 
 ### 11. Resolved investigation: do the three `runtime: "online"` Parakeet models have *any* offline/batch inference path?
+
+**This investigation's findings directly support the project owner's Option A decision recorded in
+§12** — the confirmed absence of any offline/batch path for these three models is precisely why
+"keep only models that mandatorily support batch and offline" (the project owner's own framing)
+required removing them rather than accommodating them.
 
 This was the open blocker flagged for further conversation with the project owner
 ("vamos conversar mais sobre este item"). The codebase and its vendored sherpa-onnx binaries were
@@ -446,12 +553,20 @@ what's published upstream for the checkpoint export. "No streaming, ever" cannot
 without either (a) dropping the models, or (b) changing what "no streaming" means for their specific
 call path. Both are legitimate, materially different product decisions — see §12.
 
-### 12. Resolution options for the three online-runtime models (pending project owner decision)
+### 12. Resolution options for the three online-runtime models
 
-Three options were evaluated. **This spec does not select one** — per this repo's CLAUDE.md rule
-that decisions of this consequence are made directly by the project owner in conversation, not
-relayed through a subagent. This section exists to make that conversation concrete, not to
-pre-empt it.
+> **DECISION (project owner, 2026-07-20): Option A.** In the project owner's own words: *"vamos usar
+> somente modelos que suportem obrigatoriamente batch e offline... remova os demais... remova a
+> flag beta stream... vamos manter uma unica logica que é a que esta aplicada para os modelos
+> openAI"* — i.e. "let's use only models that mandatorily support batch and offline... remove the
+> others... remove the streaming beta flag... let's keep a single logic — the same one already
+> applied to the OpenAI [local Whisper] models." This resolves Open Questions #1. See Design §13 for
+> the implementation design. The A/B/C options and tradeoffs below are kept as the historical record
+> of what was evaluated before this decision — the old "Recommendation: Option B" paragraph at the
+> end of this section is **superseded** and no longer reflects this spec's direction.
+
+Three options were evaluated before the decision above. This section exists to make that
+conversation concrete, not to pre-empt it (it no longer needs to, since the decision is now made).
 
 **Option A — Drop the three models from the product entirely.**
 Remove them from `modelRegistryData.json`, their Settings UI entries, and download-script support;
@@ -508,16 +623,60 @@ Requirement 1, since the server-routing/session-lifecycle also differs by one mo
 Implementation cost is moderate (the raw mechanism already exists in `_transcribeOnline()`); the
 open risk is entirely about output quality, which can only be settled by trying it.
 
-**Recommendation: Option B, pending project owner decision.** It is the only option with no accuracy
-risk and no product-surface loss, at the cost of an explicitly-documented, narrow exception to the
-letter of decision #1 — the same tradeoff shape CLAUDE.md already accepts for medium/large Whisper
-models. Option C is worth prototyping as a *follow-up*, once the core mechanism in this spec has
-shipped and there's a live baseline to measure accuracy against, precisely because its main
-open question (does chunking hurt these specific models' accuracy) cannot be answered without
-running it. Option A should only be chosen if the project owner independently decides the product no
-longer wants to offer these three models regardless of this spec — that is a strictly larger
-decision than what this spec was scoped to make. **This recommendation is not a decision** — see
-Open Questions #1.
+**~~Recommendation: Option B, pending project owner decision.~~ Superseded — see the DECISION callout
+at the top of this section.** This paragraph originally recommended Option B as the lowest-risk
+interim answer, with Option C flagged as a follow-up prototype and Option A reserved for a
+project-owner-driven product decision. The project owner has since made exactly that call directly:
+Option A. This paragraph is kept, struck through, as historical record of the reasoning that was
+in play before the decision — see Design §13 for what actually gets implemented now.
+
+### 13. Model removal & migration design (Option A implementation)
+
+This section is the concrete design that supersedes old Design §6 and implements Requirements 9/10.
+
+**Registry, UI, and download-script removal:**
+- Delete the three `runtime: "online"` entries (`nemotron-speech-streaming-en-0.6b`,
+  `nemotron-3.5-asr-streaming-0.6b`, `nemotron-3.5-asr-streaming-0.6b-1120ms`) from
+  `src/models/modelRegistryData.json`'s `localProviders` Parakeet list. The Settings model dropdown
+  reads from the registry, so it drops them automatically; also remove any remaining
+  `runtime === "online"`-specific badge/copy in `SettingsPage.tsx` tied to these entries (largely
+  already covered by the `selectedParakeetModelSupportsStreaming` removal in §6/§8).
+- In `scripts/download-sherpa-onnx.js`, delete the `onlineBinaryPath`/`onlineOutputName` properties
+  from all 6 per-platform config objects (`BINARIES`'s 4 entries, `CUDA_BINARIES`'s 2 entries) and
+  the "Online WebSocket server" extraction block in `downloadBinary()` that's gated on them — see
+  Requirement 9 for why deleting the properties alone is sufficient (they're already optional/
+  falsy-guarded, same pattern as `diarizeBinaryPath`/`diarizeOutputName`).
+
+**Code removal (dead once the three models are gone) — see Requirement 9 for the full symbol list
+and the mandatory post-removal grep-verification step (line-number citations are deliberately not
+used here; they drift on unrelated edits and a prior draft's line citations for this exact file were
+found to be wrong during spec review).** Summary: `createOnlineStream()`/`_transcribeOnline()`/
+`_warmUpOnline()` in full, every `runtime === "online"`/`modelRuntime === "online"` branch across
+`getWsBinaryPath()`/`isCudaBinaryAvailable()`/`_doStart()`/`transcribe()`/`hasAnyWsBinary()`, the
+constants/imports left with no remaining consumer (`TAIL_SILENCE`, `ONLINE_CHUNK_BYTES`,
+`ONLINE_FINISH_TIMEOUT_MS`, the `createOnlineAccumulator` import and its export in
+`parakeetWsResult.js`), `parakeet.js`'s `supportsOnlineStreaming()`, and the `sherpa-onnx-online-ws-`
+fragment in `sidecarReaper.js`'s `EXPECTED_BINARY_FRAGMENTS.parakeet` array. Confirmed via Grep:
+Dictation, Meeting, and Upload all call the same `ParakeetWsServer.transcribe()` entry point — there
+is no other caller of the online-path primitives anywhere in the app, so this removal is safe and
+complete, not partial.
+
+**Migration mechanics (Requirement 10):** a `REMOVED_PARAKEET_MODEL_IDS` constant (the three IDs
+above) is checked in both places a model ID can be persisted, per CLAUDE.md's "two sources of
+truth" pattern:
+- **Main process**: `environment.js`, before `parakeetManager`/server init reads the persisted
+  `PARAKEET_MODEL` `.env` value — if it matches one of the removed IDs, rewrite it to
+  `parakeet-tdt-0.6b-v3` before anything else reads it.
+- **Renderer**: `settingsStore.ts`'s `initializeSettings()` (or equivalent startup hydration path)
+  — if any of `parakeetModel`/`meetingParakeetModel`/`uploadParakeetModel` in `localStorage` match a
+  removed ID, rewrite to `parakeet-tdt-0.6b-v3`.
+- Both checks are simple, idempotent, side-effect-free besides the value swap — no transcription
+  history, notes, dictionary, or other user data is touched, satisfying CLAUDE.md's Migration
+  Safety premise. Run as a cheap check on every launch (not a one-time sentinel file like
+  `postMigrationDetector.js`'s bundle-ID migration) — an array-membership rewrite has no drift risk
+  from being re-checked repeatedly, unlike a one-time event that must not re-fire.
+- Target default is explicit: `parakeet-tdt-0.6b-v3`, the same offline model already named as the
+  default elsewhere in this spec.
 
 ## Validation Plan
 
@@ -562,15 +721,37 @@ Open Questions #1.
     (`isParakeetSegmentLowQuality`) — and assert both go through identical commit/merge/finish
     control flow (same assertions, parameterized over the two callback sets), proving no
     per-engine special-casing exists in the shared session itself.
-- **Extend `test/helpers/ipcHandlers`-style coverage** (or the smallest exercisable unit, following
-  this repo's existing `Module._load`-mocking convention) for `start-dictation-preview`: assert that
-  for a Parakeet model with `runtime: "online"`, no batching session is created (no calls to the
-  mocked `transcribeLocalParakeet` outside of the eventual full-audio-fallback path) — proving
-  Design §6's exclusion is enforced, not just documented.
-- **`npm test`** run in full to confirm no regressions in existing suites, in particular
-  `test/helpers/parakeetWsServer.test.js` (unaffected — the low-level online/offline routing itself
-  is unchanged) and `test/helpers/whisperWakeRewarm.test.js`/`transcriptionEnginePinning.test.js` if
-  the lifecycle spec has landed by the time this one is implemented.
+- **[New, per resolved Option A decision] `test/helpers/parakeetModelMigration.test.js`** (or
+  nearest existing convention): asserts (a) a persisted value equal to one of the three removed
+  model IDs is rewritten to `parakeet-tdt-0.6b-v3` on init, in both the main-process env-var path
+  (`environment.js`) and the renderer `localStorage` path (`settingsStore.ts`); (b) already-valid
+  model IDs are left untouched; (c) running the check twice (idempotency) doesn't change anything on
+  the second pass.
+- **[New, per resolved Option A decision] Registry regression guard**: assert
+  `modelRegistryData.json` contains zero `runtime: "online"` entries (guards against accidental
+  reintroduction of a streaming-only model), and assert `start-dictation-preview` for Parakeet
+  *always* creates a batching session unconditionally — replacing the old bullet below, which
+  tested a model class that no longer exists.
+  - ~~Extend `test/helpers/ipcHandlers`-style coverage... assert that for a Parakeet model with
+    `runtime: "online"`, no batching session is created... proving Design §6's exclusion is
+    enforced~~ — superseded: Design §6 is retired (§13 replaces it), and there is no longer any
+    `runtime: "online"` model to exercise this case against.
+- **[New, per resolved Option A decision] Manual grep-verification step, not just automated test
+  coverage**: per Requirement 9, after removing the online-runtime primitives from
+  `parakeetWsServer.js`/`parakeetWsResult.js`, grep both files for `online`/`Online` and confirm every
+  remaining hit is a deliberate remnant (e.g. the generic `modelRuntime` field) rather than an
+  orphaned method/constant the removal list missed. This is called out explicitly because standard
+  lint/typecheck does not flag unused class methods — an orphaned `_warmUpOnline()`-style leftover
+  would otherwise pass `npm run lint`/`npm run typecheck` silently. `pr-reviewer` should treat a
+  remaining non-deliberate hit as a FAIL, not an advisory note, same as any other incomplete-removal
+  finding.
+- **`npm test`** run in full to confirm no regressions in existing suites. **Note (per resolved
+  Option A decision)**: `test/helpers/parakeetWsServer.test.js` will need its online-routing-specific
+  test cases removed/updated as part of *this* spec's implementation (not left stale), since that
+  code path (`createOnlineStream()`/`_transcribeOnline()`) is being removed as dead code, not merely
+  left "unaffected" as originally assumed. Also check
+  `test/helpers/whisperWakeRewarm.test.js`/`transcriptionEnginePinning.test.js` if the (superseded)
+  lifecycle spec's descendant work has landed by the time this one is implemented.
 
 ### Manual
 
@@ -586,20 +767,23 @@ Open Questions #1.
    `parakeet-unified-en-0.6b`); repeat steps 1-2, confirming Parakeet now also shows progressive
    VAD-chunked commits in debug logs (not the old fixed-3-second dumb re-transcription), with or
    without the overlay.
-4. Select one of the three `runtime: "online"` models (e.g.
-   `nemotron-speech-streaming-en-0.6b`); confirm Settings no longer shows any
-   "beta streaming preview" toggle, and confirm via debug logs that Dictation for this model still
-   works exactly as before (one-shot transcription at release, using the online WS path
-   internally) — no regression, no progressive batching attempted, no crash.
-5. Speak a passage containing a known Whisper-mis-transcription-prone word/name; confirm the
+4. **[Replaces the old step 4, which tested selecting a now-removed `runtime: "online"` model]**
+   Confirm the Parakeet model dropdown in Settings no longer lists `nemotron-speech-streaming-en-0.6b`,
+   `nemotron-3.5-asr-streaming-0.6b`, or `nemotron-3.5-asr-streaming-0.6b-1120ms`, and no "beta
+   streaming preview" toggle exists anywhere in Settings.
+5. **[New]** Migration check: on a pre-upgrade build (or by manually editing `.env`'s
+   `PARAKEET_MODEL` and/or `localStorage.parakeetModel` to one of the three removed IDs), launch the
+   upgraded build and confirm it starts on `parakeet-tdt-0.6b-v3` instead — no crash, existing
+   transcription history/notes untouched, confirmed via debug logs.
+6. Speak a passage containing a known Whisper-mis-transcription-prone word/name; confirm the
    confidence-gate merge-retry is visible in debug logs (a chunk transcribed once, then merged with
    the next and re-sent) and that the eventual committed text is more correct than a naive single
    noisy chunk would have been.
-6. Force a globally poor-confidence Dictation (e.g. mumble quietly or dictate over background
+7. Force a globally poor-confidence Dictation (e.g. mumble quietly or dictate over background
    noise) and confirm via debug logs that the aggregate `lowQualityRatio`/`coverageRatio` gate
    correctly falls back to a full-clip re-transcription rather than pasting a low-confidence
    progressive result, for both Whisper and offline-runtime Parakeet.
-7. Confirm CPU usage during an active dictation with the mechanism running is not dramatically
+8. Confirm CPU usage during an active dictation with the mechanism running is not dramatically
    different from today's already-shipped Whisper-preview-on baseline (informal spot-check via Task
    Manager/Activity Monitor — this is the same code path, now always-on instead of opt-in, so no
    surprises are expected, but confirm before/after).
@@ -608,51 +792,52 @@ Open Questions #1.
 
 - **CLAUDE.md**: update the "Local Whisper Models"/"NVIDIA Parakeet Integration" sections (or add a
   new numbered subsection under "Key Implementation Details," following the existing 1-17
-  numbering) to document the progressive VAD-batching mechanism as the default Dictation behavior,
-  the confidence-gate/merge-retry policy and its bounds, the full-audio-fallback trigger, and the
-  explicit Speed-premise exception for `runtime: "online"` Parakeet models (mirroring how
-  medium/large Whisper models are already documented as an exception in §3 of the Non-Negotiable
-  Product Premises). Remove/update any remaining references to `parakeetStreamingBeta`.
+  numbering) to document the progressive VAD-batching mechanism as the default Dictation behavior
+  and the confidence-gate/merge-retry policy and its bounds, and the full-audio-fallback trigger.
+  Remove/update any remaining references to `parakeetStreamingBeta`. **Note (per resolved Option A
+  decision)**: do **not** document a Speed-premise exception for `runtime: "online"` Parakeet
+  models — that exception no longer exists, since those models are removed from the product
+  entirely. (Already verified via Grep: CLAUDE.md's existing "NVIDIA Parakeet Integration" →
+  "Available Models" list only names the two offline models, `parakeet-tdt-0.6b-v3` and
+  `parakeet-unified-en-0.6b` — no correction needed there beyond what's already planned above.)
 - **docs/RECREATION_SPEC.md §2.6** ("Preview de ditação" / §2.6.1-2.6.3): this section currently
   documents the *preview-only, opt-in* nature of this mechanism and the true-streaming Parakeet
   beta path — both need rewriting once implemented to describe the new always-on, unified
-  mechanism and the retirement of the streaming-beta Dictation call site, plus the new §2.6
-  cross-reference to the `runtime: "online"` exclusion. §2.10's settings summary must drop
-  `parakeetStreamingBeta` from the persisted-settings list.
+  mechanism and the retirement of the streaming-beta Dictation call site. **Note (per resolved
+  Option A decision)**: the rewrite should state plainly that there is no remaining streaming-beta
+  path or online-runtime model exception at all (not just that the preview becomes always-on) —
+  the three models and the beta flag are gone, not merely excluded. §2.10's settings summary must
+  drop `parakeetStreamingBeta` from the persisted-settings list.
 - **docs/specs/transcription-engine-lifecycle.md**: no edit required by this spec (per the
-  ground rule against touching other specs), but flag for whoever implements/re-reviews that spec
-  that its Design §3 description of `createOnlineStream()` being "used directly for realtime
-  dictation preview" will become stale once this spec's Requirement 7 lands, since the Dictation
-  preview call site will no longer use it — the online-runtime models' baseline (non-preview) use
-  remains, so the drain/pin bookkeeping for `createOnlineStream()` handles is still needed, just
-  for a narrower caller than described there today.
+  ground rule against touching other specs). **Strengthened note (per resolved Option A
+  decision)**: this is no longer just a caller-narrowing concern for `createOnlineStream()` — per
+  Requirement 9, that primitive is proposed for full removal, so whoever next touches
+  `transcription-engine-lifecycle.md` (or its superseding doc,
+  `docs/specs/on-demand-model-lifecycle.md`) needs an actual edit reflecting the primitive's
+  removal, not a footnote about a narrower caller. (That spec's own header already marks it
+  "Superseded... never implemented," so this note is for the historical record / superseding doc,
+  not a live dependency of this spec.)
 
 ## Open Questions
 
-1. **[BLOCKING — requires the project owner's direct decision, not a relayed recommendation] Scope
-   of decision #1 versus the three `runtime: "online"` Parakeet models.** Design §11 confirms, with
-   file/line evidence, that `nemotron-speech-streaming-en-0.6b`, `nemotron-3.5-asr-streaming-0.6b`,
-   and `nemotron-3.5-asr-streaming-0.6b-1120ms` genuinely have no offline/batch sherpa-onnx execution
-   path available — this is not an assumption, it was verified against the actual vendored binaries,
-   model registry, and sherpa-onnx routing code. Design §12 lays out three concrete resolution
-   options with honest tradeoffs:
-   - **Option A**: drop the three models from the product entirely (full compliance with "no
-     streaming, ever," at the cost of a real product-surface regression for existing users of these
-     models).
-   - **Option B**: keep them exactly as they behave today, documented as a narrow, explicit exception
-     to decision #1 (same shape as CLAUDE.md §3's medium/large-Whisper exception) — they simply don't
-     participate in the new batching mechanism, ever.
-   - **Option C**: route their VAD-chunked/merge-retry calls through independent, state-free
-     `_transcribeOnline()` invocations per chunk, so they *do* gain the new mechanism — technically
-     feasible today, but carries a real, untested risk of reducing these specific models' accuracy
-     (their causal encoders are designed around continuous-utterance context, and this spec's
-     explicit priority is quality, not just speed).
-   This document's authors recommend **Option B, pending confirmation**, as the lowest-risk interim
-   answer, with Option C flagged as a worthwhile follow-up prototype once there's a shipped baseline
-   to measure against. **This is a recommendation, not a decision** — per CLAUDE.md's spec-driven
-   workflow, only the project owner can approve this spec, and this item specifically needs their
-   explicit call in conversation before implementation proceeds, not agreement-by-silence. Until
-   answered, this spec's `Status` should not move to `Approved`.
+1. **[RESOLVED — 2026-07-20] Scope of decision #1 versus the three `runtime: "online"` Parakeet
+   models.** Design §11 confirmed, with file/line evidence, that `nemotron-speech-streaming-en-0.6b`,
+   `nemotron-3.5-asr-streaming-0.6b`, and `nemotron-3.5-asr-streaming-0.6b-1120ms` genuinely have no
+   offline/batch sherpa-onnx execution path available — verified against the actual vendored
+   binaries, model registry, and sherpa-onnx routing code, not assumed. Design §12 laid out three
+   options (A: drop the models, B: keep as a documented exception, C: run them chunked anyway with
+   untested accuracy risk).
+
+   **Resolved by the project owner in conversation, 2026-07-20: Option A.** In their own words:
+   *"vamos usar somente modelos que suportem obrigatoriamente batch e offline... remova os
+   demais... remova a flag beta stream... vamos manter uma unica logica que é a que esta aplicada
+   para os modelos openAI"* — remove the three models entirely, remove the `parakeetStreamingBeta`
+   flag, and keep exactly one unified batching/quality mechanism across all local engines. See
+   Requirement 9/10 and Design §13 for the implementation design this decision drives.
+
+No other open questions remain blocking. This spec is ready for the project owner to review and
+flip `Status` to `Approved` — that decision is the project owner's alone, not something this
+revision makes on their behalf.
 
 **Resolved during this refinement pass** (minor, non-blocking items — reasoning kept inline in the
 Design section where each applies; noted here for traceability against the prior draft):

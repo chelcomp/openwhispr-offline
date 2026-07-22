@@ -328,7 +328,7 @@ Detecta usuários voltando do bundle ID antigo (pré-"Gizmo"), exclusivo macOS. 
 - PID files em `userData/sidecar-pids/<name>.pid`; convenção: `write()` logo após spawn, `clear()` no `close`.
 
 #### 1.9.3 `sidecarReaper.js`
-`EXPECTED_BINARY_FRAGMENTS`: `parakeet: ["sherpa-onnx-ws-", "sherpa-onnx-online-ws-"]`, `whisper: ["whisper-server"]`, `llama: ["llama-server"]`, `diarization: ["sherpa-onnx-diarize"]`. `reapStaleSidecars()` (início de `startApp()`) verifica PIDs órfãos vivos, confirma que o comando real bate com os fragmentos esperados, e só então mata (evita matar um PID reciclado pelo SO).
+`EXPECTED_BINARY_FRAGMENTS`: `parakeet: ["sherpa-onnx-ws-"]`, `whisper: ["whisper-server"]`, `llama: ["llama-server"]`, `diarization: ["sherpa-onnx-diarize"]`. `reapStaleSidecars()` (início de `startApp()`) verifica PIDs órfãos vivos, confirma que o comando real bate com os fragmentos esperados, e só então mata (evita matar um PID reciclado pelo SO). O fragmento `sherpa-onnx-online-ws-` foi removido junto com o binário/protocolo online (`docs/specs/audio-transcription-batching.md`) — não há mais runtime `"online"` no produto.
 
 **Nota histórica**: havia uma entrada `qdrant: ["qdrant"]` até a remoção do subsistema Qdrant (`docs/specs/remove-qdrant-dependency.md`). A decisão foi removê-la junto com o resto, aceitando o risco residual de um processo Qdrant genuinamente órfão (de uma instalação pré-remoção) não ser reaproveitado pelo `reapStaleSidecars()` — julgado aceitável dado o estágio alpha do produto e a ausência de base instalada relevante. Ver a spec para o raciocínio completo.
 
@@ -511,10 +511,15 @@ Download separado do binário CUDA (linux/win32, não macOS), do release GitHub 
 |---|---|---|---|
 | `parakeet-tdt-0.6b-v3` | Multilíngue (24) | 680MB | offline |
 | `parakeet-unified-en-0.6b` | Inglês, SOTA | 631MB | offline |
-| `nemotron-speech-streaming-en-0.6b` | Inglês | 632MB | **online** |
-| `nemotron-3.5-asr-streaming-0.6b`(-1120ms) | Multilíngue (15) | 650MB | **online** |
 
-`runtime:"online"` habilita streaming real via WebSocket incremental. Armazenados em `~/.cache/ektoswhispr/parakeet-models/`; exige `REQUIRED_MODEL_FILES=["encoder.int8.onnx","decoder.int8.onnx","joiner.int8.onnx","tokens.txt"]`.
+Os três modelos anteriormente listados aqui com `runtime:"online"` (`nemotron-speech-streaming-en-0.6b`,
+`nemotron-3.5-asr-streaming-0.6b`, `nemotron-3.5-asr-streaming-0.6b-1120ms`) foram **removidos do
+produto inteiramente** (ver §2.6.4 e `docs/specs/audio-transcription-batching.md`) — não tinham
+caminho de execução offline/batch disponível no sherpa-onnx vendorizado. Todo modelo restante no
+registry é `offline`, então não há mais nenhum campo `runtime:"online"` em `modelRegistryData.json`.
+Usuários previamente em um dos três IDs removidos são migrados para `parakeet-tdt-0.6b-v3` no
+próximo lançamento. Armazenados em `~/.cache/ektoswhispr/parakeet-models/`; exige
+`REQUIRED_MODEL_FILES=["encoder.int8.onnx","decoder.int8.onnx","joiner.int8.onnx","tokens.txt"]`.
 
 #### 2.5.2 Download
 `.tar.bz2` do GitHub `k2-fsa/sherpa-onnx` releases; extração via `tar` do sistema ou fallback `unbzip2-stream`+`tar` JS.
@@ -523,44 +528,92 @@ Download separado do binário CUDA (linux/win32, não macOS), do release GitHub 
 Converte para WAV → float32 PCM. **Chunking**: segmentos >`MAX_SEGMENT_SECONDS=15s` divididos e concatenados. Silêncio: `RMS < SILENCE_RMS_THRESHOLD=0.001` → texto vazio sem chamar o servidor.
 
 #### 2.5.4 `ParakeetWsServer`
-Binário `sherpa-onnx-ws-{platform}-{arch}` (offline) ou `sherpa-onnx-online-ws-{platform}-{arch}` (online), variante `-cuda`. Porta **6006-6029**.
+Binário `sherpa-onnx-ws-{platform}-{arch}` (offline apenas), variante `-cuda`. Porta **6006-6029**.
+**Nota histórica**: até `docs/specs/audio-transcription-batching.md`, existia também um runtime `"online"`
+(binário `sherpa-onnx-online-ws-{platform}-{arch}`, `createOnlineStream()`/`_transcribeOnline()`) usado
+pelos três modelos Nemotron streaming-only. Esses três modelos foram removidos do produto (não tinham
+caminho offline/batch) e o runtime online — binário, protocolo e primitivas — foi removido por completo;
+`ParakeetWsServer` hoje só conhece o runtime offline.
 
 **Regra crítica de GPU**: Parakeet **sempre** tenta CUDA quando GPU + binário CUDA presentes — sem toggle de CPU equivalente ao `WHISPER_GPU_MODE`. Citação do próprio código: *"NVIDIA (Parakeet) transcription always runs on CUDA when the hardware and the CUDA binary are both present ... Selecting CPU only ever applies to the OpenAI/Whisper engine — NVIDIA models are never downgraded to CPU while a usable GPU is available."*
 
-Args: `--tokens --encoder --decoder --joiner --port`; online: `--num-work-threads --warm-up=0`; offline: `--num-threads`; `--provider=cuda` se `useCuda`. Threads: `max(1,min(4,cpus*0.75))`, ou `1` se CUDA. **Warm-up automático** pós-start. `STARTUP_TIMEOUT_MS=60000`, `TRANSCRIPTION_TIMEOUT_MS=300000`.
+Args: `--tokens --encoder --decoder --joiner --port --num-threads`; `--provider=cuda` se `useCuda`. Threads: `max(1,min(4,cpus*0.75))`, ou `1` se CUDA. **Warm-up automático** pós-start. `STARTUP_TIMEOUT_MS=60000`, `TRANSCRIPTION_TIMEOUT_MS=300000`.
 
-**Protocolo offline**: mensagem binária `[int32LE sample_rate][int32LE num_bytes][float32 samples...]`; servidor responde JSON; cliente confirma "Done".
-
-**Protocolo online**: chunk `ONLINE_CHUNK_BYTES=8000*4` (2s float32). **Tail silence**: envia `TAIL_SILENCE=Float32Array(20800)` (1300ms) antes de "Done" — evita perder a última palavra (modelo tem lookahead até 1120ms). `is_final:true` acumula em `finalizedText`; `"Done!"` marca `sawDoneMarker=true` (só então seguro para paste direto). `ONLINE_FINISH_TIMEOUT_MS=10000`.
+**Protocolo (offline, único suportado)**: mensagem binária `[int32LE sample_rate][int32LE num_bytes][float32 samples...]`; servidor responde JSON; cliente confirma "Done".
 
 #### 2.5.5 Diarização com Parakeet
 `DiarizationManager.diarize()` produz segmentos `{start,end,speaker}`; transcreve por turno de fala. `mergeSpeakerTurns()` (`maxGapSec:1.5, maxTurnSec:60`); `buildSpeakerLabels()`. Sem segmentos → transcrição plana.
 
-### 2.6 VAD (Voice Activity Detection) e Streaming de Preview
+### 2.6 VAD (Voice Activity Detection) e Batching Progressivo de Ditado
+
+Ver `docs/specs/audio-transcription-batching.md` (implementado). O mecanismo abaixo é o
+comportamento **padrão, sempre ativo** do Ditado local para ambos os engines (Whisper e Parakeet
+offline-runtime) — não é mais um recurso de "preview" opt-in atrás de um toggle. Isso substitui o
+comportamento anterior descrito nesta seção (preview opt-in + `parakeetStreamingBeta`/streaming
+real do Parakeet).
 
 #### 2.6.1 Configuração base
 ```json
 DEFAULTS: {threshold:0.5, minSpeechDurationMs:100, minSilenceDurationMs:200, maxSpeechDurationS:30, speechPadMs:200, samplesOverlap:0.5}
 LIMITS: {threshold:[0.1,0.95], minSpeechDurationMs:[50,2000], minSilenceDurationMs:[50,2000], maxSpeechDurationS:[5,120], speechPadMs:[0,1000], samplesOverlap:[0,0.95]}
 ```
-VAD Silero real ativado por contexto (`dictationSileroEnabled`, `noteRecordingSileroEnabled`, `meetingSileroEnabled`, default `true`), passado ao `whisper-server` como `--vad`.
+VAD Silero real ativado por contexto (`dictationSileroEnabled`, `noteRecordingSileroEnabled`, `meetingSileroEnabled`, default `true`), passado ao `whisper-server` como `--vad`. Camada diferente do VAD JS-side abaixo (server-side, dentro de uma única chamada `/inference`; usado pela transcrição de fallback e por Meeting/Upload).
 
-#### 2.6.2 `whisperStreamingSession.js` — VAD pseudo-streaming para preview
-whisper.cpp não tem encoder incremental — cada `/inference` reprocessa o clipe inteiro. Solução: segmentar PCM ao vivo por silêncio (energy VAD + hangover) e transcrever cada utterance fechada **exatamente uma vez**; texto committed só cresce.
+#### 2.6.2 `dictationBatchingSession.js` — sessão de batching compartilhada por engine (renomeado de `whisperStreamingSession.js`)
+Nenhum dos dois engines tem encoder incremental — cada chamada de inferência reprocessa o chunk inteiro. Solução: segmentar PCM ao vivo por silêncio (energy VAD + hangover) e transcrever cada utterance fechada **exatamente uma vez**; texto committed só cresce. A mecânica interna (frames, pre-roll, merge) é idêntica para os dois engines — só o par de callbacks `transcribe`/`isLowQuality` muda.
 
 - Frames de `frameMs=20ms`, RMS por frame. **Voiced** quando `rms >= max(energyThreshold=0.006, noiseFloor*3)` (noiseFloor é EMA adaptativo, atualizado só durante silêncio).
 - **Pre-roll**: buffer circular durante silêncio para contexto de lead-in quando fala é confirmada (`voicedRunMs >= minSpeechMs`).
 - Fecha segmento quando `silenceRunMs >= minSilenceMs`, ou força flush em `maxSpeechDurationS` (mantendo overlap).
 - Segmentos com RMS total < `minSegmentRms=0.003` descartados sem inferência.
 - **Merge adaptativo de baixa qualidade**: se `isLowQuality` indica baixa confiança, áudio não é commitado — retido e prependido ao próximo utterance (até `maxMerges=2`, `maxMergedMs=20000`).
-- `requestPartial()`: re-transcreve utterance aberto, nunca compete com commit pendente.
+- **Novo: `TAIL_FINALIZE_BUDGET_MS = 300ms`** — orçamento de tempo (wall-clock) que só se aplica enquanto `finish()` (chamado na soltura da hotkey) decide se adia (merge) a última utterance ainda aberta. Uma vez excedido, a cauda é commitada best-effort imediatamente, mesmo que ainda esteja dentro de `maxMerges`/`maxMergedMs` — gatilho separado e independente do gate `lowQualityRatio`/`coverageRatio` de sessão inteira abaixo.
+- `requestPartial()`: re-transcreve utterance aberto, nunca compete com commit pendente; só é agendado (timer de 1500ms) quando `showOverlay` é `true` — é puramente cosmético e nunca afeta o texto commitado/colado.
 - `finish()`: força flush, retorna `{text, segments, finalized, quality:{committedMs, lowQualityMs, totalInputMs, lowQualityRatio, coverageRatio}}`.
 
-#### 2.6.3 Integração em `ipcHandlers.js` (`start/stop-dictation-preview`)
-- **Parakeet online + beta habilitado**: WebSocket real de streaming.
-- **Whisper**: `WhisperVadStreamingSession` com `minSilenceDurationMs` forçado a **mínimo 500ms**; `isLowQuality` via limiares clássicos (`avg_logprob < -1.0` ou `compression_ratio > 2.4`); timer de 1500ms para `requestPartial()`.
-- **Parakeet offline**: timer fixo de 3000ms, retranscreve buffer acumulado. Cap: **29s whisper** / **14s Parakeet** (compartilha servidor com transcrição real de fim-de-ditado).
+**Configuração própria ("Live"), independente do Silero VAD
+(`docs/specs/live-preview-vad-sensitivity.md`, `docs/specs/vad-settings-tabs.md`,
+implementados)**: nenhum dos 11 campos que o construtor de `DictationBatchingSession`
+consome (exceto `tailFinalizeBudgetMs`, margem interna de segurança de latência nunca
+exposta) **é lido/derivado do `whisperVad.json`/`_resolveWhisperVadOptions()` do Silero** —
+vêm de `src/constants/previewVad.json` + `src/helpers/previewVadConfig.js`
+(`DEFAULT_PREVIEW_VAD_CONFIG`, `clampPreviewVadField`, `sanitizePreviewVadConfig`,
+`resolvePreviewVadConfig` — genérico sobre `Object.keys(DEFAULTS)`, todos os 11 campos
+passam pelo mesmo código sem alteração estrutural). Os 10 campos expostos como controle de
+UI, com seus defaults (idênticos às constantes internas hardcoded originais de
+`dictationBatchingSession.js`, sem mudança de comportamento na migração): `minSpeechDurationMs:
+80`, `minSilenceDurationMs: 500`, `speechPadMs: 100`, `maxSpeechDurationS: 20`,
+`samplesOverlap: 0.3`, `energyThreshold: 0.006`, `minSegmentRms: 0.003`, `noiseFloorFactor: 3`,
+`noiseFloorAlpha: 0.05`, `maxMerges: 2`, `maxMergedMs: 20000`. Persistido via IPC própria
+(`preview-vad-get-config`/`preview-vad-set-config`), `_resolvePreviewVadOptions()` em
+`ipcHandlers.js`, e chaves de `localStorage` correspondentes em `settingsStore.ts` — sem
+relação de schema com o `whisperVad.json` do Silero. `start-dictation-preview` distribui os 5
+campos de formato `vad` (`minSpeechDurationMs`, `minSilenceDurationMs`, `speechPadMs`,
+`maxSpeechDurationS`, `samplesOverlap`) dentro de `vadConfig`, e os outros 6
+(`energyThreshold`, `minSegmentRms`, `noiseFloorFactor`, `noiseFloorAlpha`, `maxMerges`,
+`maxMergedMs`) como opções de nível superior do construtor — dois caminhos de código
+diferentes dentro de `DictationBatchingSession`. Configurável em Settings → Fala-para-Texto →
+Ditado, agora em duas abas — "Live" (este detector de energia, 10 campos, aba padrão) e
+"Voice Activity Detection" (Silero, seção inalterada) — via `DictationVadTabs`
+(`SettingsPage.tsx`, export nomeado, reutiliza o padrão `ProviderTabs`/`useSubTab`/`TabPanel`
+já usado por `SpeechToTextTabs`/`LlmsTabs`; sem barra de abas quando o provedor local é
+nvidia/Parakeet, já que Silero não se aplica).
+
+#### 2.6.3 Sinal de confiança por engine (`src/utils/transcriptionQualityHeuristics.js`)
+- **Whisper**: `isWhisperSegmentLowQuality` via limiares clássicos (`avg_logprob < -1.0` ou `compression_ratio > 2.4`), usando os campos reais de `avg_logprob`/`compression_ratio`/`no_speech_prob` do whisper.cpp.
+- **Parakeet (offline-runtime)**: não existe campo de confiança nativo no protocolo JSON do binário offline-websocket-server do sherpa-onnx. `isParakeetSegmentLowQuality` usa um heurístico derivado de texto — desvio deliberado e sinalizado, não uma substituição silenciosa: razão de compressão via zlib (mesma técnica que o whisper.cpp usa para `compression_ratio`), o detector de alucinação compartilhado (`isHallucinatedText`), e o RMS do chunk.
+- `isHallucinatedText` (padrões de alucinação conhecidos, rejeição de script não-latino, detecção de loop de repetição) mora aqui como implementação canônica; `WhisperManager.isHallucinatedText` (`whisper.js`) agora é um wrapper fino que delega para cá.
+
+#### 2.6.4 Integração em `ipcHandlers.js` (`start/stop-dictation-preview`)
+- Ambos os engines (Whisper e Parakeet offline-runtime) criam uma `dictationBatchingSession` com o par de callbacks `transcribe`/`isLowQuality` apropriado — única diferença de wiring entre os dois.
+- O `vadConfig` passado a `createDictationBatchingSession` vem inteiramente de
+  `this._resolvePreviewVadOptions()` (novo namespace "Live Preview Sensitivity" — ver
+  §2.6.2) — **não** lê mais `_resolveWhisperVadOptions("dictation")`/Silero para nenhum
+  campo. Um clamp experimental (`Math.min`/`Math.max`) que fazia esse empréstimo
+  silenciosamente foi removido; nada mais é limitado/floor sem aparecer na tela.
+- `showOverlay` (booleano passado pelo renderer, espelhando `showTranscriptionPreview`) controla **apenas** se a janela de legenda ao vivo é exibida — a sessão de batching roda de qualquer forma, sempre que o modelo/engine é elegível.
 - **Filtro de qualidade no stop**: só retorna para paste direto se `finalized && lowQualityRatio <= 0.5 && coverageRatio >= 0.4`. Senão, cai para re-transcrição offline autoritativa do WAV completo.
+- **Os três modelos Parakeet `runtime: "online"` foram removidos do produto inteiramente** (decisão do project owner, Opção A — ver o spec): `nemotron-speech-streaming-en-0.6b`, `nemotron-3.5-asr-streaming-0.6b`, `nemotron-3.5-asr-streaming-0.6b-1120ms`, junto com a flag/toggle `parakeetStreamingBeta` e as primitivas de streaming real agora mortas (`ParakeetWsServer.createOnlineStream()`/`_transcribeOnline()`/`_warmUpOnline()`, binário `sherpa-onnx-online-websocket-server`). Não há mais exceção de streaming por modelo — exatamente um mecanismo unificado de batching/qualidade para todos os engines locais. Usuários previamente configurados em um dos três IDs removidos são migrados para `parakeet-tdt-0.6b-v3` no próximo lançamento (`src/helpers/parakeetModelMigration.js`, checado a cada lançamento — idempotente, sem sentinel).
 
 ### 2.7 GPU / CUDA — Decisão CPU vs GPU
 
@@ -609,7 +662,7 @@ Binário `sherpa-onnx-diarize-{platform}-{arch}`. Args: `--segmentation.pyannote
 
 ### 2.10 Resumo de Configurações Persistidas
 
-**Settings**: `useLocalWhisper`, `localTranscriptionProvider`, `whisperModel`, `parakeetModel`, `parakeetStreamingBeta`, `showTranscriptionPreview`, `preferredLanguage`, `customDictionary`, `snippets`, `micGain`/`micNoiseSuppression`/`preferBuiltInMic`/`selectedMicDeviceId`, `allowOpenAIFallback`/`allowLocalFallback`/`fallbackWhisperModel`, `cloudTranscriptionProvider`/`Model`/`Mode`/`BaseUrl`, `dictationSileroEnabled`/`noteRecordingSileroEnabled`/`meetingSileroEnabled`, `useCleanupModel`/`useDictationAgent`, `dataRetentionEnabled`, `autoPasteEnabled`/`keepTranscriptionInClipboard`/`pauseMediaOnDictation`/`autoUnmuteMicEnabled`.
+**Settings**: `useLocalWhisper`, `localTranscriptionProvider`, `whisperModel`, `parakeetModel`, `showTranscriptionPreview` (agora controla apenas a janela de legenda ao vivo, não a velocidade da transcrição — ver §2.6), `preferredLanguage`, `customDictionary`, `snippets`, `micGain`/`micNoiseSuppression`/`preferBuiltInMic`/`selectedMicDeviceId`, `allowOpenAIFallback`/`allowLocalFallback`/`fallbackWhisperModel`, `cloudTranscriptionProvider`/`Model`/`Mode`/`BaseUrl`, `dictationSileroEnabled`/`noteRecordingSileroEnabled`/`meetingSileroEnabled`, `useCleanupModel`/`useDictationAgent`, `dataRetentionEnabled`, `autoPasteEnabled`/`keepTranscriptionInClipboard`/`pauseMediaOnDictation`/`autoUnmuteMicEnabled`. (`parakeetStreamingBeta` foi removido — ver §2.6.4.)
 
 **Env vars (main)**: `WHISPER_GPU_MODE` (só whisper), `WHISPER_CUDA_ENABLED`, `WHISPER_THREADS`, `SHERPA_ONNX_CUDA_ENABLED` (dinâmico, sem toggle manual), `TRANSCRIPTION_GPU_UUID`, `LLAMA_GPU_MODE`/`INTELLIGENCE_GPU_UUID`, `LOCAL_TRANSCRIPTION_PROVIDER`, `PARAKEET_MODEL`.
 
@@ -1173,7 +1226,7 @@ Biblioteca compartilhada `scripts/lib/download-utils.js`: `fetchLatestRelease` (
 |---|---|---|
 | `download-whisper-cpp.js` | `OpenWhispr/whisper.cpp` (latest) | `resources/bin/whisper-server-{platform}-{arch}` |
 | `download-llama-server.js` | `ggml-org/llama.cpp` (tag fixa `b9763`) | `resources/bin/llama-server-{platform}-{arch}` (só CPU) |
-| `download-sherpa-onnx.js` | `k2-fsa/sherpa-onnx` (fixo `1.13.4`) | `sherpa-onnx-{ws,online-ws,diarize}-{platformArch}` (+`-cuda`) |
+| `download-sherpa-onnx.js` | `k2-fsa/sherpa-onnx` (fixo `1.13.4`) | `sherpa-onnx-{ws,diarize}-{platformArch}` (+`-cuda`) — o binário `online-ws` foi removido junto com os três modelos Parakeet streaming-only (`docs/specs/audio-transcription-batching.md`) |
 | `download-whisper-vad-model.js` | HuggingFace `ggml-org/whisper-vad` | `ggml-silero-v5.1.2.bin` |
 | `download-diarization-models.js` | `k2-fsa/sherpa-onnx` (tags especiais) | modelos de segmentação/embedding/VAD |
 | `download-nircmd.js` | nirsoft.net direto (não GitHub) | `nircmd.exe` (fallback PowerShell sem bypass TLS — usa validação de certificado padrão do SO/.NET) |

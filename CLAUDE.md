@@ -379,7 +379,7 @@ All AI model definitions are centralized in `src/models/modelRegistryData.json` 
 - Each model has `hfRepo` for direct HuggingFace download URLs
 - `promptTemplate` defines the chat format (ChatML, Llama, Mistral)
 - Download URLs constructed as: `{baseUrl}/{hfRepo}/resolve/main/{fileName}`
-- A model's registry `contextLength` is a *maximum request*, not what's always used at runtime: `llamaServer.js`'s local server starts at a `2048` (`DEFAULT_CONTEXT_CAP`) default per request (including on `prewarmServer()`'s initial pre-warm start, not just `runInference()`'s fresh-start path) and doubles automatically (2048→4096→8192→16384→32768→65536) on a detected context-overflow failure, never exceeding the smaller of `65536` (`MAX_CONTEXT_SIZE`) or the model's own declared `contextLength`; the currently-in-use (possibly already-doubled) context size is tracked per model and reused across an intelligence-GPU-device restart, rather than falling back to the raw registry `contextLength`. KV-cache is quantized to `q8_0` (`--cache-type-k`/`--cache-type-v`) and `--fit on` is added alongside `--n-gpu-layers 99`, both gated on the resolved binary actually supporting the flags (see `docs/specs/llama-server-vram-tuning.md`).
+- A model's registry `contextLength` is a _maximum request_, not what's always used at runtime: `llamaServer.js`'s local server starts at a `2048` (`DEFAULT_CONTEXT_CAP`) default per request (including on `prewarmServer()`'s initial pre-warm start, not just `runInference()`'s fresh-start path) and doubles automatically (2048→4096→8192→16384→32768→65536) on a detected context-overflow failure, never exceeding the smaller of `65536` (`MAX_CONTEXT_SIZE`) or the model's own declared `contextLength`; the currently-in-use (possibly already-doubled) context size is tracked per model and reused across an intelligence-GPU-device restart, rather than falling back to the raw registry `contextLength`. KV-cache is quantized to `q8_0` (`--cache-type-k`/`--cache-type-v`) and `--fit on` is added alongside `--n-gpu-layers 99`, both gated on the resolved binary actually supporting the flags (see `docs/specs/llama-server-vram-tuning.md`).
 
 ### 9. API Integrations and Updates
 
@@ -684,6 +684,103 @@ counter, no backoff, no scheduled respawn — the next on-demand trigger just co
 `whisperManager.stopServer()` (not a reload) — sleep leaves the whisper-server process running with
 a dead CUDA context, so a clean unload (rather than either ignoring it or reloading proactively) is
 the correct fix; the next Dictation hotkey press cold-starts it normally via the on-demand trigger.
+
+### 19. Dictation Progressive VAD Batching (Whisper + Parakeet)
+
+Local Dictation's _pasted_ transcript is produced by progressive, VAD-chunked transcription
+during recording, confidence-gated per chunk, with bounded merge-and-retry on low confidence —
+not a single full-clip inference call at hotkey release. This is the always-on default mechanism
+for eligible local engines (Whisper, and offline-runtime Parakeet), not an opt-in preview toggle.
+See `docs/specs/audio-transcription-batching.md` for the full design.
+
+**Shared mechanism (`src/helpers/dictationBatchingSession.js`)**:
+
+- One engine-agnostic `DictationBatchingSession` segments live PCM by silence (energy-RMS VAD
+  with adaptive noise floor, pure JS, no Electron/engine dependency) and transcribes each closed
+  utterance exactly once via a caller-supplied `transcribe(pcm16Buffer)` callback.
+- A low-confidence chunk (per the engine's `isLowQuality` callback) is held and merged with the
+  _next_ utterance for a retranscription with more acoustic context, bounded by `maxMerges=2` /
+  `maxMergedMs=20000` — reused unchanged from the mechanism's original Whisper-only preview.
+- **New**: `TAIL_FINALIZE_BUDGET_MS = 300ms` — a wall-clock budget that applies only while
+  `finish()` (called at hotkey release) is deciding whether to defer the last, still-open
+  utterance. Once exceeded, the tail commits best-effort immediately instead of merging further —
+  bounding the Speed premise's ≤500ms budget even when the tail is still within
+  `maxMerges`/`maxMergedMs`. This is a separate, narrower trigger from the session-wide
+  `lowQualityRatio`/`coverageRatio` gate below; exhausting the tail's own budget only affects that
+  one chunk's confidence bookkeeping, never the whole-session fallback decision.
+- Full-audio fallback (a single offline re-transcription of the whole clip) triggers only when the
+  whole session's aggregate quality is poor: `lowQualityRatio > 0.5` or `coverageRatio < 0.4`
+  (`ipcHandlers.js`'s `stop-dictation-preview` handler).
+
+**Confidence signal per engine (`src/utils/transcriptionQualityHeuristics.js`)**:
+
+- Whisper: whisper.cpp's real `avg_logprob`/`compression_ratio`/`no_speech_prob` fields
+  (`isWhisperSegmentLowQuality`, thresholds `avg_logprob < -1.0` / `compression_ratio > 2.4`).
+- Parakeet (offline-runtime only — see below): no native confidence field exists in the vendored
+  sherpa-onnx offline-websocket-server protocol. `isParakeetSegmentLowQuality` uses a deliberate,
+  flagged deviation instead: a zlib-based text-compression-ratio (the same technique whisper.cpp
+  itself uses, applied to any engine's output text), the shared `isHallucinatedText` pattern
+  detector, and chunk RMS — reusing the same `2.4` ceiling as Whisper as a starting value.
+- `isHallucinatedText` (regex hallucination patterns, non-Latin-script rejection,
+  word-repetition-loop detection) lives here as the canonical implementation;
+  `WhisperManager.isHallucinatedText` (`whisper.js`) is now a thin delegating wrapper so existing
+  call sites keep working unchanged.
+
+**Live Preview Sensitivity (own settings, decoupled from Silero VAD)**: the energy-RMS
+detector above is a crude, architecturally different animal from the neural Silero VAD that
+governs the offline/full-clip Whisper pass. Settings → Speech-to-Text → Dictation presents
+these as two tabs — "Live" (this energy detector) and "Voice Activity Detection" (Silero) —
+via `DictationVadTabs` (`SettingsPage.tsx`, a named export reusing the file's
+`ProviderTabs`/`useSubTab`/`TabPanel` sub-tab pattern, own localStorage key
+`settings.dictationVadTab`, defaults to "Live"; renders with no tab bar at all when Silero
+doesn't apply, i.e. the nvidia/Parakeet local provider). Rather than borrowing/clamping
+Silero's values (see `docs/specs/live-preview-vad-sensitivity.md`,
+`docs/specs/vad-settings-tabs.md`), "Live" now exposes 10 of the energy detector's 11
+constructor fields as user-tunable: `minSpeechDurationMs` (default `80`, drives
+`_voicedRunMs >= minSpeechDurationMs`), `minSilenceDurationMs` (default `500`, closes a
+segment), `speechPadMs` (`100`), `maxSpeechDurationS` (`20`), `samplesOverlap` (`0.3`),
+`energyThreshold` (`0.006`), `minSegmentRms` (`0.003`), `noiseFloorFactor` (`3`),
+`noiseFloorAlpha` (`0.05`), `maxMerges` (`2`), `maxMergedMs` (`20000`). Only
+`tailFinalizeBudgetMs` stays a fixed internal constant (a latency safety margin, not a
+detection knob — never settings-exposed, protects the sub-500ms Speed premise). New files:
+`src/constants/previewVad.json`, `src/helpers/previewVadConfig.js` (mirrors
+`whisperVad.json`/`whisperVadConfig.js`'s pattern: `DEFAULT_PREVIEW_VAD_CONFIG`,
+`clampPreviewVadField`, `sanitizePreviewVadConfig`, plus `resolvePreviewVadConfig()` — fully
+generic over `Object.keys(DEFAULTS)`, so all 11 fields flow through unchanged code). New IPC:
+`preview-vad-get-config`/`preview-vad-set-config`, `ipcHandlers.js`'s
+`_resolvePreviewVadOptions()` (dictation-only — this settings section only affects
+`start-dictation-preview`). `start-dictation-preview` builds its energy-detector options
+entirely from this — it no longer reads `_resolveWhisperVadOptions("dictation")`/Silero for
+any of these fields, and no silent floor/cap clamps remain in that path. The 5 `vad`-shaped
+fields (`minSpeechDurationMs`, `minSilenceDurationMs`, `speechPadMs`, `maxSpeechDurationS`,
+`samplesOverlap`) are threaded into `createDictationBatchingSession`'s `vadConfig` option; the
+other 6 (`energyThreshold`, `minSegmentRms`, `noiseFloorFactor`, `noiseFloorAlpha`,
+`maxMerges`, `maxMergedMs`) are threaded as top-level constructor options — two different code
+paths in `DictationBatchingSession`'s constructor, per `docs/specs/vad-settings-tabs.md`
+Design.
+
+**`showTranscriptionPreview`** now only controls whether the live caption overlay window is shown
+— it does not gate whether the batching session itself runs. The overlay's cosmetic 1500ms partial
+re-transcription of the still-open utterance (`requestPartial()`) is the one piece of the
+mechanism that stays gated behind this toggle, since a volatile partial has no purpose with no
+overlay to show it in; it never affects the committed/pasted transcript either way.
+
+**Parakeet online-runtime models removed entirely**: the three previously-shipped
+`runtime: "online"` Parakeet models (`nemotron-speech-streaming-en-0.6b`,
+`nemotron-3.5-asr-streaming-0.6b`, `nemotron-3.5-asr-streaming-0.6b-1120ms`) had no offline/batch
+sherpa-onnx execution path available and have been removed from the product entirely, along with
+the `parakeetStreamingBeta` setting/toggle and the now-dead-code online-streaming primitives
+(`ParakeetWsServer.createOnlineStream()`/`_transcribeOnline()`/`_warmUpOnline()`, the
+`sherpa-onnx-online-websocket-server` binary/download-script entries). Every remaining Parakeet
+model is offline-runtime, so there is exactly one unified batching/quality mechanism across all
+local engines — no per-model streaming exception. Users previously persisted on one of the three
+removed model IDs (`.env`'s `PARAKEET_MODEL`, or `localStorage`'s `parakeetModel`/
+`meetingParakeetModel`/`uploadParakeetModel`) are migrated to `parakeet-tdt-0.6b-v3` on next launch
+(`src/helpers/parakeetModelMigration.js`, checked on every launch — idempotent, no sentinel file).
+
+**Tests**: `test/utils/transcriptionQualityHeuristics.test.js`,
+`test/helpers/dictationBatchingSession.test.js`, `test/helpers/parakeetModelMigration.test.js`,
+`test/components/parakeetModelMigration.test.js` (run with `node --test`)
 
 ## Development Guidelines
 

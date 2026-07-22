@@ -2,9 +2,10 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 
 const {
-  createWhisperVadStreamingSession,
+  createDictationBatchingSession,
   bufferRms,
-} = require("../../src/helpers/whisperStreamingSession.js");
+  TAIL_FINALIZE_BUDGET_MS,
+} = require("../../src/helpers/dictationBatchingSession.js");
 
 const SAMPLE_RATE = 16000;
 
@@ -36,7 +37,7 @@ function makeSession(overrides = {}) {
   const partials = [];
   const errors = [];
   let calls = 0;
-  const session = createWhisperVadStreamingSession({
+  const session = createDictationBatchingSession({
     vadConfig: VAD,
     onCommit: (t) => commits.push(t),
     onPartial: (t) => partials.push(t),
@@ -107,7 +108,7 @@ test("abort() drops queued work and fires no callbacks", async () => {
     resolveTranscribe = r;
   });
   const commits = [];
-  const session = createWhisperVadStreamingSession({
+  const session = createDictationBatchingSession({
     vadConfig: VAD,
     onCommit: (t) => commits.push(t),
     transcribe: async () => {
@@ -133,7 +134,7 @@ test("partials never run while a commit is queued", async () => {
     resolveFirst = r;
   });
   let call = 0;
-  const session = createWhisperVadStreamingSession({
+  const session = createDictationBatchingSession({
     vadConfig: VAD,
     onCommit: (t) => order.push(`commit:${t}`),
     onPartial: (t) => order.push(`partial:${t}`),
@@ -169,7 +170,7 @@ test("a low-quality utterance is deferred and merged into the next", async () =>
   const commits = [];
   const partials = [];
   let call = 0;
-  const session = createWhisperVadStreamingSession({
+  const session = createDictationBatchingSession({
     vadConfig: VAD,
     onCommit: (t) => commits.push(t),
     onPartial: (t) => partials.push(t),
@@ -199,7 +200,7 @@ test("a low-quality utterance is deferred and merged into the next", async () =>
 test("merging stops at the merge cap and commits best-effort", async () => {
   const commits = [];
   let call = 0;
-  const session = createWhisperVadStreamingSession({
+  const session = createDictationBatchingSession({
     vadConfig: VAD,
     maxMerges: 1,
     onCommit: (t) => commits.push(t),
@@ -225,7 +226,7 @@ test("merging stops at the merge cap and commits best-effort", async () => {
 test("finish() force-commits a deferred tail with no following utterance", async () => {
   const commits = [];
   let call = 0;
-  const session = createWhisperVadStreamingSession({
+  const session = createDictationBatchingSession({
     vadConfig: VAD,
     onCommit: (t) => commits.push(t),
     isLowQuality: () => true,
@@ -246,7 +247,7 @@ test("finish() force-commits a deferred tail with no following utterance", async
 });
 
 test("finish() reports a high lowQualityRatio when committed audio stays poor", async () => {
-  const session = createWhisperVadStreamingSession({
+  const session = createDictationBatchingSession({
     vadConfig: VAD,
     maxMerges: 0, // no room to merge -> a low-quality utterance commits best-effort
     onCommit: () => {},
@@ -265,7 +266,7 @@ test("finish() reports a high lowQualityRatio when committed audio stays poor", 
 });
 
 test("finish() reports lowQualityRatio 0 for confident output", async () => {
-  const session = createWhisperVadStreamingSession({
+  const session = createDictationBatchingSession({
     vadConfig: VAD,
     onCommit: () => {},
     isLowQuality: () => false,
@@ -282,7 +283,7 @@ test("finish() reports lowQualityRatio 0 for confident output", async () => {
 });
 
 test("finish() reports finalized=false when an inference errors", async () => {
-  const session = createWhisperVadStreamingSession({
+  const session = createDictationBatchingSession({
     vadConfig: VAD,
     onError: () => {},
     transcribe: async () => {
@@ -297,4 +298,149 @@ test("finish() reports finalized=false when an inference errors", async () => {
   const result = await session.finish();
 
   assert.equal(result.finalized, false);
+});
+
+// --- (a) VAD chunk-boundary detection: multi-gap fixture ------------------
+
+test("two silence-separated speech bursts produce exactly two committed segments, in order", async () => {
+  const { session, commits } = makeSession();
+
+  session.pushPcm16(pcm(300, 0)); // lead-in silence
+  session.pushPcm16(pcm(600, 0.2)); // burst 1
+  session.pushPcm16(pcm(500, 0)); // gap
+  session.pushPcm16(pcm(700, 0.2)); // burst 2
+  session.pushPcm16(pcm(500, 0)); // trailing silence
+
+  const result = await session.finish();
+
+  assert.equal(commits.length, 2, "exactly two segments should commit");
+  assert.deepEqual(commits, ["seg1", "seg2"], "segments commit in recording order");
+  assert.equal(result.text, "seg1 seg2");
+});
+
+// --- TAIL_FINALIZE_BUDGET_MS: independent from the session-wide quality gate ---
+
+test("TAIL_FINALIZE_BUDGET_MS is exported and matches the documented 300ms default", () => {
+  assert.equal(TAIL_FINALIZE_BUDGET_MS, 300);
+});
+
+test("finish() stops deferring once the tail-finalize budget is spent, even with a next chunk still queued", async (t) => {
+  t.mock.timers.enable({ apis: ["Date"] });
+
+  const commits = [];
+  let call = 0;
+  let resolveFirst;
+  const firstGate = new Promise((r) => {
+    resolveFirst = r;
+  });
+  const session = createDictationBatchingSession({
+    vadConfig: VAD,
+    maxMerges: 5, // plenty of room to merge — budget alone must be what stops it
+    maxMergedMs: 60000,
+    tailFinalizeBudgetMs: 50,
+    onCommit: (text) => commits.push(text),
+    isLowQuality: () => true, // every chunk is "low confidence"
+    transcribe: async () => {
+      call += 1;
+      if (call === 1) await firstGate; // hold the first inference in flight
+      return { text: `t${call}`, quality: { bad: true } };
+    },
+  });
+
+  // Push three utterances back-to-back, synchronously, so all three are
+  // queued (one in-flight — held by firstGate — and two still waiting) by
+  // the time finish() is called — this guarantees `hasNext` is true when the
+  // budget check runs.
+  session.pushPcm16(pcm(300, 0));
+  session.pushPcm16(pcm(500, 0.2));
+  session.pushPcm16(pcm(400, 0));
+  session.pushPcm16(pcm(500, 0.2));
+  session.pushPcm16(pcm(400, 0));
+  session.pushPcm16(pcm(500, 0.2));
+  session.pushPcm16(pcm(400, 0));
+
+  const finishPromise = session.finish(); // captures finishStartTime now
+
+  // Simulate the first in-flight inference eating the whole budget before it
+  // resolves, then let it (and every subsequent one) complete immediately.
+  t.mock.timers.tick(400);
+  resolveFirst();
+
+  const result = await finishPromise;
+
+  // Budget expiry forced every chunk to commit on its own, with no merging —
+  // if the budget were ignored (only hasNext/capHit gating), these would have
+  // merged into a single committed chunk instead.
+  assert.equal(
+    commits.length,
+    3,
+    "budget expiry prevents further merging, even though hasNext was true"
+  );
+  assert.deepEqual(commits, ["t1", "t2", "t3"]);
+  // The tail-budget trigger is bookkept identically to any other
+  // committed-despite-low-confidence chunk (same as a capHit) — it must NOT
+  // set some separate "forced fallback" flag. lowQualityRatio/coverageRatio
+  // are computed the same way regardless of *why* defer was false, proving
+  // the tail budget and the session-wide quality gate are independent
+  // triggers, per Design §4.
+  assert.equal(result.quality.lowQualityRatio, 1);
+  assert.equal(result.finalized, true, "budget expiry alone must not mark the session unfinalized");
+});
+
+// --- (d) Engine-agnostic: identical control flow for Whisper- and Parakeet-shaped callbacks ---
+
+test("Whisper-shaped and Parakeet-shaped isLowQuality callbacks drive identical commit/merge/finish control flow", async () => {
+  // Whisper-shaped: quality carries avg_logprob/compression_ratio.
+  const isWhisperSegmentLowQuality = (quality, ctx) => {
+    if (!ctx?.text) return true;
+    if (!quality) return false;
+    if (Number.isFinite(quality.avgLogprob) && quality.avgLogprob < -1.0) return true;
+    if (Number.isFinite(quality.compressionRatio) && quality.compressionRatio > 2.4) return true;
+    return false;
+  };
+  // Parakeet-shaped: quality carries a text-derived compressionRatio/hallucinated flag.
+  const isParakeetSegmentLowQuality = (quality, ctx) => {
+    if (!ctx?.text) return true;
+    if (!quality) return false;
+    if (quality.hallucinated) return true;
+    if (Number.isFinite(quality.compressionRatio) && quality.compressionRatio > 2.4) return true;
+    return false;
+  };
+
+  async function run(isLowQuality, qualityForCall) {
+    const commits = [];
+    let call = 0;
+    const session = createDictationBatchingSession({
+      vadConfig: VAD,
+      onCommit: (t) => commits.push(t),
+      isLowQuality,
+      transcribe: async () => {
+        call += 1;
+        return { text: call === 1 ? "a" : "a b", quality: qualityForCall(call) };
+      },
+    });
+
+    session.pushPcm16(pcm(300, 0));
+    session.pushPcm16(pcm(500, 0.2)); // utterance 1 -> low quality -> deferred
+    session.pushPcm16(pcm(400, 0));
+    session.pushPcm16(pcm(500, 0.2)); // utterance 2 -> merged with #1
+    session.pushPcm16(pcm(400, 0));
+
+    const result = await session.finish();
+    return { commits, result };
+  }
+
+  const whisperRun = await run(isWhisperSegmentLowQuality, (call) =>
+    call === 1 ? { avgLogprob: -2.0, compressionRatio: 1 } : { avgLogprob: -0.1, compressionRatio: 1 }
+  );
+  const parakeetRun = await run(isParakeetSegmentLowQuality, (call) =>
+    call === 1 ? { hallucinated: true, compressionRatio: 1 } : { hallucinated: false, compressionRatio: 1 }
+  );
+
+  for (const { commits, result } of [whisperRun, parakeetRun]) {
+    assert.equal(commits.length, 1, "the deferred + next audio commit exactly once");
+    assert.equal(commits[0], "a b");
+    assert.equal(result.text, "a b");
+    assert.equal(result.finalized, true);
+  }
 });

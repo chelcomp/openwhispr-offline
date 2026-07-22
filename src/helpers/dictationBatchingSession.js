@@ -1,38 +1,58 @@
-// VAD-gated pseudo-streaming for whisper.cpp, with quality-gated adaptive merging.
+// VAD-gated progressive batch transcription, with quality-gated adaptive
+// merging — shared by both local Whisper and offline-runtime Parakeet
+// dictation (see docs/specs/audio-transcription-batching.md).
 //
-// whisper.cpp has no incremental/streaming encoder: every /inference re-encodes
-// the whole clip. The old dictation preview re-transcribed ALL accumulated audio
-// on a fixed timer, so cost grew with clip length and the preview flickered
-// (each pass overwrites the previous text). This session instead segments the
-// live PCM by silence (energy VAD + hangover) and transcribes each closed
-// utterance exactly once — committed text only ever grows, never rewrites, and
-// per-inference cost is bounded by one utterance instead of the whole clip.
+// Neither engine has an incremental/streaming encoder in this app (Parakeet's
+// online-runtime streaming models were removed entirely — see that spec's
+// Option A decision): every inference call re-encodes its whole chunk. This
+// session segments the live PCM by silence (energy VAD + hangover) and
+// transcribes each closed utterance exactly once — committed text only ever
+// grows, never rewrites, and per-inference cost is bounded by one utterance
+// instead of the whole clip.
 //
 // Adaptive merging: a silence boundary is only a *hint*. If a closed utterance
-// transcribes with low confidence (caller-supplied isLowQuality predicate over
-// whisper's avg_logprob / compression_ratio / no_speech_prob), we do NOT commit
-// it — we keep its PCM and prepend it to the next utterance, then re-transcribe
-// the combined audio from scratch. More acoustic context is exactly what fixes
-// short/ambiguous segments and repairs VAD cuts that split one thought in two.
-// Merging is bounded (maxMerges / maxMergedMs): low confidence does not imply
-// "will improve if merged" — some audio is just hard — so past the cap (or at
-// finish) we commit best-effort instead of growing unbounded.
+// transcribes with low confidence (caller-supplied isLowQuality predicate —
+// whisper.cpp's avg_logprob/compression_ratio/no_speech_prob, or Parakeet's
+// text-derived heuristic, see transcriptionQualityHeuristics.js), we do NOT
+// commit it — we keep its PCM and prepend it to the next utterance, then
+// re-transcribe the combined audio from scratch. More acoustic context is
+// exactly what fixes short/ambiguous segments and repairs VAD cuts that split
+// one thought in two. Merging is bounded (maxMerges / maxMergedMs): low
+// confidence does not imply "will improve if merged" — some audio is just
+// hard — so past the cap (or at finish) we commit best-effort instead of
+// growing unbounded.
+//
+// Additionally, a wall-clock TAIL_FINALIZE_BUDGET_MS bounds how long finish()
+// is willing to keep deferring the release-time tail chasing a merge partner
+// — see finish()'s doc comment below for why this is a separate, narrower
+// trigger from the session-wide lowQualityRatio/coverageRatio gate.
 //
 // Optionally, while an utterance is still open it can be re-transcribed as a
 // volatile "partial" (via requestPartial()) so continuous, pauseless speech
 // still shows text before the first silence boundary. Partials are best-effort
-// and always yield to pending commits — whisper-server is a shared singleton, so
-// only one inference may be in flight at a time.
+// and always yield to pending commits — each engine's server is a shared
+// singleton, so only one inference may be in flight at a time.
 //
-// The session is deliberately free of Electron/whisper-server imports: it takes
-// a `transcribe(pcm16Buffer) => Promise<string | {text, quality}>` callback,
-// which keeps it unit testable with `node --test`. Input PCM must be 16 kHz mono
-// signed 16-bit LE (what the renderer's preview worklet already produces).
+// The session is deliberately free of Electron/engine imports: it takes a
+// `transcribe(pcm16Buffer) => Promise<string | {text, quality}>` callback,
+// which keeps it unit testable with `node --test` and identical for both
+// engines — only the transcribe/isLowQuality callbacks differ. Input PCM must
+// be 16 kHz mono signed 16-bit LE (what the renderer's preview worklet already
+// produces).
 
 const { DEFAULT_WHISPER_VAD_CONFIG } = require("./whisperVadConfig");
 
 const STATE_SILENCE = "silence";
 const STATE_SPEECH = "speech";
+
+// Wall-clock budget for finish()'s tail-finalization decision (Design §4):
+// once finish() has been running longer than this while a low-confidence tail
+// is pending merge, stop deferring and commit best-effort immediately, so a
+// stubborn low-confidence tail can't blow through the ~500ms Speed-premise
+// budget even though it's still within maxMerges/maxMergedMs. Chosen to leave
+// headroom under that budget alongside the existing 120ms post-stop flush
+// wait and IPC round-trip cost (see ipcHandlers.js's stop-dictation-preview).
+const TAIL_FINALIZE_BUDGET_MS = 300;
 
 const DEFAULTS = Object.freeze({
   sampleRate: 16000,
@@ -57,6 +77,7 @@ const DEFAULTS = Object.freeze({
   // into the next one, and the hard ceiling on the merged audio length.
   maxMerges: 2,
   maxMergedMs: 20000,
+  tailFinalizeBudgetMs: TAIL_FINALIZE_BUDGET_MS,
 });
 
 function computeRms(buf, byteOffset, sampleCount) {
@@ -72,10 +93,10 @@ function bufferRms(buf) {
   return computeRms(buf, 0, Math.floor(buf.length / 2));
 }
 
-class WhisperVadStreamingSession {
+class DictationBatchingSession {
   constructor(options = {}) {
     if (typeof options.transcribe !== "function") {
-      throw new Error("WhisperVadStreamingSession requires a transcribe(pcm16Buffer) function");
+      throw new Error("DictationBatchingSession requires a transcribe(pcm16Buffer) function");
     }
     const vad = { ...DEFAULT_WHISPER_VAD_CONFIG, ...(options.vadConfig || {}) };
 
@@ -98,6 +119,8 @@ class WhisperVadStreamingSession {
     this._noiseFloorAlpha = options.noiseFloorAlpha ?? DEFAULTS.noiseFloorAlpha;
     this._maxMerges = options.maxMerges ?? DEFAULTS.maxMerges;
     this._maxMergedMs = options.maxMergedMs ?? DEFAULTS.maxMergedMs;
+    this._tailFinalizeBudgetMs = options.tailFinalizeBudgetMs ?? DEFAULTS.tailFinalizeBudgetMs;
+    this._finishStartTime = null;
 
     this._minSpeechMs = vad.minSpeechDurationMs;
     this._minSilenceMs = vad.minSilenceDurationMs;
@@ -264,9 +287,7 @@ class WhisperVadStreamingSession {
     if (this._state !== STATE_SPEECH || !this._seg.length) return;
 
     const openBuf = Buffer.concat(this._seg);
-    const combined = this._deferredAudio
-      ? Buffer.concat([this._deferredAudio, openBuf])
-      : openBuf;
+    const combined = this._deferredAudio ? Buffer.concat([this._deferredAudio, openBuf]) : openBuf;
     if (bufferRms(combined) < this._minSegmentRms) return;
 
     this._busy = true;
@@ -315,7 +336,17 @@ class WhisperVadStreamingSession {
         // flight, or more speech yet to come. Once finishing with an empty queue
         // this is the last chunk, so commit it best-effort instead of holding it.
         const hasNext = !this._finishing || this._queue.length > 0;
-        const defer = qualityLow && hasNext && !capHit;
+        // Wall-clock budget, independent of hasNext/capHit: once finish() has
+        // been running longer than tailFinalizeBudgetMs, stop deferring even if
+        // there's technically still a next queued chunk to merge into — a
+        // stubborn low-confidence tail must not blow through the Speed premise
+        // just because it's within maxMerges/maxMergedMs. Only ever engages
+        // once finish() has actually started (this._finishStartTime is set);
+        // never affects in-progress live recording.
+        const budgetExceeded =
+          this._finishStartTime !== null &&
+          Date.now() - this._finishStartTime > this._tailFinalizeBudgetMs;
+        const defer = qualityLow && hasNext && !capHit && !budgetExceeded;
 
         if (defer) {
           // Hold this audio and roll it into the next utterance for more context.
@@ -351,12 +382,19 @@ class WhisperVadStreamingSession {
   }
 
   // Flush the open utterance and wait for every queued/in-flight inference to
-  // finish. In finishing mode nothing is deferred (there is no "next" utterance
-  // to merge into), so a held low-quality tail is committed best-effort. The
-  // returned `finalized` flag is true only when no inference errored and the
-  // session was not aborted — callers can use it to gate a streamed fast-path.
+  // finish. In finishing mode nothing is deferred past tailFinalizeBudgetMs
+  // (there is no "next" utterance to merge into once the queue drains, and
+  // even mid-queue merging is cut short once the wall-clock budget is spent),
+  // so a held low-quality tail is committed best-effort. The returned
+  // `finalized` flag is true only when no inference errored and the session
+  // was not aborted — callers can use it to gate a streamed fast-path. This
+  // budget is deliberately independent of the session-wide
+  // lowQualityRatio/coverageRatio gate below — see the module doc comment and
+  // Design §4: exhausting the tail's own retry budget only affects that one
+  // small chunk's confidence bookkeeping, never the fallback decision.
   async finish() {
     this._finishing = true;
+    this._finishStartTime = Date.now();
     if (this._state === STATE_SPEECH && this._seg.length) this._flushSegment();
 
     while (this._queue.length || this._busy || this._deferredAudio) {
@@ -401,13 +439,15 @@ class WhisperVadStreamingSession {
   }
 }
 
-function createWhisperVadStreamingSession(options) {
-  return new WhisperVadStreamingSession(options);
+function createDictationBatchingSession(options) {
+  return new DictationBatchingSession(options);
 }
 
 module.exports = {
-  createWhisperVadStreamingSession,
-  WhisperVadStreamingSession,
+  createDictationBatchingSession,
+  DictationBatchingSession,
   computeRms,
   bufferRms,
+  TAIL_FINALIZE_BUDGET_MS,
+  DEFAULTS,
 };

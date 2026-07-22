@@ -500,8 +500,6 @@ export interface ConversationPreview {
   last_message_role?: "user" | "assistant" | "system" | null;
 }
 
-
-
 declare global {
   interface Window {
     electronAPI: {
@@ -591,14 +589,21 @@ declare global {
       onDictionaryUpdated?: (callback: (words: string[]) => void) => () => void;
       getLastTargetAppName?: () => Promise<string | null>;
       getNoteAudio?: (noteId: number) => Promise<ArrayBuffer | null>;
-      retranscribeMeeting?: (noteId: number, options?: { model?: string; language?: string }) => Promise<{ success: boolean; segments?: unknown[]; error?: string }>;
+      retranscribeMeeting?: (
+        noteId: number,
+        options?: { model?: string; language?: string }
+      ) => Promise<{ success: boolean; segments?: unknown[]; error?: string }>;
       onRetranscribeProgress?: (callback: (data: { pct: number }) => void) => () => void;
       getSnippets?: () => Promise<Array<{ trigger: string; replacement: string; apps?: string[] }>>;
       setSnippets?: (
         snippets: Array<{ trigger: string; replacement: string; apps?: string[] }>
       ) => Promise<{ success: boolean }>;
       snippetsBackup?: () => Promise<{ success?: boolean; canceled?: boolean }>;
-      snippetsRestore?: () => Promise<{ snippets?: Array<{ trigger: string; replacement: string; apps?: string[] }>; canceled?: boolean; error?: string }>;
+      snippetsRestore?: () => Promise<{
+        snippets?: Array<{ trigger: string; replacement: string; apps?: string[] }>;
+        canceled?: boolean;
+        error?: string;
+      }>;
       dictionaryRestore?: () => Promise<{ content?: string; canceled?: boolean; error?: string }>;
       transformsBackup?: (
         transforms: import("../stores/settingsStore").Transform[]
@@ -616,7 +621,9 @@ declare global {
         error?: string;
       }>;
       onSnippetsUpdated?: (
-        callback: (snippets: Array<{ trigger: string; replacement: string; apps?: string[] }>) => void
+        callback: (
+          snippets: Array<{ trigger: string; replacement: string; apps?: string[] }>
+        ) => void
       ) => () => void;
       setAutoLearnEnabled?: (enabled: boolean) => void;
       onCorrectionsLearned?: (callback: (words: string[]) => void) => () => void;
@@ -626,9 +633,7 @@ declare global {
       syncTransforms?: (
         transforms: import("../stores/settingsStore").Transform[]
       ) => Promise<{ success: boolean }>;
-      onTransformActivated?: (
-        callback: (payload: { id: string }) => void
-      ) => () => void;
+      onTransformActivated?: (callback: (payload: { id: string }) => void) => () => void;
       onRunTransform?: (
         callback: (payload: { id: string; text: string; systemPrompt: string }) => void
       ) => () => void;
@@ -1558,6 +1563,36 @@ declare global {
         speechPadMs?: number;
         samplesOverlap?: number;
       }) => Promise<{ success: boolean; config?: Record<string, unknown>; error?: string }>;
+      getPreviewVadConfig?: () => Promise<{
+        success: boolean;
+        config?: {
+          minSpeechDurationMs: number;
+          minSilenceDurationMs: number;
+          speechPadMs: number;
+          maxSpeechDurationS: number;
+          samplesOverlap: number;
+          energyThreshold: number;
+          minSegmentRms: number;
+          noiseFloorFactor: number;
+          noiseFloorAlpha: number;
+          maxMerges: number;
+          maxMergedMs: number;
+        };
+        error?: string;
+      }>;
+      setPreviewVadConfig?: (config: {
+        minSpeechDurationMs?: number;
+        minSilenceDurationMs?: number;
+        speechPadMs?: number;
+        maxSpeechDurationS?: number;
+        samplesOverlap?: number;
+        energyThreshold?: number;
+        minSegmentRms?: number;
+        noiseFloorFactor?: number;
+        noiseFloorAlpha?: number;
+        maxMerges?: number;
+        maxMergedMs?: number;
+      }) => Promise<{ success: boolean; config?: Record<string, unknown>; error?: string }>;
       getPendingMeetingNoteNavigation?: () => Promise<{
         noteId: number;
         folderId: number;
@@ -1588,7 +1623,7 @@ declare global {
         model: string;
         language?: string;
         initialPrompt?: string;
-        streamingBeta?: boolean;
+        showOverlay?: boolean;
       }) => Promise<{ success: boolean }>;
       stopDictationPreview?: (opts?: {
         showCleanup?: boolean;
@@ -1606,7 +1641,6 @@ declare global {
       }>;
       sendDictationPreviewAudio?: (data: ArrayBuffer) => void;
       notifyTranscriptionPreviewReady?: () => void;
-
     };
 
     api?: {
