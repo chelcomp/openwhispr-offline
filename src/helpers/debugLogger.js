@@ -42,6 +42,7 @@ class DebugLogger {
     this.fileLoggingPending = this.debugMode; // Track if we need to initialize file logging later
     this._origConsole = null;
     this._consoleIntercepted = false;
+    this._ensuringStream = false;
 
     // IMPORTANT: Do NOT call initializeFileLogging() here!
     // It uses app.getPath() which is unsafe before app.whenReady().
@@ -97,6 +98,79 @@ class DebugLogger {
   ensureFileLogging() {
     if (this.fileLoggingPending && !this.fileLoggingEnabled) {
       this.initializeFileLogging();
+    }
+  }
+
+  /**
+   * Verifies the log file stream is still pointing at a file that actually
+   * exists on disk, and transparently recreates it (same path, append mode)
+   * if the file (or its parent `logs/` directory) was deleted out from under
+   * a still-open fs.WriteStream. Called immediately before every write to
+   * `this.logStream`, at both write sites (write() and the console
+   * interceptor).
+   *
+   * REENTRANCY: this method (and anything it calls) must NEVER call
+   * this.debug()/this.info()/this.write()/console.* — those all route back
+   * through the very write sites that call ensureLogStream(), which would
+   * recurse infinitely (write -> ensureLogStream -> debug -> write -> ...).
+   * The `_ensuringStream` guard flag short-circuits reentrant calls, and any
+   * marker line is written RAW directly to the freshly-opened stream.
+   */
+  ensureLogStream() {
+    // R2: no-op unless file logging is actually active.
+    if (!this.fileLoggingEnabled || !this.logFile) return;
+
+    // Reentrancy short-circuit: a recreation is already in progress higher
+    // up the call stack (or this call is itself the result of one) — do not
+    // attempt a nested recreation.
+    if (this._ensuringStream) return;
+
+    // Steady-state, cheap-check-only path: stream is open and the file is
+    // still there — nothing to do.
+    if (this.logStream && fs.existsSync(this.logFile)) return;
+
+    this._ensuringStream = true;
+    try {
+      // End the stale stream reference, if any, before opening a new one.
+      // end() is async and not guaranteed complete before the new stream
+      // opens below; the 'error' listener attached to the new stream is the
+      // safety net for any race with the old handle's teardown, not a wait.
+      if (this.logStream) {
+        try {
+          this.logStream.end();
+        } catch {
+          // Ignore — we're discarding this reference regardless.
+        }
+      }
+
+      // Recreate the parent directory in case the whole logs/ folder, not
+      // just the file, was removed.
+      const logsDir = path.dirname(this.logFile);
+      if (!fs.existsSync(logsDir)) {
+        fs.mkdirSync(logsDir, { recursive: true });
+      }
+
+      const newStream = fs.createWriteStream(this.logFile, { flags: "a" });
+      // createWriteStream() failures (bad permissions, disk full, a Windows
+      // delete-pending race with the stream being replaced) surface as an
+      // async 'error' event, not a thrown exception — an unhandled 'error'
+      // event on a stream is an uncaught (process-crashing) exception by
+      // default, so this listener is required, not optional.
+      newStream.on("error", () => {
+        this.logStream = null;
+      });
+      this.logStream = newStream;
+
+      // Raw marker line, written directly to the stream — never through
+      // write()/debug()/console, per the reentrancy guard above.
+      const timestamp = new Date().toISOString();
+      this.logStream.write(`[${timestamp}] [INFO] Log file recreated after external deletion\n`);
+    } catch {
+      // Synchronous failure (e.g. mkdirSync throwing) — leave logStream null
+      // so subsequent writes fall back to the existing no-op-when-null path.
+      this.logStream = null;
+    } finally {
+      this._ensuringStream = false;
     }
   }
 
@@ -188,9 +262,11 @@ class DebugLogger {
     this._origConsole = { log: origLog, warn: origWarn, error: origError, info: origInfo };
 
     const self = this;
-    const makeInterceptor = (orig, level) =>
+    const makeInterceptor =
+      (orig, level) =>
       (...args) => {
         orig(...args);
+        self.ensureLogStream();
         if (self.logStream) {
           const timestamp = new Date().toISOString();
           const text = args
@@ -262,6 +338,7 @@ class DebugLogger {
       consoleFn("%s", `${levelTag}${scopeTag}${sourceTag} ${message}`);
     }
 
+    this.ensureLogStream();
     if (this.logStream) {
       this.logStream.write(logLine);
     }
