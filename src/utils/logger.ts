@@ -37,11 +37,24 @@ const resolveLogLevel = async (): Promise<LogLevel> => {
           // Fall back to default level
         }
       }
-      cachedLevel = defaultLevel;
-      return cachedLevel;
+      return defaultLevel;
     })();
   }
-  return levelPromise;
+  // Await here (in the *outer* function scope) rather than resetting
+  // levelPromise inside the IIFE above: the two fallback paths that never
+  // hit an `await` (getLogLevel unavailable, or throwing synchronously) run
+  // the IIFE fully synchronously, so any reset written inside it would be
+  // clobbered by the `levelPromise = (async () => {...})()` assignment that
+  // runs immediately afterward. Resetting here, after awaiting, is reached
+  // identically regardless of whether the IIFE suspended or ran fully sync.
+  const level = await levelPromise;
+  if (!cachedLevel) {
+    // Resolution did not succeed (fallback to defaultLevel) — don't leave a
+    // stale resolved levelPromise around, so the next distinct call retries
+    // getLogLevel() instead of being stuck at "info" forever.
+    levelPromise = null;
+  }
+  return level;
 };
 
 const shouldLog = (level: LogLevel, current: LogLevel) => {
