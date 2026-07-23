@@ -125,6 +125,13 @@ function getVadSignature(options = {}) {
   return `vad:on:${options.vadModelPath}:${JSON.stringify(vadConfig)}`;
 }
 
+// Tracked for comparison purposes only (consumed by sync-startup-preferences'
+// language-mismatch-unload check, docs/specs/dictation-language-detection-fix.md
+// R7) — deliberately NOT a term in start()'s own no-op restart guard (R1).
+function getLanguageSignature(options = {}) {
+  return `language:${options.language || "auto"}`;
+}
+
 function buildWhisperServerArgs({
   modelPath,
   port,
@@ -187,6 +194,9 @@ class WhisperServerManager extends EventEmitter {
     this.useCuda = false;
     this.vadSignature = "vad:off";
     this.threadSignature = "threads:default";
+    // R1: tracked purely for the sync-startup-preferences language-mismatch
+    // unload check — never consulted by start()'s own no-op restart guard.
+    this.languageSignature = "language:auto";
     this.lastStartOptions = {};
     // R5/R8: universal idle-timeout + drain-before-stop state, shared shape
     // with parakeetWsServer.js/llamaServer.js.
@@ -439,6 +449,10 @@ class WhisperServerManager extends EventEmitter {
     const threadResolution = resolveWhisperThreads(options);
     const nextThreadSignature = getThreadSignature(threadResolution);
     const nextVadSignature = getVadSignature(options);
+    // R1: language is deliberately NOT part of this no-op guard — a language
+    // change alone must never trigger a restart here. See
+    // docs/specs/dictation-language-detection-fix.md.
+    const nextLanguageSignature = getLanguageSignature(options);
     if (
       this.ready &&
       this.modelPath === modelPath &&
@@ -457,6 +471,7 @@ class WhisperServerManager extends EventEmitter {
     this.hostname = "127.0.0.1";
     this.vadSignature = nextVadSignature;
     this.threadSignature = nextThreadSignature;
+    this.languageSignature = nextLanguageSignature;
     this.startupPromise = this._doStart(modelPath, { ...options, threadResolution });
     try {
       await this.startupPromise;
@@ -768,6 +783,15 @@ class WhisperServerManager extends EventEmitter {
           `${initialPrompt}\r\n`
       );
       debugLogger.info("Using custom dictionary prompt", { prompt: initialPrompt });
+
+      // R13: keep the whole prompt alive across a multi-segment decode
+      // instead of letting it evict mid-utterance. Only emitted when there's
+      // an actual prompt to carry (mirrors the `prompt` field's own gating).
+      parts.push(
+        `--${boundary}\r\n` +
+          `Content-Disposition: form-data; name="carry_initial_prompt"\r\n\r\n` +
+          `true\r\n`
+      );
     }
 
     parts.push(
@@ -935,6 +959,7 @@ class WhisperServerManager extends EventEmitter {
 module.exports = WhisperServerManager;
 module.exports.buildWhisperServerArgs = buildWhisperServerArgs;
 module.exports.getVadSignature = getVadSignature;
+module.exports.getLanguageSignature = getLanguageSignature;
 module.exports.resolveWhisperThreads = resolveWhisperThreads;
 module.exports.DEFAULT_IDLE_TIMEOUT_MS = DEFAULT_IDLE_TIMEOUT_MS;
 module.exports.DRAIN_TIMEOUT_MS = DRAIN_TIMEOUT_MS;

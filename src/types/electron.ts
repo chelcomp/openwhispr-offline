@@ -808,6 +808,7 @@ declare global {
         useLocalWhisper: boolean;
         localTranscriptionProvider: LocalTranscriptionProvider;
         model?: string;
+        language?: string;
         useCleanupModel: boolean;
         cleanupMode: string;
         cleanupModel?: string;
@@ -986,7 +987,8 @@ declare global {
       // Transcription-engine warm-up / on-demand start (see
       // docs/specs/on-demand-model-lifecycle.md R2/R3).
       whisperServerStart: (
-        modelName: string
+        modelName: string,
+        language?: string
       ) => Promise<{ success: boolean; port?: number; reason?: string }>;
       parakeetServerStart: (
         modelName: string
@@ -1647,6 +1649,7 @@ declare global {
         provider: string;
         model: string;
         language?: string;
+        acceptedLanguages?: string[];
         initialPrompt?: string;
         showOverlay?: boolean;
       }) => Promise<{ success: boolean }>;

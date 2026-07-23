@@ -254,7 +254,11 @@ export default function UploadAudioView({ onNoteCreated, onOpenSettings }: Uploa
         if (parakeetModel)
           window.electronAPI?.parakeetServerStart?.(parakeetModel)?.catch(() => {});
       } else if (whisperModel) {
-        window.electronAPI?.whisperServerStart?.(whisperModel)?.catch(() => {});
+        const language =
+          localTranscriptionProvider === "whisper"
+            ? getBaseLanguageCode(preferredLanguage)
+            : undefined;
+        window.electronAPI?.whisperServerStart?.(whisperModel, language)?.catch(() => {});
       }
     } catch {
       // Warmup is best-effort; the lazy start on the real transcription call still works.

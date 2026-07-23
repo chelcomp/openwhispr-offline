@@ -129,8 +129,8 @@ test("warms the Whisper server when configured for local Whisper", () => {
   const manager = makeManager();
   const calls = [];
   global.window.electronAPI = {
-    whisperServerStart: (model) => {
-      calls.push(["whisper", model]);
+    whisperServerStart: (model, language) => {
+      calls.push(["whisper", model, language]);
       return Promise.resolve();
     },
     parakeetServerStart: () => {
@@ -146,7 +146,32 @@ test("warms the Whisper server when configured for local Whisper", () => {
     parakeetModel: null,
   });
 
-  assert.deepEqual(calls, [["whisper", "base"]]);
+  assert.deepEqual(calls, [["whisper", "base", undefined]]);
+});
+
+test("warms the Whisper server with the resolved effective language when preferredLanguage is set", () => {
+  const manager = makeManager();
+  const calls = [];
+  global.window.electronAPI = {
+    whisperServerStart: (model, language) => {
+      calls.push(["whisper", model, language]);
+      return Promise.resolve();
+    },
+    parakeetServerStart: () => {
+      calls.push(["parakeet"]);
+      return Promise.resolve();
+    },
+  };
+
+  manager.warmupTranscriptionEngine({
+    useLocalWhisper: true,
+    localTranscriptionProvider: "whisper",
+    whisperModel: "base",
+    parakeetModel: null,
+    preferredLanguage: "pt",
+  });
+
+  assert.deepEqual(calls, [["whisper", "base", "pt"]]);
 });
 
 test("warms the Parakeet server when configured for the nvidia provider", () => {

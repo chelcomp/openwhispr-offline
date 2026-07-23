@@ -322,7 +322,12 @@ dependency despite its home). Exports:
   (`ipcHandlers.js:5257,6405,6493`) keeps working unchanged.
 - `summarizeWhisperQuality(segments)` and `isWhisperSegmentLowQuality(quality, ctx)` — moved
   verbatim from their current inline definitions in `ipcHandlers.js`, unchanged thresholds
-  (`WHISPER_LOGPROB_FLOOR = -1.0`, `WHISPER_COMPRESSION_CEIL = 2.4`).
+  (`WHISPER_LOGPROB_FLOOR = -1.0`, `WHISPER_COMPRESSION_CEIL = 2.4`). **Extended by
+  `docs/specs/dictation-language-mismatch-retry.md`**: `summarizeWhisperQuality(segments, topLevel)`
+  gained an optional second parameter carrying whisper-server's language-detection fields, and
+  `isWhisperSegmentLowQuality(quality, ctx, acceptedLanguageCodes)` gained a third, optional
+  parameter that ORs in a language-mismatch condition (`LANGUAGE_MISMATCH_PROBABILITY_FLOOR = 0.8`)
+  — both backward compatible with existing 1-/2-argument call forms.
 - **New**: `isParakeetSegmentLowQuality(quality, ctx)` — low-quality when: `ctx.text` is empty;
   or `isHallucinatedText(ctx.text, language)`; or
   `computeTextCompressionRatio(ctx.text) > WHISPER_COMPRESSION_CEIL` (the same 2.4 ceiling reused

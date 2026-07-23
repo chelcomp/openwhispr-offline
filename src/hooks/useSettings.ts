@@ -2,6 +2,7 @@ import React, { createContext, useCallback, useContext, useEffect, useRef } from
 import { useSettingsStore, initializeSettings } from "../stores/settingsStore";
 import logger from "../utils/logger";
 import { useLocalStorage } from "./useLocalStorage";
+import { getBaseLanguageCode } from "../utils/languageSupport";
 import type { LocalTranscriptionProvider, InferenceMode, SelfHostedType } from "../types/electron";
 import type { Snippet } from "../utils/snippets";
 
@@ -179,6 +180,7 @@ function useSettingsInternal() {
     localTranscriptionProvider,
     whisperModel,
     parakeetModel,
+    preferredLanguage,
     useCleanupModel,
     cleanupMode,
     localModel,
@@ -191,6 +193,7 @@ function useSettingsInternal() {
     if (typeof window === "undefined" || !window.electronAPI?.syncStartupPreferences) return;
 
     const model = localTranscriptionProvider === "nvidia" ? parakeetModel : whisperModel;
+    const language = getBaseLanguageCode(preferredLanguage);
     // Local cleanup uses the shared Local Model (localModel); cleanupModel stays empty and
     // the resolved provider is the model family (e.g. "qwen"), never "local" — so key the
     // local-cleanup pre-warm off cleanupMode, not the provider. Mirrors getEffectiveCleanupModel().
@@ -201,6 +204,7 @@ function useSettingsInternal() {
         useLocalWhisper,
         localTranscriptionProvider,
         model: model || undefined,
+        language,
         useCleanupModel,
         cleanupMode,
         cleanupModel:
@@ -225,6 +229,7 @@ function useSettingsInternal() {
     localTranscriptionProvider,
     whisperModel,
     parakeetModel,
+    preferredLanguage,
     useCleanupModel,
     cleanupMode,
     localModel,

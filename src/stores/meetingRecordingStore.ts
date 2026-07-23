@@ -693,14 +693,18 @@ export async function startRecording(args: StartRecordingArgs): Promise<void> {
   // elsewhere for meeting transcription). See
   // docs/specs/on-demand-model-lifecycle.md R3.
   try {
-    const resolved = selectResolvedMeetingTranscription(getSettings());
+    const state = getSettings();
+    const resolved = selectResolvedMeetingTranscription(state);
     if (resolved.useLocalWhisper) {
       if (resolved.localTranscriptionProvider === "nvidia") {
         if (resolved.parakeetModel) {
           window.electronAPI?.parakeetServerStart?.(resolved.parakeetModel)?.catch(() => {});
         }
       } else if (resolved.whisperModel) {
-        window.electronAPI?.whisperServerStart?.(resolved.whisperModel)?.catch(() => {});
+        const language = getBaseLanguageCode(state.preferredLanguage);
+        window.electronAPI
+          ?.whisperServerStart?.(resolved.whisperModel, language)
+          ?.catch(() => {});
       }
     }
   } catch {

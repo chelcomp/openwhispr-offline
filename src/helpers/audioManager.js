@@ -8,7 +8,14 @@ import {
   buildAzureTranscriptionUrl,
 } from "../utils/urlUtils";
 import { withSessionRefresh } from "../lib/auth";
-import { getBaseLanguageCode, getMultiLanguagePromptHint } from "../utils/languageSupport";
+import {
+  getBaseLanguageCode,
+  getMultiLanguagePromptHint,
+  getAcceptedLanguageCodes,
+  combineLocalTranscriptionPrompt,
+  combineCloudTranscriptionPrompt,
+  LOCAL_INITIAL_PROMPT_MAX_CHARS,
+} from "../utils/languageSupport";
 import {
   createLocalSpeechGateState,
   getLocalSpeechGateDecision,
@@ -663,12 +670,13 @@ registerProcessor("pcm-collector-processor", PCMCollectorProcessor);
       }
 
       if (!whisperModel || !window.electronAPI?.whisperServerStart) return;
+      const language = getBaseLanguageCode(settings.preferredLanguage);
       logger.debug(
         "Pre-warming local Whisper transcription engine",
-        { model: whisperModel },
+        { model: whisperModel, language },
         "audio"
       );
-      window.electronAPI.whisperServerStart(whisperModel).catch(() => {});
+      window.electronAPI.whisperServerStart(whisperModel, language).catch(() => {});
     } catch {
       // Warmup is best-effort; the lazy start on the real transcription call still works.
     }
@@ -1064,12 +1072,26 @@ registerProcessor("pcm-collector-processor", PCMCollectorProcessor);
           const { preferredLanguage } = getSettings();
           const language = getBaseLanguageCode(preferredLanguage);
           const langHint = getMultiLanguagePromptHint(preferredLanguage);
+          const acceptedLanguages = getAcceptedLanguageCodes(preferredLanguage);
           const dictionaryWords = this.getCustomDictionaryPrompt();
-          const initialPrompt = [langHint, dictionaryWords].filter(Boolean).join(" ") || undefined;
+          const combined = combineLocalTranscriptionPrompt(dictionaryWords, langHint);
+          const initialPrompt = combined.prompt || undefined;
+          if (combined.truncated) {
+            logger.debug(
+              "Transcription prompt truncated",
+              {
+                originalLength: combined.originalLength,
+                truncatedLength: combined.truncatedLength,
+                maxChars: LOCAL_INITIAL_PROMPT_MAX_CHARS,
+              },
+              "transcription"
+            );
+          }
           window.electronAPI?.startDictationPreview?.({
             provider,
             model,
             language,
+            acceptedLanguages,
             initialPrompt,
             showOverlay: !!showTranscriptionPreview,
           });
@@ -1402,9 +1424,20 @@ registerProcessor("pcm-collector-processor", PCMCollectorProcessor);
       // Build initial prompt from custom dictionary + multi-language hint
       const dictionaryPrompt = this.getCustomDictionaryPrompt();
       const langHint = getMultiLanguagePromptHint(preferredLanguage);
-      const combinedPrompt = [langHint, dictionaryPrompt].filter(Boolean).join(" ");
-      if (combinedPrompt) {
-        options.initialPrompt = combinedPrompt;
+      const combined = combineLocalTranscriptionPrompt(dictionaryPrompt, langHint);
+      if (combined.prompt) {
+        options.initialPrompt = combined.prompt;
+      }
+      if (combined.truncated) {
+        logger.debug(
+          "Transcription prompt truncated",
+          {
+            originalLength: combined.originalLength,
+            truncatedLength: combined.truncatedLength,
+            maxChars: LOCAL_INITIAL_PROMPT_MAX_CHARS,
+          },
+          "transcription"
+        );
       }
 
       logger.debug(
@@ -2176,18 +2209,19 @@ registerProcessor("pcm-collector-processor", PCMCollectorProcessor);
       const MAX_PROMPT_CHARS = isGroqEndpoint ? 890 : 900;
       const langHintForApi = getMultiLanguagePromptHint(apiSettings.preferredLanguage);
       let dictionaryPrompt = this.getCustomDictionaryPrompt();
-      let combinedApiPrompt = [langHintForApi, dictionaryPrompt].filter(Boolean).join(" ");
+      const combinedApiPromptResult = combineCloudTranscriptionPrompt(
+        dictionaryPrompt,
+        langHintForApi,
+        MAX_PROMPT_CHARS
+      );
+      const combinedApiPrompt = combinedApiPromptResult.prompt;
       if (combinedApiPrompt) {
-        if (combinedApiPrompt.length > MAX_PROMPT_CHARS) {
-          const originalLength = combinedApiPrompt.length;
-          const truncated = combinedApiPrompt.slice(0, MAX_PROMPT_CHARS);
-          const lastComma = truncated.lastIndexOf(",");
-          combinedApiPrompt = lastComma > 0 ? truncated.slice(0, lastComma) : truncated;
+        if (combinedApiPromptResult.truncated) {
           logger.debug(
             "Transcription prompt truncated",
             {
-              originalLength,
-              truncatedLength: combinedApiPrompt.length,
+              originalLength: combinedApiPromptResult.originalLength,
+              truncatedLength: combinedApiPromptResult.truncatedLength,
               maxChars: MAX_PROMPT_CHARS,
             },
             "transcription"

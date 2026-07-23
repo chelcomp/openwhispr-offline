@@ -2366,9 +2366,9 @@ class IPCHandlers {
       return this.whisperManager.cancelDownload();
     });
 
-    ipcMain.handle("whisper-server-start", async (event, modelName) => {
+    ipcMain.handle("whisper-server-start", async (event, modelName, language) => {
       const useCuda = this._resolveWhisperUseCuda();
-      return this.whisperManager.startServer(modelName, { useCuda });
+      return this.whisperManager.startServer(modelName, { useCuda, language });
     });
 
     ipcMain.handle("whisper-server-stop", async () => {
@@ -3894,6 +3894,22 @@ class IPCHandlers {
           if (currentWhisperModel && currentWhisperModel !== prefs.model) {
             this.whisperManager.stopServer().catch((err) => {
               debugLogger.error("Failed to stop whisper-server on model switch", {
+                error: err.message,
+              });
+            });
+          }
+          // R7 (docs/specs/dictation-language-detection-fix.md): a language
+          // change alone must unload the running whisper-server too — unload
+          // only, no reload as a direct consequence of this branch. Independent
+          // of (and additive to) the model-mismatch check above.
+          const { getLanguageSignature } = require("./whisperServer");
+          const nextLanguageSignature = getLanguageSignature({ language: prefs.language });
+          if (
+            this.whisperManager.serverManager?.ready &&
+            this.whisperManager.serverManager.languageSignature !== nextLanguageSignature
+          ) {
+            this.whisperManager.stopServer().catch((err) => {
+              debugLogger.error("Failed to stop whisper-server on language change", {
                 error: err.message,
               });
             });
@@ -6552,6 +6568,11 @@ class IPCHandlers {
     let dictationPreviewModel = null;
     let dictationPreviewLanguage = null;
     let dictationPreviewInitialPrompt = null;
+    // docs/specs/dictation-language-mismatch-retry.md R6: the accepted-code
+    // set derived from preferredLanguage, threaded into
+    // isWhisperSegmentLowQuality()'s language-mismatch check. [] ("auto") means
+    // the check never applies.
+    let dictationPreviewAcceptedLanguages = [];
     let dictationPreviewSessionActive = false;
     let dictationPreviewChunkCount = 0;
     let dictationPreviewShowOverlay = false;
@@ -6583,6 +6604,7 @@ class IPCHandlers {
       dictationPreviewModel = null;
       dictationPreviewLanguage = null;
       dictationPreviewInitialPrompt = null;
+      dictationPreviewAcceptedLanguages = [];
       dictationPreviewShowOverlay = false;
     };
 
@@ -6601,17 +6623,25 @@ class IPCHandlers {
       if (!result?.success) return { text: "", quality: null };
       const NO_SPEECH_THRESHOLD = 0.6;
       const allSegments = Array.isArray(result.segments) ? result.segments : [];
+      // docs/specs/dictation-language-mismatch-retry.md R6: thread the
+      // language-detection fields through in both branches (previously the
+      // no-segments branch left quality === null entirely).
+      const topLevel = {
+        detectedLanguageProbability: result.detectedLanguageProbability,
+        languageProbabilities: result.languageProbabilities,
+      };
       let text = "";
-      let quality = null;
+      let quality;
       if (allSegments.length > 0) {
         const kept = allSegments.filter((s) => (s.no_speech_prob ?? 0) < NO_SPEECH_THRESHOLD);
         text = kept
           .map((s) => s.text)
           .join(" ")
           .trim();
-        quality = summarizeWhisperQuality(kept.length ? kept : allSegments);
+        quality = summarizeWhisperQuality(kept.length ? kept : allSegments, topLevel);
       } else {
         text = result.text?.trim() || "";
+        quality = summarizeWhisperQuality([], topLevel);
       }
       if (!text || isHallucinatedText(text, dictationPreviewLanguage)) {
         return { text: "", quality };
@@ -6652,13 +6682,19 @@ class IPCHandlers {
 
     ipcMain.handle(
       "start-dictation-preview",
-      async (_event, { provider, model, language, initialPrompt, showOverlay }) => {
+      async (
+        _event,
+        { provider, model, language, acceptedLanguages, initialPrompt, showOverlay }
+      ) => {
         resetDictationPreviewState();
         dictationPreviewMode = true;
         dictationPreviewSessionActive = true;
         dictationPreviewProvider = provider;
         dictationPreviewModel = model;
         dictationPreviewLanguage = language || null;
+        dictationPreviewAcceptedLanguages = Array.isArray(acceptedLanguages)
+          ? acceptedLanguages
+          : [];
         dictationPreviewInitialPrompt = initialPrompt || null;
         dictationPreviewChunkCount = 0;
         dictationPreviewShowOverlay = !!showOverlay;
@@ -6718,7 +6754,15 @@ class IPCHandlers {
           // low confidence, hold its audio and re-transcribe it merged with the
           // next one (bounded by maxMerges) for more acoustic context. This is
           // the only place Whisper and Parakeet wiring differs (Requirement 1/8d).
-          isLowQuality: isNvidia ? isParakeetSegmentLowQuality : isWhisperSegmentLowQuality,
+          // Whisper's closure captures the session's accepted-language state
+          // fresh on every start-dictation-preview call (docs/specs/dictation-
+          // language-mismatch-retry.md R6), so a language-mismatch chunk is
+          // treated as low quality the same way as an existing low-avg_logprob
+          // chunk, feeding into the same existing merge-and-retry mechanism.
+          isLowQuality: isNvidia
+            ? isParakeetSegmentLowQuality
+            : (quality, ctx) =>
+                isWhisperSegmentLowQuality(quality, ctx, dictationPreviewAcceptedLanguages),
           onCommit: (text) => {
             if (gen !== dictationPreviewGen) return;
             dictationPreviewCommitted = [dictationPreviewCommitted, text]

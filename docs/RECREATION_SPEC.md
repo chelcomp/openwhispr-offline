@@ -537,7 +537,29 @@ Download separado do binário CUDA (linux/win32, não macOS), do release GitHub 
 - Resolução de binário: CUDA primeiro em `userData/bin/` (se `preferCuda`), senão bundled em `resources/bin/`.
 - **Threads**: `resolveWhisperThreads` — explícito, ou `WHISPER_THREADS=auto` → `clamp(floor(availableParallelism*0.75), 4, 12)`. Fallback automático para default se auto-tune falhar no startup.
 - **Args**: `--model --host 127.0.0.1 --port [--threads N] --best-of 5 --language [--vad --vad-model --vad-threshold ...]`.
-- **No-op guard**: mesmo modelo + assinatura VAD + assinatura threads → no-op.
+  **Corrigido (`docs/specs/dictation-language-detection-fix.md`)**: antes, `--language` era sempre
+  `"auto"` no startup porque `whisper.js`'s `_runServerTranscription()` e os três call sites de
+  warm-up nunca passavam `language` para `serverManager.start()`; o campo per-request `language`
+  (enviado em toda chamada `transcribe()`) já sobrescrevia isso incondicionalmente no fork
+  vendorizado, então o impacto real no output provavelmente era pequeno — mas o CLI flag agora
+  também reflete o idioma resolvido, como hygiene/defesa em profundidade.
+- **No-op guard**: mesmo modelo + assinatura VAD + assinatura threads → no-op. **Idioma
+  deliberadamente não entra nessa comparação** (`getLanguageSignature()` é rastreado só para o check
+  de unload abaixo, nunca consultado pelo próprio guard de `start()`).
+- **Unload-on-language-change**: uma mudança no idioma efetivo resolvido (`preferredLanguage`) agora
+  descarrega (unload-only, sem reload proativo) o whisper-server em execução, via o mesmo mecanismo
+  `sync-startup-preferences` que já descarregava numa troca de modelo/provider — comparando a nova
+  `getLanguageSignature({ language })` contra `serverManager.languageSignature`. Parakeet fica fora
+  do escopo desse trigger.
+- **Initial-prompt (dicionário + hint de idioma)**: `src/utils/languageSupport.ts` expõe
+  `combineLocalTranscriptionPrompt()`/`combineCloudTranscriptionPrompt()` — ambas ordenam como
+  dicionário-depois-hint (hint por último) e truncam preservando a **cauda**, já que tanto
+  whisper.cpp (`max_prompt_ctx ≈224` tokens) quanto a API OpenAI/Groq descartam o **início** de um
+  prompt longo demais. Local ganha seu primeiro cap de tamanho
+  (`LOCAL_INITIAL_PROMPT_MAX_CHARS = 650`); cloud mantém seu cap numérico existente (890/900) mas
+  inverte a direção do truncamento para bater com local. `transcribe()` também envia
+  `carry_initial_prompt=true` por request sempre que há `initialPrompt`, mantendo o prompt vivo ao
+  longo de um decode multi-segmento.
 - **Seleção de GPU por UUID+PCI_BUS_ID**: `CUDA_DEVICE_ORDER=PCI_BUS_ID`, `CUDA_VISIBLE_DEVICES=TRANSCRIPTION_GPU_UUID`.
 - **CUDA fallback runtime**: se `usingCuda` e o processo morre cedo (<10s), emite `"cuda-fallback"` e reinicia automaticamente em CPU (diferente do Parakeet).
 - `STARTUP_TIMEOUT_MS=30000`; timeout de transcrição 300000ms (5min).
@@ -649,8 +671,8 @@ nvidia/Parakeet, já que Silero não se aplica).
 
 #### 2.6.3 Sinal de confiança por engine (`src/utils/transcriptionQualityHeuristics.js`)
 
-- **Whisper**: `isWhisperSegmentLowQuality` via limiares clássicos (`avg_logprob < -1.0` ou `compression_ratio > 2.4`), usando os campos reais de `avg_logprob`/`compression_ratio`/`no_speech_prob` do whisper.cpp.
-- **Parakeet (offline-runtime)**: não existe campo de confiança nativo no protocolo JSON do binário offline-websocket-server do sherpa-onnx. `isParakeetSegmentLowQuality` usa um heurístico derivado de texto — desvio deliberado e sinalizado, não uma substituição silenciosa: razão de compressão via zlib (mesma técnica que o whisper.cpp usa para `compression_ratio`), o detector de alucinação compartilhado (`isHallucinatedText`), e o RMS do chunk.
+- **Whisper**: `isWhisperSegmentLowQuality` via limiares clássicos (`avg_logprob < -1.0` ou `compression_ratio > 2.4`), usando os campos reais de `avg_logprob`/`compression_ratio`/`no_speech_prob` do whisper.cpp. **Estendido (`docs/specs/dictation-language-mismatch-retry.md`)**: um terceiro sinal opcional — mismatch de idioma. `whisper.js`'s `parseWhisperResult()` agora repassa `detected_language_probability`/`language_probabilities` do response do whisper-server (sempre calculados quando `verboseJson: true`, mesmo com `language` forçado); `resolveDetectedLanguageCode()` faz o argmax de `language_probabilities` (já com chaves em código curto do próprio whisper.cpp — sem tabela de nomes completos mantida à mão) para achar o idioma detectado; se esse código, com `detectedLanguageProbability >= LANGUAGE_MISMATCH_PROBABILITY_FLOOR` (`0.8`), estiver fora de `getAcceptedLanguageCodes(preferredLanguage)` (`[]` no modo `"auto"` — nunca dispara), o chunk é tratado como baixa qualidade e entra no mesmo mecanismo existente de merge-and-retry.
+- **Parakeet (offline-runtime)**: não existe campo de confiança nativo no protocolo JSON do binário offline-websocket-server do sherpa-onnx. `isParakeetSegmentLowQuality` usa um heurístico derivado de texto — desvio deliberado e sinalizado, não uma substituição silenciosa: razão de compressão via zlib (mesma técnica que o whisper.cpp usa para `compression_ratio`), o detector de alucinação compartilhado (`isHallucinatedText`), e o RMS do chunk. Excluído do checagem de mismatch de idioma acima — sem campo nativo de detecção de idioma no protocolo offline-websocket-server vendorizado.
 - `isHallucinatedText` (padrões de alucinação conhecidos, rejeição de script não-latino, detecção de loop de repetição) mora aqui como implementação canônica; `WhisperManager.isHallucinatedText` (`whisper.js`) agora é um wrapper fino que delega para cá.
 
 #### 2.6.4 Integração em `ipcHandlers.js` (`start/stop-dictation-preview`)

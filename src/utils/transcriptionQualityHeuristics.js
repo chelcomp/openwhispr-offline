@@ -21,6 +21,15 @@ const WHISPER_COMPRESSION_CEIL = 2.4;
 // Segment filter threshold shared by both engines' preview/summarize paths.
 const NO_SPEECH_THRESHOLD = 0.6;
 
+// docs/specs/dictation-language-mismatch-retry.md: confidence floor gating the
+// language-mismatch low-quality check. Deliberately conservative (whisper's
+// language-ID pass is known to be less reliable on short clips, which is
+// exactly what individual VAD-segmented utterances tend to be) — biases
+// toward missing genuine mismatches rather than flagging correct-language
+// audio. A starting value, not empirically tuned, same framing as
+// WHISPER_LOGPROB_FLOOR/WHISPER_COMPRESSION_CEIL above.
+const LANGUAGE_MISMATCH_PROBABILITY_FLOOR = 0.8;
+
 // The same zlib-deflate-based compression ratio whisper.cpp itself computes
 // for `compression_ratio` — a purely textual metric (raw length / compressed
 // length), so it applies identically to any engine's output text. Empty text
@@ -122,12 +131,34 @@ function isHallucinatedText(text, language) {
   return false;
 }
 
+// docs/specs/dictation-language-mismatch-retry.md: argmax of whisper-server's
+// own `language_probabilities` map (already short-code-keyed by whisper.cpp
+// itself — `whisper_lang_str(i)`, not `whisper_lang_str_full()`) — no
+// hand-maintained full-name<->short-code lookup table needed. Returns
+// undefined for a missing/non-object/empty map. Pure, no I/O.
+function resolveDetectedLanguageCode(languageProbabilities) {
+  if (!languageProbabilities || typeof languageProbabilities !== "object") return undefined;
+  let bestCode;
+  let bestProb = -Infinity;
+  for (const [code, prob] of Object.entries(languageProbabilities)) {
+    if (Number.isFinite(prob) && prob > bestProb) {
+      bestProb = prob;
+      bestCode = code;
+    }
+  }
+  return bestCode;
+}
+
 // Aggregate whisper's per-segment confidence proxies into one quality view.
 // Fields degrade gracefully — whatever this whisper-server build doesn't
 // populate (avg_logprob / compression_ratio) is left null and simply ignored
 // by the low-quality predicate below. Moved verbatim from its previous inline
-// definition in ipcHandlers.js.
-function summarizeWhisperQuality(segments) {
+// definition in ipcHandlers.js. `topLevel` (docs/specs/dictation-language-
+// mismatch-retry.md R2) is an optional second parameter carrying
+// { detectedLanguageProbability, languageProbabilities } from the raw
+// whisper-server response — existing single-argument call sites keep working
+// unchanged (both new fields resolve to undefined/null).
+function summarizeWhisperQuality(segments, topLevel = {}) {
   let durSum = 0;
   let logprobWeighted = 0;
   let maxComp = 0;
@@ -151,11 +182,18 @@ function summarizeWhisperQuality(segments) {
     avgLogprob: haveLogprob && durSum > 0 ? logprobWeighted / durSum : null,
     compressionRatio: haveComp ? maxComp : null,
     noSpeechProb: maxNoSpeech,
+    detectedLanguageCode: resolveDetectedLanguageCode(topLevel.languageProbabilities),
+    detectedLanguageProbability: Number.isFinite(topLevel.detectedLanguageProbability)
+      ? topLevel.detectedLanguageProbability
+      : null,
   };
 }
 
 // Moved verbatim from its previous inline definition in ipcHandlers.js.
-function isWhisperSegmentLowQuality(quality, ctx) {
+// `acceptedLanguageCodes` (docs/specs/dictation-language-mismatch-retry.md R2)
+// is an optional third parameter; existing 2-argument callers/tests keep
+// working unchanged since the new condition can never fire on an empty array.
+function isWhisperSegmentLowQuality(quality, ctx, acceptedLanguageCodes = []) {
   if (!ctx?.text) return true;
   if (!quality) return false;
   if (Number.isFinite(quality.avgLogprob) && quality.avgLogprob < WHISPER_LOGPROB_FLOOR) {
@@ -164,6 +202,15 @@ function isWhisperSegmentLowQuality(quality, ctx) {
   if (
     Number.isFinite(quality.compressionRatio) &&
     quality.compressionRatio > WHISPER_COMPRESSION_CEIL
+  ) {
+    return true;
+  }
+  if (
+    acceptedLanguageCodes.length > 0 &&
+    quality?.detectedLanguageCode &&
+    Number.isFinite(quality.detectedLanguageProbability) &&
+    quality.detectedLanguageProbability >= LANGUAGE_MISMATCH_PROBABILITY_FLOOR &&
+    !acceptedLanguageCodes.includes(quality.detectedLanguageCode)
   ) {
     return true;
   }
@@ -207,8 +254,10 @@ module.exports = {
   WHISPER_LOGPROB_FLOOR,
   WHISPER_COMPRESSION_CEIL,
   NO_SPEECH_THRESHOLD,
+  LANGUAGE_MISMATCH_PROBABILITY_FLOOR,
   computeTextCompressionRatio,
   isHallucinatedText,
+  resolveDetectedLanguageCode,
   summarizeWhisperQuality,
   isWhisperSegmentLowQuality,
   summarizeParakeetQuality,

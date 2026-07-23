@@ -3,12 +3,14 @@ const assert = require("node:assert/strict");
 const {
   computeTextCompressionRatio,
   isHallucinatedText,
+  resolveDetectedLanguageCode,
   summarizeWhisperQuality,
   isWhisperSegmentLowQuality,
   summarizeParakeetQuality,
   isParakeetSegmentLowQuality,
   WHISPER_LOGPROB_FLOOR,
   WHISPER_COMPRESSION_CEIL,
+  LANGUAGE_MISMATCH_PROBABILITY_FLOOR,
 } = require("../../src/utils/transcriptionQualityHeuristics");
 
 // --- computeTextCompressionRatio -------------------------------------------
@@ -123,6 +125,129 @@ test("summarizeWhisperQuality computes a duration-weighted avg_logprob and max c
   assert.ok(Math.abs(quality.avgLogprob - -1.4 / 3) < 1e-9);
   assert.equal(quality.compressionRatio, 2.0);
   assert.equal(quality.noSpeechProb, 0.4);
+});
+
+// --- resolveDetectedLanguageCode (docs/specs/dictation-language-mismatch-retry.md R2) ---
+
+test("resolveDetectedLanguageCode returns the argmax code", () => {
+  assert.equal(resolveDetectedLanguageCode({ en: 0.1, pt: 0.85, es: 0.05 }), "pt");
+});
+
+test("resolveDetectedLanguageCode returns undefined for a missing/empty map", () => {
+  assert.equal(resolveDetectedLanguageCode({}), undefined);
+  assert.equal(resolveDetectedLanguageCode(undefined), undefined);
+  assert.equal(resolveDetectedLanguageCode(null), undefined);
+});
+
+// --- summarizeWhisperQuality with the new topLevel language-detection argument ---
+
+test("summarizeWhisperQuality's second argument threads through detectedLanguageCode/detectedLanguageProbability", () => {
+  const segments = [
+    { start: 0, end: 1, avg_logprob: -0.2, compression_ratio: 1.5, no_speech_prob: 0.1 },
+  ];
+  const quality = summarizeWhisperQuality(segments, {
+    detectedLanguageProbability: 0.9,
+    languageProbabilities: { en: 0.9, pt: 0.05 },
+  });
+  assert.equal(quality.detectedLanguageCode, "en");
+  assert.equal(quality.detectedLanguageProbability, 0.9);
+  // Existing fields computed exactly as before.
+  assert.equal(quality.avgLogprob, -0.2);
+  assert.equal(quality.compressionRatio, 1.5);
+});
+
+test("summarizeWhisperQuality's existing single-argument call form stays backward compatible", () => {
+  const segments = [
+    { start: 0, end: 1, avg_logprob: -0.2, compression_ratio: 1.5, no_speech_prob: 0.1 },
+  ];
+  const quality = summarizeWhisperQuality(segments);
+  assert.equal(quality.detectedLanguageCode, undefined);
+  assert.equal(quality.detectedLanguageProbability, null);
+  assert.equal(quality.avgLogprob, -0.2);
+  assert.equal(quality.compressionRatio, 1.5);
+});
+
+// --- isWhisperSegmentLowQuality's language-mismatch check (docs/specs/dictation-language-mismatch-retry.md) ---
+
+test("isWhisperSegmentLowQuality flags a mismatch above the confidence floor", () => {
+  assert.equal(
+    isWhisperSegmentLowQuality(
+      {
+        avgLogprob: -0.1,
+        compressionRatio: 1,
+        detectedLanguageCode: "pt",
+        detectedLanguageProbability: 0.95,
+      },
+      { text: "hello" },
+      ["en"]
+    ),
+    true
+  );
+});
+
+test("isWhisperSegmentLowQuality does NOT flag a mismatch below the confidence floor (false-positive guard)", () => {
+  assert.equal(
+    isWhisperSegmentLowQuality(
+      {
+        avgLogprob: -0.1,
+        compressionRatio: 1,
+        detectedLanguageCode: "pt",
+        detectedLanguageProbability: 0.5,
+      },
+      { text: "hello" },
+      ["en"]
+    ),
+    false
+  );
+});
+
+test("isWhisperSegmentLowQuality does NOT flag a matching language even at high probability (common-case guard)", () => {
+  assert.equal(
+    isWhisperSegmentLowQuality(
+      {
+        avgLogprob: -0.1,
+        compressionRatio: 1,
+        detectedLanguageCode: "en",
+        detectedLanguageProbability: 0.99,
+      },
+      { text: "hello" },
+      ["en"]
+    ),
+    false
+  );
+});
+
+test("isWhisperSegmentLowQuality never applies the language-mismatch check when the accepted set is empty ('auto')", () => {
+  const quality = {
+    avgLogprob: -0.1,
+    compressionRatio: 1,
+    detectedLanguageCode: "pt",
+    detectedLanguageProbability: 0.99,
+  };
+  assert.equal(isWhisperSegmentLowQuality(quality, { text: "hello" }, []), false);
+  // 2-argument call form (no third argument at all) must also never flag it.
+  assert.equal(isWhisperSegmentLowQuality(quality, { text: "hello" }), false);
+});
+
+test("isWhisperSegmentLowQuality handles a multi-language accepted set correctly", () => {
+  const inSet = {
+    avgLogprob: -0.1,
+    compressionRatio: 1,
+    detectedLanguageCode: "pt",
+    detectedLanguageProbability: 0.9,
+  };
+  const outOfSet = {
+    avgLogprob: -0.1,
+    compressionRatio: 1,
+    detectedLanguageCode: "fr",
+    detectedLanguageProbability: 0.9,
+  };
+  assert.equal(isWhisperSegmentLowQuality(inSet, { text: "hello" }, ["en", "pt"]), false);
+  assert.equal(isWhisperSegmentLowQuality(outOfSet, { text: "hello" }, ["en", "pt"]), true);
+});
+
+test("LANGUAGE_MISMATCH_PROBABILITY_FLOOR equals 0.8", () => {
+  assert.equal(LANGUAGE_MISMATCH_PROBABILITY_FLOOR, 0.8);
 });
 
 // --- Parakeet counterparts --------------------------------------------------

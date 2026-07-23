@@ -311,6 +311,7 @@ class WhisperManager {
 
     await this.serverManager.start(modelPath, {
       useCuda: this.serverManager.useCuda,
+      language,
       vadEnabled,
       vadModelPath,
       vadConfig: options.vadConfig || null,
@@ -452,6 +453,17 @@ class WhisperManager {
       const out = { success: true, text };
       if (Array.isArray(result.segments) && result.segments.length > 0) {
         out.segments = result.segments;
+      }
+      // docs/specs/dictation-language-mismatch-retry.md R1: pass through
+      // whisper-server's independent language-detection pass (computed even
+      // when a specific `language` was forced) so downstream quality
+      // heuristics can see it. Absent fields simply leave these keys
+      // undefined — graceful degradation, no new hard dependency.
+      if (result.detected_language_probability !== undefined) {
+        out.detectedLanguageProbability = result.detected_language_probability;
+      }
+      if (result.language_probabilities !== undefined) {
+        out.languageProbabilities = result.language_probabilities;
       }
       return out;
     }

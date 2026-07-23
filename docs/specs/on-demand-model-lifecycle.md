@@ -175,6 +175,15 @@ concept that the project owner has now explicitly rejected in favor of a simpler
   reconciles with R2: R2's hotkey-press warm-up call *is* the "next actual use" trigger, just fired
   slightly ahead of the literal first token/request, in parallel with the user's speech — not a
   proactive background reload independent of any real usage.
+- **R4a — Language change is a third unload-only trigger for local Whisper (added by
+  `docs/specs/dictation-language-detection-fix.md`).** A resolved-effective transcription language
+  change (via `preferredLanguage`) unloads the running whisper-server the same unload-only, no-
+  proactive-reload way as R4's model/provider switch — `sync-startup-preferences` compares the newly
+  resolved language against the server's tracked `languageSignature`
+  (`whisperServer.js`'s `getLanguageSignature()`) and, if it differs and the server is `ready`, calls
+  `stopServer()` and nothing else. Not consulted by `start()`'s own no-op restart guard — a language
+  change alone never triggers a restart from inside that guard. Parakeet is out of scope for this
+  trigger.
 - **R5 — Universal, single idle-timeout policy, no pinning.** Every engine (Whisper, Parakeet,
   llama-server) unloads after a single configurable idle-timeout duration counted from its last
   use, with the timer reset on every use (mirroring `llamaServer.js`'s existing

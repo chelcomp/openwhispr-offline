@@ -518,6 +518,22 @@ Improve transcription accuracy for specific words, names, or technical terms:
 - Words in the prompt are more likely to be recognized correctly
 - Useful for: uncommon names, technical jargon, brand names, domain-specific terms
 
+**Prompt ordering, length cap, and `carry_initial_prompt`** (see
+`docs/specs/dictation-language-detection-fix.md`): the transcription `initialPrompt` combines the
+custom-dictionary words with the multi-language hint sentence (`getMultiLanguagePromptHint()`) via
+two pure helpers in `src/utils/languageSupport.ts` — `combineLocalTranscriptionPrompt()` (local
+whisper.cpp) and `combineCloudTranscriptionPrompt()` (OpenAI/Groq/self-hosted "custom"; Mistral/xAI
+are proxied separately and untouched). Both order the combined string as **dictionary, then hint**
+(hint last) and truncate by **keeping the tail** when the combined string overflows — whisper.cpp's
+own prompt-context window (~224 tokens) and OpenAI's/Groq's documented API-side truncation both drop
+content from the front, so the short, safety-critical language hint must survive at the end. Local
+gains its first-ever length cap, `LOCAL_INITIAL_PROMPT_MAX_CHARS = 650` (derived from whisper.cpp's
+real ~224-token prompt ceiling); cloud keeps its existing 890/900-char cap (an unrelated
+API-hard-rejection-avoidance limit) but now truncates in the same tail-preserving direction as local
+instead of the old front-preserving one. `WhisperServerManager.transcribe()` also sends
+`carry_initial_prompt=true` per request whenever `initialPrompt` is set, so the whole prompt stays
+present across a multi-segment decode within one VAD-batched chunk instead of evicting mid-utterance.
+
 **Auto-learn pipeline (learning corrections from the destination field)**:
 
 The custom dictionary also grows automatically by watching what the user _fixes_ after a paste — this is strictly spelling-correction learning (teaching correct spelling of a word/name the user habitually mis-dictates), not a substitution/replacement engine. Actual find/replace is a separate, existing feature (Snippets: `trigger` → `replacement`, app-filtered); building substitution into the dictionary here would be duplicate scope.
@@ -679,6 +695,18 @@ rejected).
 - A model/provider switch unloads the stale process immediately but never reloads proactively — the
   next load only happens via one of the triggers above, or a real transcription/inference request
   arriving with no engine loaded.
+- **A resolved-effective transcription language change is a third such trigger for local Whisper**
+  (see `docs/specs/dictation-language-detection-fix.md`): `useSettings.ts`'s existing
+  `sync-startup-preferences` effect also resolves `getBaseLanguageCode(preferredLanguage)` and sends
+  it; `ipcHandlers.js`'s handler compares it (via `whisperServer.js`'s `getLanguageSignature()`)
+  against the running server's tracked `languageSignature` and, if it differs and the server is
+  `ready`, unloads it — same unload-only, no-proactive-reload shape as the model/provider switch
+  above, not a restart baked into `start()`'s own no-op guard. The three warm-up call sites
+  (`audioManager.js`'s `warmupTranscriptionEngine()`, `meetingRecordingStore.ts`'s
+  `startRecording()`, `UploadAudioView.tsx`'s `warmupUploadTranscriptionEngine()`) each thread the
+  same resolved language through `whisperServerStart(modelName, language)` so a warm-up-driven cold
+  start also gets the correct `--language` CLI flag, not just the always-correct per-request
+  `language` field.
 
 **Idle-timeout unload — two independent settings**:
 
@@ -736,7 +764,19 @@ See `docs/specs/audio-transcription-batching.md` for the full design.
 **Confidence signal per engine (`src/utils/transcriptionQualityHeuristics.js`)**:
 
 - Whisper: whisper.cpp's real `avg_logprob`/`compression_ratio`/`no_speech_prob` fields
-  (`isWhisperSegmentLowQuality`, thresholds `avg_logprob < -1.0` / `compression_ratio > 2.4`).
+  (`isWhisperSegmentLowQuality`, thresholds `avg_logprob < -1.0` / `compression_ratio > 2.4`), plus
+  (see `docs/specs/dictation-language-mismatch-retry.md`) a language-mismatch check: whisper-server's
+  independent language-detection pass (`language_probabilities`, always computed when
+  `verboseJson: true` is requested, even when a specific `language` was forced) is argmax'd via
+  `resolveDetectedLanguageCode()` into a whisper short code, and a chunk is also treated as low
+  quality when that detected code, at `detectedLanguageProbability >=
+  LANGUAGE_MISMATCH_PROBABILITY_FLOOR` (`0.8`), falls outside `getAcceptedLanguageCodes(
+  preferredLanguage)` — empty (the `"auto"` case) means the check never applies. Feeds into the
+  *same* existing merge-and-retry mechanism as the avg_logprob/compression_ratio checks, not a new
+  retry path.
+- Parakeet is explicitly excluded from the language-mismatch check above — no native
+  language-detection field exists in the vendored sherpa-onnx offline-websocket-server protocol,
+  same reason it already has a different, text-derived confidence heuristic below.
 - Parakeet (offline-runtime only — see below): no native confidence field exists in the vendored
   sherpa-onnx offline-websocket-server protocol. `isParakeetSegmentLowQuality` uses a deliberate,
   flagged deviation instead: a zlib-based text-compression-ratio (the same technique whisper.cpp
@@ -801,7 +841,8 @@ removed model IDs (`.env`'s `PARAKEET_MODEL`, or `localStorage`'s `parakeetModel
 
 **Tests**: `test/utils/transcriptionQualityHeuristics.test.js`,
 `test/helpers/dictationBatchingSession.test.js`, `test/helpers/parakeetModelMigration.test.js`,
-`test/components/parakeetModelMigration.test.js` (run with `node --test`)
+`test/components/parakeetModelMigration.test.js`, `test/helpers/whisperParseResult.test.js`,
+`test/components/languageSupport.test.js` (run with `node --test`)
 
 ### 20. Active-Window Screen Context (Windows only)
 

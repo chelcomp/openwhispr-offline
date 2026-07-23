@@ -138,6 +138,41 @@ test("resolveWhisperThreads falls back safely when env override is invalid", () 
   assert.equal(result.source, "invalid-env-auto");
 });
 
+test("getLanguageSignature returns language:auto for missing/undefined language", () => {
+  assert.equal(WhisperServerManager.getLanguageSignature({}), "language:auto");
+  assert.equal(WhisperServerManager.getLanguageSignature({ language: undefined }), "language:auto");
+});
+
+test("getLanguageSignature returns language:<code> for an explicit language, and differs across languages", () => {
+  const en = WhisperServerManager.getLanguageSignature({ language: "en" });
+  const pt = WhisperServerManager.getLanguageSignature({ language: "pt" });
+  assert.equal(en, "language:en");
+  assert.equal(pt, "language:pt");
+  assert.notEqual(en, pt);
+});
+
+test("buildWhisperServerArgs never emits --translate/-tr across representative option permutations", () => {
+  const permutations = [
+    { modelPath: "/tmp/m.bin", port: 8180, language: "auto" },
+    { modelPath: "/tmp/m.bin", port: 8180, language: "en" },
+    { modelPath: "/tmp/m.bin", port: 8180, language: "pt", threads: 8 },
+    {
+      modelPath: "/tmp/m.bin",
+      port: 8180,
+      language: "en",
+      vadEnabled: true,
+      vadModelPath: "/tmp/vad.bin",
+    },
+    { modelPath: "/tmp/m.bin", port: 8180, language: undefined },
+  ];
+
+  for (const options of permutations) {
+    const args = WhisperServerManager.buildWhisperServerArgs(options);
+    assert.equal(args.includes("--translate"), false);
+    assert.equal(args.includes("-tr"), false);
+  }
+});
+
 test("getVadSignature changes when VAD settings or model path change", () => {
   const a = WhisperServerManager.getVadSignature({
     vadEnabled: true,

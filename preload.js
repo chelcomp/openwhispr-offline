@@ -249,7 +249,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
   getAudioDiagnostics: () => ipcRenderer.invoke("get-audio-diagnostics"),
 
   // Whisper server functions (faster repeated transcriptions)
-  whisperServerStart: (modelName) => ipcRenderer.invoke("whisper-server-start", modelName),
+  whisperServerStart: (modelName, language) =>
+    ipcRenderer.invoke("whisper-server-start", modelName, language),
   whisperServerStop: () => ipcRenderer.invoke("whisper-server-stop"),
   whisperServerStatus: () => ipcRenderer.invoke("whisper-server-status"),
 

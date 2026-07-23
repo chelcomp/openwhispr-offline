@@ -201,6 +201,174 @@ test("an unexpected whisper-server exit logs distinctly (error level) and schedu
   fs.rmSync(userDataDir, { recursive: true, force: true });
 });
 
+// --- language plumbing (docs/specs/dictation-language-detection-fix.md) ---
+
+test("start() still no-ops (no restart) when nothing changed, including language", async () => {
+  const { EventEmitter } = require("node:events");
+  const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), "ektoswhispr-test-userdata-"));
+  const binDir = path.join(userDataDir, "bin");
+  fs.mkdirSync(binDir, { recursive: true });
+  const binaryName =
+    process.platform === "win32"
+      ? `whisper-server-${process.platform}-${process.arch}.exe`
+      : `whisper-server-${process.platform}-${process.arch}`;
+  const binaryPath = path.join(binDir, binaryName);
+  fs.writeFileSync(binaryPath, "");
+  const modelPath = path.join(userDataDir, "model.bin");
+  fs.writeFileSync(modelPath, "");
+
+  let spawnCount = 0;
+  const fakeSpawn = () => {
+    spawnCount++;
+    const proc = new EventEmitter();
+    proc.stdout = new EventEmitter();
+    proc.stderr = new EventEmitter();
+    proc.killed = false;
+    proc.pid = 30000 + spawnCount;
+    proc.kill = () => {
+      proc.killed = true;
+      process.nextTick(() => proc.emit("close", 0));
+    };
+    return proc;
+  };
+
+  const manager = loadWhisperServerManager({ userDataDir, spawn: fakeSpawn });
+  manager.checkHealth = async () => true;
+
+  await withStubbedExistsSync(
+    (candidatePath) => candidatePath === binaryPath || candidatePath === modelPath,
+    async () => {
+      await manager.start(modelPath, { language: "en" });
+      await manager.start(modelPath, { language: "en" });
+    }
+  );
+
+  assert.equal(spawnCount, 1);
+  manager.stopHealthCheck();
+  manager.clearIdleTimer();
+  fs.rmSync(userDataDir, { recursive: true, force: true });
+});
+
+test("start() does not restart merely because language differs from a previous call, when the server is still ready", async () => {
+  const { EventEmitter } = require("node:events");
+  const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), "ektoswhispr-test-userdata-"));
+  const binDir = path.join(userDataDir, "bin");
+  fs.mkdirSync(binDir, { recursive: true });
+  const binaryName =
+    process.platform === "win32"
+      ? `whisper-server-${process.platform}-${process.arch}.exe`
+      : `whisper-server-${process.platform}-${process.arch}`;
+  const binaryPath = path.join(binDir, binaryName);
+  fs.writeFileSync(binaryPath, "");
+  const modelPath = path.join(userDataDir, "model.bin");
+  fs.writeFileSync(modelPath, "");
+
+  let spawnCount = 0;
+  const fakeSpawn = () => {
+    spawnCount++;
+    const proc = new EventEmitter();
+    proc.stdout = new EventEmitter();
+    proc.stderr = new EventEmitter();
+    proc.killed = false;
+    proc.pid = 40000 + spawnCount;
+    proc.kill = () => {
+      proc.killed = true;
+      process.nextTick(() => proc.emit("close", 0));
+    };
+    return proc;
+  };
+
+  const manager = loadWhisperServerManager({ userDataDir, spawn: fakeSpawn });
+  manager.checkHealth = async () => true;
+
+  await withStubbedExistsSync(
+    (candidatePath) => candidatePath === binaryPath || candidatePath === modelPath,
+    async () => {
+      await manager.start(modelPath, { language: "en" });
+      assert.equal(spawnCount, 1);
+      await manager.start(modelPath, { language: "pt" });
+    }
+  );
+
+  assert.equal(spawnCount, 1, "language alone must never trigger a restart (R1)");
+  manager.stopHealthCheck();
+  manager.clearIdleTimer();
+  fs.rmSync(userDataDir, { recursive: true, force: true });
+});
+
+test("transcribe()'s multipart body includes carry_initial_prompt=true whenever initialPrompt is supplied, and omits the field entirely when it isn't", async () => {
+  const manager = loadWhisperServerManager();
+  manager.ready = true;
+  manager.canConvert = true;
+  manager.process = { killed: false };
+
+  // Minimal valid 44-byte WAV header (16kHz mono PCM), enough for
+  // isWhisperReadyWav() to treat it as already-ready and skip FFmpeg.
+  const wav = Buffer.alloc(44);
+  wav.write("RIFF", 0);
+  wav.writeUInt32LE(36, 4);
+  wav.write("WAVE", 8);
+  wav.write("fmt ", 12);
+  wav.writeUInt32LE(16, 16);
+  wav.writeUInt16LE(1, 20); // PCM
+  wav.writeUInt16LE(1, 22); // mono
+  wav.writeUInt32LE(16000, 24); // sample rate
+  wav.writeUInt32LE(32000, 28); // byte rate
+  wav.writeUInt16LE(2, 32); // block align
+  wav.writeUInt16LE(16, 34); // bits per sample
+  wav.write("data", 36);
+  wav.writeUInt32LE(0, 40);
+
+  let capturedBody = null;
+  manager._doTranscribeRequest = async (_boundary, body) => {
+    capturedBody = body;
+    return { text: "hello" };
+  };
+
+  await manager.transcribe(wav, { language: "en", initialPrompt: "test" });
+  assert.ok(capturedBody.toString().includes('name="carry_initial_prompt"'));
+  assert.ok(capturedBody.toString().includes("true"));
+
+  capturedBody = null;
+  await manager.transcribe(wav, { language: "en" });
+  assert.equal(capturedBody.toString().includes('name="carry_initial_prompt"'), false);
+
+  manager.clearIdleTimer();
+});
+
+test("transcribe()'s multipart request body never includes a translate field regardless of options", async () => {
+  const manager = loadWhisperServerManager();
+  manager.ready = true;
+  manager.canConvert = true;
+  manager.process = { killed: false };
+
+  const wav = Buffer.alloc(44);
+  wav.write("RIFF", 0);
+  wav.writeUInt32LE(36, 4);
+  wav.write("WAVE", 8);
+  wav.write("fmt ", 12);
+  wav.writeUInt32LE(16, 16);
+  wav.writeUInt16LE(1, 20);
+  wav.writeUInt16LE(1, 22);
+  wav.writeUInt32LE(16000, 24);
+  wav.writeUInt32LE(32000, 28);
+  wav.writeUInt16LE(2, 32);
+  wav.writeUInt16LE(16, 34);
+  wav.write("data", 36);
+  wav.writeUInt32LE(0, 40);
+
+  let capturedBody = null;
+  manager._doTranscribeRequest = async (_boundary, body) => {
+    capturedBody = body;
+    return { text: "hello" };
+  };
+
+  await manager.transcribe(wav, { language: "en", initialPrompt: "dictionary words" });
+  assert.equal(capturedBody.toString().toLowerCase().includes("translate"), false);
+
+  manager.clearIdleTimer();
+});
+
 test("getServerBinaryPath() finds a binary present only at the userData/bin candidate (not resources/bin)", () => {
   const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), "ektoswhispr-test-userdata-"));
   const binDir = path.join(userDataDir, "bin");
