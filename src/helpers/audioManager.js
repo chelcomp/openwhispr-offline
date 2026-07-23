@@ -31,8 +31,13 @@ import {
 } from "./selfHostedTranscription";
 import { resolveStreamingFallbackTarget } from "./transcriptionFallback";
 import { detectAgentName } from "../config/agentDetection";
-import { resolveDictationRouteKind, resolveDictationAgentReachability } from "./dictationRouting";
-import { resolvePrompt } from "../config/prompts";
+import {
+  resolveDictationRouteKind,
+  resolveDictationAgentReachability,
+  shouldCaptureScreenContext,
+} from "./dictationRouting";
+import { resolvePrompt, appendScreenContextSuffix } from "../config/prompts";
+import { ScreenContextCache, OCR_REUSE_WINDOW_MS } from "./screenContextCache";
 import { syncService } from "../services/SyncService.js";
 import { evaluateFinishedRecording } from "./recordingValidation";
 import { matchesDictionaryPrompt } from "../utils/dictionaryEchoFilter.js";
@@ -128,6 +133,20 @@ const REALTIME_MODELS = new Set(["gpt-4o-mini-transcribe", "gpt-4o-transcribe"])
 // which causes a 1-2 second wake-up delay at the start of the next capture.
 const MIC_STREAM_KEEP_ALIVE_MS = 20000;
 
+// Cheap "same app" identity check for the OCR-reuse cache (Requirement 13) —
+// delegates to main's activeAppCapture.detectAsync() via IPC rather than
+// spawning a second native helper mode.
+async function activeAppCaptureDetect() {
+  try {
+    if (typeof window === "undefined" || !window.electronAPI?.detectActiveAppForScreenContext) {
+      return null;
+    }
+    return await window.electronAPI.detectActiveAppForScreenContext();
+  } catch {
+    return null;
+  }
+}
+
 function dictationAgentReachable(settings) {
   return resolveDictationAgentReachability({
     useDictationAgent: settings.useDictationAgent,
@@ -138,7 +157,7 @@ function dictationAgentReachable(settings) {
   });
 }
 
-function resolveReasoningRoute(text, settings, agentName, voiceAgentRequested) {
+function resolveReasoningRoute(text, settings, agentName, voiceAgentRequested, screenContextText) {
   // Use getEffectiveCleanupModel() (not settings.cleanupModel) so local cleanup mode is
   // seen as reachable: in local mode the selected model lives in settings.localModel, and
   // settings.cleanupModel stays empty. Must match the reachability gate in processTranscription.
@@ -191,19 +210,30 @@ function resolveReasoningRoute(text, settings, agentName, voiceAgentRequested) {
             ? settings.dictationAgentCustomApiKey || undefined
             : undefined,
         disableThinking: settings.dictationAgentDisableThinking,
-        systemPrompt: resolvePrompt("dictationAgent", {
-          agentName,
-          language: settings.preferredLanguage,
-          customDictionary: getDictionaryHintWords(settings),
-          uiLanguage: settings.uiLanguage,
-        }),
+        systemPrompt: appendScreenContextSuffix(
+          resolvePrompt("dictationAgent", {
+            agentName,
+            language: settings.preferredLanguage,
+            customDictionary: getDictionaryHintWords(settings),
+            uiLanguage: settings.uiLanguage,
+          }),
+          screenContextText,
+          settings.uiLanguage
+        ),
       },
     };
   }
   if (kind === "cleanup") {
     return {
       kind: "cleanup",
-      config: { disableThinking: settings.cleanupDisableThinking },
+      config: {
+        disableThinking: settings.cleanupDisableThinking,
+        // Threaded through for ReasoningService's cleanup prompt assembly to
+        // append via appendScreenContextSuffix() — see
+        // docs/specs/active-window-screen-context.md's "Threading OCR text
+        // into the LLM context" Design section.
+        screenContextText: screenContextText || null,
+      },
     };
   }
   return { kind: "skip" };
@@ -308,6 +338,14 @@ class AudioManager {
     this.streamingFallbackChunks = [];
     this.skipReasoning = false;
     this.voiceAgentRequested = false;
+    // Active-window screen context (docs/specs/active-window-screen-context.md).
+    // screenContextPromise is set by warmupScreenContext() at hotkey-down, only
+    // when shouldCaptureScreenContext()'s gate (Requirement 1a) says the
+    // upcoming dictation will actually route through a pass that consumes it.
+    // screenContextCache is the process-lifetime, in-memory OCR-reuse cache
+    // for rapid consecutive dictations in the same app (Requirement 13).
+    this.screenContextPromise = null;
+    this.screenContextCache = new ScreenContextCache();
     this.context = "dictation";
     this.sttConfig = null;
     this.lastAudioBlob = null;
@@ -634,6 +672,110 @@ registerProcessor("pcm-collector-processor", PCMCollectorProcessor);
       window.electronAPI.whisperServerStart(whisperModel).catch(() => {});
     } catch {
       // Warmup is best-effort; the lazy start on the real transcription call still works.
+    }
+  }
+
+  // Requirement 1a's synchronous gate, evaluated before spawning anything —
+  // fires alongside (not blocking) warmupTranscriptionEngine()/
+  // warmupReasoningServer(). Only when the gate returns true does this kick
+  // off capture+OCR and store the in-flight Promise<string|null> on
+  // this.screenContextPromise; otherwise it's left null and no helper process
+  // is spawned, no PNG bitmap captured, no OCR call made (Requirement 1a/9).
+  // See docs/specs/active-window-screen-context.md's "Threading OCR text into
+  // the LLM context" and "OCR cache reuse across rapid consecutive
+  // dictations" Design sections.
+  async warmupScreenContext() {
+    this.screenContextPromise = null;
+    try {
+      if (typeof window === "undefined" || !window.electronAPI?.captureActiveWindowContext) {
+        logger.debug("Screen context skipped: no electronAPI", {}, "screen-context");
+        return;
+      }
+
+      const settings = getSettings();
+      if (!settings.includeActiveWindowContext) {
+        logger.debug("Screen context skipped: toggle off", {}, "screen-context");
+        return;
+      }
+
+      const support = await window.electronAPI.getActiveWindowContextPlatformSupport?.();
+      if (!support?.supported) {
+        logger.debug("Screen context skipped: platform unsupported", { support }, "screen-context");
+        return;
+      }
+
+      const gate = shouldCaptureScreenContext({
+        cleanupReachable:
+          !!settings.useCleanupModel &&
+          (!!getEffectiveCleanupModel()?.trim() || isCloudCleanupMode()),
+        agentReachable: dictationAgentReachable(settings),
+        agentInvoked: false, // wake-word detection needs the transcript, unknown at hotkey-down
+        voiceAgentRequested: this.voiceAgentRequested,
+      });
+      if (!gate) {
+        logger.debug(
+          "Screen context skipped: gate false (no cleanup/agent reachable)",
+          {
+            useCleanupModel: settings.useCleanupModel,
+            effectiveCleanupModel: getEffectiveCleanupModel()?.trim(),
+            isCloudCleanupMode: isCloudCleanupMode(),
+            agentReachable: dictationAgentReachable(settings),
+          },
+          "screen-context"
+        );
+        return;
+      }
+      logger.debug("Screen context gate passed, capturing...", {}, "screen-context");
+
+      const hotkeyDownTimestamp = Date.now();
+      const currentAppIdentifier = await activeAppCaptureDetect();
+
+      if (
+        this.screenContextCache.shouldReuse(
+          currentAppIdentifier,
+          hotkeyDownTimestamp,
+          OCR_REUSE_WINDOW_MS
+        )
+      ) {
+        this.screenContextPromise = Promise.resolve(this.screenContextCache.getCachedText());
+        return;
+      }
+
+      this.screenContextPromise = window.electronAPI
+        .captureActiveWindowContext({
+          screenContextOcrEngine: settings.screenContextOcrEngine,
+          persistActiveWindowScreenshots: settings.persistActiveWindowScreenshots,
+        })
+        .then((result) => {
+          const text = result?.text || null;
+          if (text) {
+            this.screenContextCache.update(result.appIdentifier || currentAppIdentifier, text);
+          }
+          return text;
+        })
+        .catch(() => null);
+    } catch {
+      // Best-effort — a failed gate/capture must never surface as an error
+      // or block the raw-transcript path (Requirement 7).
+      this.screenContextPromise = null;
+    }
+  }
+
+  /**
+   * Awaits the in-flight screen-context promise with a short bound so it
+   * never delays the LLM pass past its own latency budget (Requirement 3).
+   * Resolves to null if there's no in-flight promise or it hasn't resolved
+   * within the bound.
+   */
+  async getScreenContextTextBounded(timeoutMs = 1500) {
+    if (!this.screenContextPromise) return null;
+    try {
+      return await Promise.race([
+        this.screenContextPromise,
+        new Promise((resolve) => setTimeout(() => resolve(null), timeoutMs)),
+      ]);
+    } catch {
+      return null;
     }
   }
 
@@ -976,23 +1118,35 @@ registerProcessor("pcm-collector-processor", PCMCollectorProcessor);
   }
 
   stopRecording() {
+    // Feeds the OCR-reuse cache's "gap since last recording stopped" check
+    // (Requirement 13) — recorded regardless of whether a screen-context
+    // capture was ever gated on for this recording.
+    this.screenContextCache.recordRecordingStopped(Date.now());
     if (this.mediaRecorder?.state === "recording") {
       // Flush the PCM collector's partial buffer before stopping MediaRecorder.
       // The "done" (null) sentinel resolves the promise; onstop awaits it.
       if (this._pcmCollector) {
+        // Capture stable local references to the port and the in-flight
+        // chunks array at this exact moment. `this._pcmCollector` and
+        // `this._pcmChunks` can both be nulled/reassigned by other paths
+        // (cleanup(), teardownSpeechGate(), a failed startRecording() retry)
+        // before the worklet's async "done" sentinel arrives, so the closure
+        // below must never re-read them from `this` — only from these
+        // captured locals. See docs/specs/pcm-collector-stop-race-fix.md.
+        const capturedPort = this._pcmCollector.port;
+        const capturedChunks = this._pcmChunks;
         this._pcmFlushPromise = new Promise((resolve) => {
-          const orig = this._pcmCollector.port.onmessage;
-          this._pcmCollector.port.onmessage = (event) => {
+          capturedPort.onmessage = (event) => {
             if (event.data === null) {
-              // "done" sentinel — restore normal handler and resolve.
-              this._pcmCollector.port.onmessage = null;
+              // "done" sentinel — clear the temporary handler and resolve.
+              capturedPort.onmessage = null;
               resolve();
             } else {
               // partial chunk arriving just before "stop" was acknowledged.
-              this._pcmChunks.push(new Int16Array(event.data));
+              capturedChunks.push(new Int16Array(event.data));
             }
           };
-          this._pcmCollector.port.postMessage("stop");
+          capturedPort.postMessage("stop");
         });
       }
       this.mediaRecorder.stop();
@@ -1670,6 +1824,10 @@ registerProcessor("pcm-collector-processor", PCMCollectorProcessor);
   }
 
   async processTranscription(text, source) {
+    // Reset at the top of every turn — a stale value from a previous turn
+    // must never leak into this one when the LLM pass isn't reached this
+    // time (empty text, skipReasoning, or neither cleanup/agent reachable).
+    this.lastScreenContextTextUsed = null;
     const normalizedText = typeof text === "string" ? text.trim() : "";
 
     if (!normalizedText) {
@@ -1724,11 +1882,20 @@ registerProcessor("pcm-collector-processor", PCMCollectorProcessor);
 
     if (useReasoning) {
       try {
+        // Best-effort, bounded await (Requirement 3) — the LLM pass proceeds
+        // without screen context if OCR hasn't finished within the bound.
+        const screenContextText = await this.getScreenContextTextBounded();
+        // Remembered so saveTranscription() can persist exactly what was
+        // threaded into this turn's LLM request into the new
+        // screen_context_text history column (Requirement 14) — including
+        // the cache-reuse case, stored identically to a fresh capture.
+        this.lastScreenContextTextUsed = screenContextText || null;
         const route = resolveReasoningRoute(
           normalizedText,
           getSettings(),
           agentName,
-          this.voiceAgentRequested
+          this.voiceAgentRequested,
+          screenContextText
         );
         if (route.kind === "skip") return normalizedText;
 
@@ -2569,6 +2736,11 @@ registerProcessor("pcm-collector-processor", PCMCollectorProcessor);
     try {
       const result = await window.electronAPI.saveTranscription(text, rawText, {
         clientTranscriptionId,
+        // Whatever screen-context text actually got threaded into this
+        // turn's LLM request (or null) — see Requirement 14. Undefined-safe:
+        // a turn that never reached processTranscription's reasoning branch
+        // (e.g. reasoning disabled) leaves this null, per the reset above.
+        screenContextText: this.lastScreenContextTextUsed ?? null,
       });
       if (result?.id) syncService.debouncedPush("transcription", result.id);
 

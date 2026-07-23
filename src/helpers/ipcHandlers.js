@@ -34,6 +34,10 @@ const { downsample24kTo16k, pcm16ToWav } = require("../utils/audioUtils");
 const postMigrationDetector = require("./postMigrationDetector");
 const activeAppCapture = require("./activeAppCapture");
 const meetingAudioStorage = require("./meetingAudioStorage");
+const ScreenContextStorageManager = require("./screenContextStorage");
+const TesseractOcrManager = require("./tesseractOcrManager");
+const activeWindowCapture = require("./activeWindowCapture");
+const activeWindowOcr = require("./activeWindowOcr");
 const {
   DEFAULT_EXPECTED_SPEAKER_COUNT,
   MAX_SPEAKER_COUNT,
@@ -398,6 +402,13 @@ class IPCHandlers {
     this._activeRecordingPipeline = null;
     this.audioStorageManager = new AudioStorageManager();
     this._audioCleanupInterval = null;
+    // Screen-context screenshot storage (opt-in, see
+    // docs/specs/active-window-screen-context.md). Constructing
+    // ScreenContextStorageManager does not create any directory on disk —
+    // that only happens on first actual saveScreenshot() call, per Premise #2.
+    this.screenContextStorageManager = new ScreenContextStorageManager();
+    this.tesseractOcrManager = new TesseractOcrManager();
+    this._screenContextCleanupInterval = null;
     this._noteFilesEnabled = false;
     this.speakerDiarizationEnabled = true;
     this.activeMeetingSpeakerConfig = null;
@@ -411,6 +422,7 @@ class IPCHandlers {
     liveSpeakerIdentifier.setDiarizationManager(this.diarizationManager);
     this._setupTextEditMonitor();
     this._setupAudioCleanup();
+    this._setupScreenContextCleanup();
     this._applyPersistedModelIdleTimeouts();
     // Restore hotkeys if the control panel is destroyed while a HotkeyInput had focus.
     this.windowManager.onControlPanelDestroyed = () => {
@@ -792,6 +804,58 @@ class IPCHandlers {
     this._audioCleanupInterval = setInterval(runCleanup, SIX_HOURS_MS);
   }
 
+  // Mirrors _setupAudioCleanup() structurally exactly, applied to persisted
+  // screen-context screenshots (see docs/specs/active-window-screen-context.md
+  // Requirement 17). decideAudioCleanup()/shouldRunImmediateCleanup() are
+  // imported and called UNCHANGED — no sibling "decideScreenContextCleanup"
+  // function exists, since screenContextRetentionDays shares identical
+  // edge-value semantics with audioRetentionDays (5th revision decision).
+  // Same SIX_HOURS_MS cadence — no new interval magic number introduced.
+  // Only ever touches userData/screen-context-captures/, never merged with
+  // the dictation-audio cleanup pass above (fully independent settings).
+  _setupScreenContextCleanup() {
+    const SIX_HOURS_MS = 6 * 60 * 60 * 1000;
+
+    const runCleanup = () => {
+      const retentionDays = this.environmentManager.getScreenContextRetentionDays();
+      const decision = decideAudioCleanup(retentionDays);
+      if (!decision.shouldRun) {
+        debugLogger.warn(
+          "Screen context cleanup skipped — invalid retention value",
+          { retentionDays },
+          "screen-context-storage"
+        );
+        return;
+      }
+      try {
+        this.screenContextStorageManager.cleanupExpiredScreenshots(decision.retentionDays);
+      } catch (error) {
+        debugLogger.error(
+          "Screen context cleanup failed",
+          { error: error.message },
+          "screen-context-storage"
+        );
+      }
+    };
+
+    // Startup-ordering safeguard, identical rationale to _setupAudioCleanup()'s:
+    // main must NOT self-persist the 0 fallback here — establishing the real
+    // value is exclusively screenContextRetentionSync.js's job on the renderer
+    // side. See CLAUDE.md's "Audio Retention Cleanup" section for the
+    // documented failure mode this avoids.
+    if (shouldRunImmediateCleanup(this.environmentManager.hasScreenContextRetentionDaysBeenSet())) {
+      runCleanup();
+    } else {
+      debugLogger.info(
+        "Skipping first screen context cleanup pass — SCREEN_CONTEXT_RETENTION_DAYS never synced yet",
+        {},
+        "screen-context-storage"
+      );
+    }
+
+    this._screenContextCleanupInterval = setInterval(runCleanup, SIX_HOURS_MS);
+  }
+
   // Applies any already-persisted transcriptionIdleTimeoutMs/llmIdleTimeoutMs
   // value to the relevant manager(s) at construction time, so a returning
   // user's custom timeout takes effect from the very first cold start rather
@@ -993,8 +1057,16 @@ class IPCHandlers {
     }
 
     ipcMain.handle("db-save-transcription", async (event, text, rawText, options) => {
-      const result = this.databaseManager.saveTranscription(text, rawText, options);
+      // screenContextText (Requirement 14) is not a saveTranscription() column
+      // — extracted here and written via updateTranscriptionScreenContext()
+      // right after insert, so options's shape stays otherwise unchanged.
+      const { screenContextText, ...saveOptions } = options || {};
+      const result = this.databaseManager.saveTranscription(text, rawText, saveOptions);
       if (result?.success && result?.transcription) {
+        if (screenContextText) {
+          this.databaseManager.updateTranscriptionScreenContext(result.id, screenContextText);
+          result.transcription.screen_context_text = screenContextText;
+        }
         setImmediate(() => {
           this.broadcastToWindows("transcription-added", result.transcription);
         });
@@ -3624,6 +3696,106 @@ class IPCHandlers {
         hasBeenSet: this.environmentManager.hasAudioRetentionDaysBeenSet(),
         days: this.environmentManager.getAudioRetentionDays(),
       };
+    });
+
+    // --- Active-window screen context (docs/specs/active-window-screen-context.md) ---
+
+    ipcMain.handle("get-active-window-context-platform-support", async () => {
+      return { supported: activeWindowCapture.isSupportedPlatform() };
+    });
+
+    // Cheap "same app" identity check for the OCR-reuse cache (Requirement
+    // 13) — reuses activeAppCapture.js's existing windows-fast-paste.exe
+    // --detect-only path rather than adding a new native helper mode.
+    ipcMain.handle("detect-active-app-for-screen-context", async () => {
+      try {
+        return await activeAppCapture.detectAsync();
+      } catch {
+        return null;
+      }
+    });
+
+    ipcMain.handle("get-screen-context-retention-days", async () => {
+      return this.environmentManager.getScreenContextRetentionDays();
+    });
+
+    ipcMain.handle("save-screen-context-retention-days", async (event, days) => {
+      return this.environmentManager.saveScreenContextRetentionDays(days);
+    });
+
+    ipcMain.handle("get-screen-context-retention-sync-state", async () => {
+      return {
+        hasBeenSet: this.environmentManager.hasScreenContextRetentionDaysBeenSet(),
+        days: this.environmentManager.getScreenContextRetentionDays(),
+      };
+    });
+
+    ipcMain.handle("get-screen-context-storage-usage", async () => {
+      return this.screenContextStorageManager.getStorageUsage();
+    });
+
+    ipcMain.handle("delete-all-screen-context-screenshots", async () => {
+      return this.screenContextStorageManager.deleteAllScreenshots();
+    });
+
+    // Requirement 1a's gate itself lives in the renderer (audioManager.js's
+    // warmupScreenContext()), since it needs synchronous access to renderer
+    // settings state — this handler only performs the actual capture+OCR once
+    // the renderer has already decided to invoke it. persistActiveWindowScreenshots
+    // is opt-in and read per-request (Design's "Screenshot persistence and
+    // retention" section) — persistence never gates or blocks the OCR result.
+    ipcMain.handle(
+      "capture-active-window-context",
+      async (event, { screenContextOcrEngine, persistActiveWindowScreenshots } = {}) => {
+        try {
+          const capture = await activeWindowCapture.captureActiveWindow();
+          if (!capture?.png) {
+            debugLogger.debug("[ScreenContext] capture returned no image", {});
+            return { text: null };
+          }
+          const text = await activeWindowOcr.runOcr(capture.png, {
+            engine: screenContextOcrEngine,
+            tesseractOcrManager: this.tesseractOcrManager,
+          });
+          debugLogger.debug("[ScreenContext] capture+OCR complete", {
+            appIdentifier: capture.appIdentifier,
+            textLength: text?.length ?? 0,
+            engine: screenContextOcrEngine,
+          });
+          if (persistActiveWindowScreenshots) {
+            this.screenContextStorageManager.saveScreenshot(capture.png, Date.now());
+          }
+          return { text, appIdentifier: capture.appIdentifier };
+        } catch (error) {
+          debugLogger.debug("[ScreenContext] capture-active-window-context failed", {
+            error: error.message,
+          });
+          return { text: null };
+        }
+      }
+    );
+
+    ipcMain.handle("get-tesseract-ocr-status", async () => {
+      return this.tesseractOcrManager.getStatus();
+    });
+
+    ipcMain.handle("download-tesseract-ocr-assets", async (event) => {
+      try {
+        const result = await this.tesseractOcrManager.download((downloaded, total, progress) => {
+          event.sender.send("tesseract-ocr-download-progress", { downloaded, total, progress });
+        });
+        return result;
+      } catch (error) {
+        return { success: false, error: error.message };
+      }
+    });
+
+    ipcMain.handle("cancel-tesseract-ocr-download", async () => {
+      return this.tesseractOcrManager.cancelDownload();
+    });
+
+    ipcMain.handle("delete-tesseract-ocr-assets", async () => {
+      return this.tesseractOcrManager.deleteAssets();
     });
 
     // Two independent idle-timeout settings — transcriptionIdleTimeoutMs

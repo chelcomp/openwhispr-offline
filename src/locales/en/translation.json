@@ -418,6 +418,8 @@
       "failedLimitReached": "Daily limit reached",
       "failedOffline": "You're offline",
       "rawTranscript": "Raw Transcript",
+      "viewScreenContext": "View screen context used",
+      "screenContextUsed": "Screen Context Used",
       "clearAll": "Clear all",
       "clearAllTitle": "Clear All Transcriptions",
       "clearAllDescription": "All transcriptions and audio files will be permanently removed.",
@@ -1216,6 +1218,21 @@
     "title": "Settings"
   },
   "settingsPage": {
+    "screenContext": {
+      "title": "Screen Context",
+      "description": "Let the AI see visible text from your active window",
+      "toggleLabel": "Include active window text as context",
+      "toggleDescription": "OCR's the focused window's visible text and sends it to the cleanup/agent LLM pass, in addition to your dictated words. Windows only; no image is ever sent, only extracted text.",
+      "engineLabel": "OCR Engine",
+      "engineDescription": "Which local OCR strategy to use for reading the active window",
+      "engineAuto": "Automatic",
+      "engineNative": "Native Windows OCR",
+      "engineTesseract": "Tesseract",
+      "tesseractDownloadRequired": "Tesseract OCR assets aren't downloaded yet",
+      "downloadButton": "Download",
+      "persistLabel": "Save screenshots to disk",
+      "persistDescription": "Also writes the captured screenshot as a PNG file, subject to the retention setting below (Settings → Privacy & Data). Off by default."
+    },
     "workspace": {
       "title": "Workspace",
       "description": "Collaborate with teammates, share notes, and manage billing in one place.",
@@ -1873,6 +1890,12 @@
       "meetingAudioStorageUsageDescription": "Meeting recording audio stored on this device. Meeting audio is never automatically deleted — clear it manually below.",
       "meetingAudioStorageEmpty": "No meeting audio files stored",
       "clearAllMeetingAudio": "Clear All Meeting Audio",
+      "screenContextRetention": "Screen Context Screenshot Retention",
+      "screenContextRetentionDescription": "How long persisted active-window screenshots are kept before automatic deletion",
+      "screenContextStorageUsage": "Screen Context Screenshot Storage",
+      "screenContextStorageUsageDescription": "Screenshots persisted to disk when \"Save screenshots to disk\" is enabled",
+      "screenContextStorageEmpty": "No screen context screenshots stored",
+      "clearAllScreenContext": "Clear All Screen Context Screenshots",
       "localModelPerformance": "Local Model Performance",
       "localModelPerformanceDescription": "Control how long local transcription and AI models stay loaded in memory after use. Nothing loads until you actually start using it.",
       "transcriptionIdleTimeout": "Transcription idle timeout",

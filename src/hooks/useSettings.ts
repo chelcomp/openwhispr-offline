@@ -85,6 +85,10 @@ export interface PrivacySettings {
   llmIdleTimeoutMs: number;
   dataRetentionEnabled: boolean;
   saveDiscardedTranscriptions: boolean;
+  includeActiveWindowContext: boolean;
+  screenContextOcrEngine: "auto" | "native" | "tesseract";
+  persistActiveWindowScreenshots: boolean;
+  screenContextRetentionDays: number;
 }
 
 export interface ThemeSettings {
@@ -408,6 +412,14 @@ function useSettingsInternal() {
     setTelemetryEnabled: store.setTelemetryEnabled,
     audioRetentionDays: store.audioRetentionDays,
     setAudioRetentionDays: store.setAudioRetentionDays,
+    includeActiveWindowContext: store.includeActiveWindowContext,
+    setIncludeActiveWindowContext: store.setIncludeActiveWindowContext,
+    screenContextOcrEngine: store.screenContextOcrEngine,
+    setScreenContextOcrEngine: store.setScreenContextOcrEngine,
+    persistActiveWindowScreenshots: store.persistActiveWindowScreenshots,
+    setPersistActiveWindowScreenshots: store.setPersistActiveWindowScreenshots,
+    screenContextRetentionDays: store.screenContextRetentionDays,
+    setScreenContextRetentionDays: store.setScreenContextRetentionDays,
     transcriptionIdleTimeoutMs: store.transcriptionIdleTimeoutMs,
     setTranscriptionIdleTimeoutMs: store.setTranscriptionIdleTimeoutMs,
     llmIdleTimeoutMs: store.llmIdleTimeoutMs,

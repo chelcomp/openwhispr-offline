@@ -24,6 +24,7 @@ export interface TranscriptionItem {
   id: number;
   text: string;
   raw_text: string | null;
+  screen_context_text: string | null;
   timestamp: string;
   created_at: string;
   has_audio: number;
@@ -770,6 +771,30 @@ declare global {
       getAudioRetentionDays: () => Promise<number>;
       saveAudioRetentionDays: (days: number) => Promise<{ success: boolean; days: number }>;
       getAudioRetentionSyncState: () => Promise<{ hasBeenSet: boolean; days: number }>;
+
+      // Active-window screen context (docs/specs/active-window-screen-context.md)
+      getActiveWindowContextPlatformSupport: () => Promise<{ supported: boolean }>;
+      detectActiveAppForScreenContext: () => Promise<string | null>;
+      captureActiveWindowContext: (options: {
+        screenContextOcrEngine?: "auto" | "native" | "tesseract";
+        persistActiveWindowScreenshots?: boolean;
+      }) => Promise<{ text: string | null; appIdentifier?: string | null }>;
+      getScreenContextRetentionDays: () => Promise<number>;
+      saveScreenContextRetentionDays: (days: number) => Promise<{ success: boolean; days: number }>;
+      getScreenContextRetentionSyncState: () => Promise<{ hasBeenSet: boolean; days: number }>;
+      getScreenContextStorageUsage: () => Promise<{ fileCount: number; totalBytes: number }>;
+      deleteAllScreenContextScreenshots: () => Promise<{ deleted: number }>;
+      getTesseractOcrStatus: () => Promise<{
+        supported: boolean;
+        downloaded: boolean;
+        downloading: boolean;
+      }>;
+      downloadTesseractOcrAssets: () => Promise<{ success: boolean; cancelled?: boolean }>;
+      cancelTesseractOcrDownload: () => Promise<boolean>;
+      deleteTesseractOcrAssets: () => Promise<{ success: boolean; deletedCount: number }>;
+      onTesseractOcrDownloadProgress: (
+        callback: (data: { downloaded: number; total: number; progress: number }) => void
+      ) => () => void;
       getTranscriptionIdleTimeoutMs: () => Promise<number>;
       saveTranscriptionIdleTimeoutMs: (ms: number) => Promise<{ success: boolean; ms: number }>;
       getLlmIdleTimeoutMs: () => Promise<number>;

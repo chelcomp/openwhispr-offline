@@ -209,7 +209,7 @@ Then reinstall.
 
 ### Meeting Audio Recording Not Appearing
 
-*(Fork-specific feature — not present in upstream.)*
+_(Fork-specific feature — not present in upstream.)_
 
 **Symptoms:** No audio player visible after a meeting, re-transcribe button missing.
 
@@ -231,6 +231,27 @@ Then reinstall.
 3. For very long meetings (> 2 hours) the process may take several minutes. The progress bar will update per chunk.
 4. Look for `[retranscribe-meeting]` in debug logs for per-chunk errors.
 
+### Agent Doesn't Seem to Know What's on My Screen
+
+The active-window screen-context feature (Windows only, see CLAUDE.md §20) sends OCR'd
+text from your focused window to the cleanup/dictation-agent LLM pass — it never affects
+the raw transcript.
+
+1. Confirm "Include active window text as context" is enabled under Settings →
+   Speech-to-Text → Dictation. It's on by default, but check it hasn't been disabled.
+2. It's Windows-only — on macOS/Linux this setting is hidden and the feature is a no-op.
+3. Capture only fires when the dictation would actually route through cleanup or the
+   dictation agent — a plain dictation with neither configured never captures anything,
+   by design (no wasted work).
+4. If native Windows OCR is unavailable (missing language pack, PowerShell execution
+   policy) and `screenContextOcrEngine` is set to "Automatic," it falls back to Tesseract —
+   which requires a one-time asset download (Settings → Speech-to-Text → Dictation, next to
+   the OCR Engine control). If set to "Native Windows OCR" specifically, there's no
+   fallback by design — check debug logs for OCR failures.
+5. Check debug logs for `[ActiveWindowCapture]`/`[ActiveWindowOcr]` entries — capture/OCR
+   failures degrade silently to "no screen context" rather than erroring, so a debug log is
+   the only visible signal.
+
 ## Enable Debug Mode
 
 For detailed diagnostics, see [DEBUG.md](DEBUG.md).
@@ -240,6 +261,7 @@ For detailed diagnostics, see [DEBUG.md](DEBUG.md).
 - Open an issue at [github.com/chelcomp/ektoswhispr-offline/issues](https://github.com/chelcomp/ektoswhispr-offline/issues)
 
 When filing an issue, include:
+
 - OS version and architecture
 - App version (visible in Settings → About)
 - Relevant log sections from `%APPDATA%\EktosWhispr\logs\` (Windows) or the platform equivalent

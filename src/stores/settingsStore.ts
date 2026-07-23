@@ -10,6 +10,7 @@ import type { LocalTranscriptionProvider, InferenceMode, SelfHostedType } from "
 import { PROMPT_KIND_LIST, type PromptKind } from "../config/prompts/registry";
 import { deriveReasoningMode, buildReasoningScopePatches } from "../helpers/reasoningRouting";
 import { resolveAudioRetentionStartupSync } from "../helpers/audioRetentionSync";
+import { resolveScreenContextRetentionStartupSync } from "../helpers/screenContextRetentionSync";
 import { resolveMigratedParakeetModelId } from "../helpers/parakeetModelMigration";
 import {
   resolveModelIdleTimeoutMs,
@@ -208,12 +209,15 @@ const BOOLEAN_SETTINGS = new Set([
   "notificationsEnabled",
   "notifyCalendarReminders",
   "notifyUpdates",
+  "includeActiveWindowContext",
+  "persistActiveWindowScreenshots",
 ]);
 
 const ARRAY_SETTINGS = new Set(["customDictionary", "snippets", "onboardingUseCases"]);
 
 const NUMERIC_SETTINGS = new Set([
   "audioRetentionDays",
+  "screenContextRetentionDays",
   "transcriptionIdleTimeoutMs",
   "llmIdleTimeoutMs",
   "whisperVadThreshold",
@@ -739,6 +743,10 @@ export interface SettingsState
   setCloudBackupEnabled: (value: boolean) => void;
   setTelemetryEnabled: (value: boolean) => void;
   setAudioRetentionDays: (days: number) => void;
+  setIncludeActiveWindowContext: (value: boolean) => void;
+  setScreenContextOcrEngine: (value: "auto" | "native" | "tesseract") => void;
+  setPersistActiveWindowScreenshots: (value: boolean) => void;
+  setScreenContextRetentionDays: (days: number) => void;
   setTranscriptionIdleTimeoutMs: (ms: number) => void;
   setLlmIdleTimeoutMs: (ms: number) => void;
   setDataRetentionEnabled: (value: boolean) => void;
@@ -1132,6 +1140,25 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
     const parsed = parseInt(stored, 10);
     return isNaN(parsed) ? 0 : parsed;
   })(),
+
+  // Active-window screen context (docs/specs/active-window-screen-context.md).
+  // includeActiveWindowContext defaults ON — an explicit, reviewed deviation
+  // from the app's usual privacy-by-default stance (see CLAUDE.md Premise #1
+  // and the spec's TL;DR). The other three default OFF/auto/0, matching
+  // audioRetentionDays's own fallback semantics.
+  includeActiveWindowContext: readBoolean("includeActiveWindowContext", true),
+  screenContextOcrEngine: (() => {
+    const v = readString("screenContextOcrEngine", "auto");
+    return v === "native" || v === "tesseract" ? v : ("auto" as const);
+  })() as "auto" | "native" | "tesseract",
+  persistActiveWindowScreenshots: readBoolean("persistActiveWindowScreenshots", false),
+  screenContextRetentionDays: (() => {
+    if (!isBrowser) return 0;
+    const stored = localStorage.getItem("screenContextRetentionDays");
+    if (stored === null) return 0;
+    const parsed = parseInt(stored, 10);
+    return isNaN(parsed) ? 0 : parsed;
+  })(),
   // Two independent idle-timeout settings (Whisper/Parakeet vs. llama-server)
   // — see docs/specs/on-demand-model-lifecycle.md Design §5. Both default to
   // 5 minutes and share the same 30s-60min bounds, but are never coupled.
@@ -1218,10 +1245,7 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
     "noiseFloorAlpha",
     readString("previewVadNoiseFloorAlpha", "0.05")
   ),
-  previewVadMaxMerges: clampPreviewVadValue(
-    "maxMerges",
-    readString("previewVadMaxMerges", "2")
-  ),
+  previewVadMaxMerges: clampPreviewVadValue("maxMerges", readString("previewVadMaxMerges", "2")),
   previewVadMaxMergedMs: clampPreviewVadValue(
     "maxMergedMs",
     readString("previewVadMaxMergedMs", "20000")
@@ -1692,6 +1716,26 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
       });
     }
   },
+  setIncludeActiveWindowContext: createBooleanSetter("includeActiveWindowContext"),
+  setScreenContextOcrEngine: (value: "auto" | "native" | "tesseract") => {
+    if (isBrowser) localStorage.setItem("screenContextOcrEngine", value);
+    set({ screenContextOcrEngine: value });
+  },
+  setPersistActiveWindowScreenshots: createBooleanSetter("persistActiveWindowScreenshots"),
+  setScreenContextRetentionDays: (days: number) => {
+    if (isBrowser) localStorage.setItem("screenContextRetentionDays", String(days));
+    set({ screenContextRetentionDays: days });
+    if (isBrowser && window.electronAPI?.saveScreenContextRetentionDays) {
+      window.electronAPI.saveScreenContextRetentionDays(days).catch((err) => {
+        logger.warn(
+          "Failed to sync screen context retention days to main process",
+          { error: (err as Error).message },
+          "settings"
+        );
+      });
+    }
+  },
+
   setTranscriptionIdleTimeoutMs: (ms: number) => {
     const clamped = resolveModelIdleTimeoutMs(ms);
     if (isBrowser) localStorage.setItem("transcriptionIdleTimeoutMs", String(clamped));
@@ -2614,6 +2658,36 @@ export async function initializeSettings(): Promise<void> {
     } catch (err) {
       logger.warn(
         "Failed to sync audio retention days on startup",
+        { error: (err as Error).message },
+        "settings"
+      );
+    }
+
+    // Sync screen context retention days with main process — identical
+    // "pull once genuinely persisted, else push renderer's value" shape as
+    // audio retention above, fully independent setting/env var (see
+    // docs/specs/active-window-screen-context.md Requirement 17/18).
+    try {
+      const syncState = await window.electronAPI.getScreenContextRetentionSyncState?.();
+      if (syncState) {
+        const decision = resolveScreenContextRetentionStartupSync({
+          hasBeenSetOnMain: syncState.hasBeenSet,
+          mainValue: syncState.days,
+          rendererValue: state.screenContextRetentionDays,
+        });
+        if (decision.action === "pull") {
+          if (decision.value !== state.screenContextRetentionDays) {
+            if (isBrowser)
+              localStorage.setItem("screenContextRetentionDays", String(decision.value));
+            useSettingsStore.setState({ screenContextRetentionDays: decision.value });
+          }
+        } else {
+          await window.electronAPI.saveScreenContextRetentionDays?.(decision.value);
+        }
+      }
+    } catch (err) {
+      logger.warn(
+        "Failed to sync screen context retention days on startup",
         { error: (err as Error).message },
         "settings"
       );

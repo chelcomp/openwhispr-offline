@@ -54,7 +54,7 @@ EktosWhispr starts with Windows and runs continuously in the background, so idle
 ### 7. Data retention — operational data persists; only collected/ephemeral data is user-controlled and auto-purged
 
 - **Never auto-expunged (operational data, persisted indefinitely, deletion only ever user-initiated)**: Personal Notes content, everything related to Meeting recordings — both transcripts/summaries AND the raw meeting audio file itself — and the custom Dictionary. This is not "collected data" in the privacy sense; it's the product's own operational state, and auto-deleting any of it would be a data-loss bug, not a privacy feature. This is a deliberate change from today's code: `meetingAudioStorage.js`'s `cleanupExpiredAudio()` currently auto-purges meeting audio via the same `audioRetentionDays` setting as dictation audio — that must stop; meeting audio gets no automatic expiry at all.
-- **Eligible for user-controlled retention + auto-purge (collected/ephemeral data)**: dictation audio recordings (`audioRetentionDays` setting, `audioStorageManager.cleanupExpiredAudio()`), the SQLite transcription-history text (today only has a manual "Clear All", no age-based auto-expiry — gap to fill), and debug log files (today have no rotation/retention at all — gap to fill).
+- **Eligible for user-controlled retention + auto-purge (collected/ephemeral data)**: dictation audio recordings (`audioRetentionDays` setting, `audioStorageManager.cleanupExpiredAudio()`), the SQLite transcription-history text (today only has a manual "Clear All", no age-based auto-expiry — gap to fill), debug log files (today have no rotation/retention at all — gap to fill), and — as of §20 — persisted active-window screen-context screenshots (`persistActiveWindowScreenshots`, opt-in, off by default), which have their own independent `screenContextRetentionDays` setting + automatic purge (`_setupScreenContextCleanup()`) + manual "Clear All Screen Context Screenshots" button, a second artifact in this same category alongside dictation audio.
 - Every item in the second category must have (a) a user-facing setting controlling its retention window and (b) an automatic background purge honoring that setting — a "Clear All" button alone does not satisfy this rule.
 - **Known bug, scope now expanded**: `ipcHandlers.js`'s `_setupAudioCleanup()` today hardcodes `DEFAULT_RETENTION_DAYS = 30` for both dictation and meeting audio, ignoring the user's actual `audioRetentionDays` setting entirely. Fixing it must also remove meeting audio from that cleanup path altogether per this premise, not just make it respect the setting for meeting audio too.
 - Any spec touching data storage must state explicitly which category (operational vs. collected) new data falls into, and must never introduce auto-expiry for operational data.
@@ -100,11 +100,19 @@ EktosWhispr starts with Windows and runs continuously in the background, so idle
 - **windows-key-listener.c**: C source for Windows low-level keyboard hook (Push-to-Talk)
 - **windows-system-audio-helper.c**: C source for WASAPI process-loopback system audio capture (meeting transcription). Excludes EktosWhispr's own process tree, so it hears every app on every output device. Requires Windows 10 2004+; falls back to Chromium display-media loopback when unavailable. Outputs 24 kHz mono s16le PCM on stdout, line-delimited JSON events on stderr (same protocol as linux-system-audio-helper)
 - **globe-listener.swift**: Swift source for macOS Globe/Fn key detection
+- **windows-active-window-info.c**: C source for the active-window screen-context capture helper (§20). One-shot (not a long-running listener) — grabs the focused window's bitmap via `PrintWindow`/`BitBlt`, excluding EktosWhispr's own windows, and writes framed PNG bytes + a JSON metadata header to stdout
 - **bin/**: Directory for compiled native binaries (whisper-cpp, nircmd, key listeners)
 
 ### Helper Modules (src/helpers/)
 
 - **audioManager.js**: Handles audio device management
+- **activeWindowCapture.js**: Windows-only active-window screenshot capture (§20) — spawns `windows-active-window-info.exe`, downscales, no disk persistence by default
+- **activeWindowOcr.js**: OCR orchestration for the screen-context feature (§20) — native Windows OCR first, local Tesseract.js fallback, per the `screenContextOcrEngine` setting
+- **screenContextCache.js**: In-memory, process-lifetime-only OCR-reuse cache for rapid consecutive dictations in the same app (§20)
+- **screenContextStorage.js**: Opt-in on-disk persistence + retention/purge for captured screenshots (§20), mirrors `audioStorage.js`
+- **tesseractOcrManager.js**: On-demand download manager for Tesseract.js's WASM+language-data assets (§20), modeled on `llamaCudaManager.js`/`llamaVulkanManager.js`
+- **screenContextRetentionSync.js**: Renderer startup-sync pure function for `screenContextRetentionDays` (§20), mirrors `audioRetentionSync.js`
+- **llamaCudaManager.js** / **llamaVulkanManager.js**: On-demand download managers for llama-server's CUDA/Vulkan GPU-acceleration runtime libraries — not bundled in the app package, downloaded into `userData/bin/` only when the user opts into that GPU backend. Reference pattern for `tesseractOcrManager.js` above
 - **autoLearnDictionary.js**: Core auto-learn logic — given the originally-pasted text and the text-monitor's post-edit field value, extracts `{from, to}` correction pairs via `correctionLearner.js`, applies the anti-oscillation guard (see Custom Dictionary §13 below), and persists survivors via `databaseManager.setDictionary()`. Deliberately Electron/IPC-free (only touches the `databaseManager` it's given) so it's unit-testable in isolation — see `test/helpers/autoLearnDictionary.test.js`. Called from `ipcHandlers.js`'s `_processCorrections()`.
 - **clipboard.js**: Cross-platform clipboard operations
   - macOS: AppleScript-based paste with accessibility permission check
@@ -233,6 +241,9 @@ pipeline previously backed a hybrid semantic search here but was removed — see
 - **download-sherpa-onnx.js**: Downloads sherpa-onnx binaries for Parakeet support
 - **build-globe-listener.js**: Compiles macOS Globe key listener from Swift source
 - **build-windows-key-listener.js**: Compiles Windows key listener (for local development)
+- **build-windows-active-window-info.js**: Compiles the active-window screen-context capture
+  helper (§20) from `resources/windows-active-window-info.c`; compile-first with a
+  download-prebuilt fallback, mirroring `build-windows-key-listener.js`'s strategy
 - **run-electron.js**: Development script to launch Electron with proper environment
 - **lib/download-utils.js**: Shared utilities for downloading and extracting files
   - `fetchLatestRelease(repo, options)`: Fetches latest release from GitHub API
@@ -284,9 +295,15 @@ CREATE TABLE transcriptions (
   is_processed BOOLEAN DEFAULT 0,
   processing_method TEXT DEFAULT 'none',
   agent_name TEXT,
-  error TEXT
+  error TEXT,
+  screen_context_text TEXT
 );
 ```
+
+(Note: this table's actual current columns are `text`/`raw_text`, not `original_text`/
+`processed_text` — see `docs/RECREATION_SPEC.md` §0 for known divergences from this
+illustrative schema. `screen_context_text` — nullable, additive migration — is real and
+current: see §20 above.)
 
 ### 5. Settings Storage
 
@@ -302,6 +319,10 @@ Settings stored in localStorage with these keys:
 - `dictationKey`: Custom hotkey configuration
 - `onboardingCompleted`: Onboarding completion flag
 - `customDictionary`: JSON array of words/phrases for improved transcription accuracy
+- `includeActiveWindowContext`: master toggle for the active-window screen-context feature (§20), default `true`
+- `screenContextOcrEngine`: `"auto" | "native" | "tesseract"` OCR strategy preference (§20), default `"auto"`
+- `persistActiveWindowScreenshots`: whether captured screenshots are also written to disk (§20), default `false`
+- `screenContextRetentionDays`: retention window for persisted screenshots (§20), mirrors `audioRetentionDays`'s 0-fallback semantics
 - `transcriptionIdleTimeoutMs` / `llmIdleTimeoutMs`: idle-timeout durations (ms) for Whisper/Parakeet and llama-server respectively — see "On-Demand Model Lifecycle" (§18)
 
 Secret env vars (16 total: 7 BYOK API keys + 5 enterprise cloud creds + 4 more — `ASSEMBLYAI_API_KEY`, `DEEPGRAM_API_KEY`, `CUSTOM_TRANSCRIPTION_API_KEY`, `CUSTOM_CLEANUP_API_KEY` — see `SECRET_KEYS` in `environment.js`) are encrypted at rest via Electron `safeStorage` and stored as per-key files under `userData/secure-keys/`. They are loaded into `process.env` at startup by `EnvironmentManager.init()`. Renderer reads them via IPC (`get-*-key`) and writes via debounced IPC (`save-*-key`). On Linux without a keyring, secrets fall back to plaintext.
@@ -781,6 +802,60 @@ removed model IDs (`.env`'s `PARAKEET_MODEL`, or `localStorage`'s `parakeetModel
 **Tests**: `test/utils/transcriptionQualityHeuristics.test.js`,
 `test/helpers/dictationBatchingSession.test.js`, `test/helpers/parakeetModelMigration.test.js`,
 `test/components/parakeetModelMigration.test.js` (run with `node --test`)
+
+### 20. Active-Window Screen Context (Windows only)
+
+On every dictation/agent-eligible recording, EktosWhispr can capture a screenshot of the
+user's focused window (Windows only), run OCR on it locally, and feed the extracted text
+to whichever LLM pass actually runs (cleanup or dictation agent — never the raw-transcript
+step). See `docs/specs/active-window-screen-context.md` for the full design.
+
+- **Default ON** — a deliberate, reviewed deviation from Premise #1's privacy-by-default
+  stance (screen text never leaves the device unless the user's own cleanup/agent provider
+  is a cloud one they already configured — same BYOK exception as the transcript itself).
+- **Gating (Requirement 1a)**: capture only fires when the cleanup LLM is enabled/configured
+  or the dictation-agent route applies — evaluated synchronously at hotkey-down via
+  `shouldCaptureScreenContext()` (`src/helpers/dictationRouting.js`). No helper process is
+  ever spawned for a plain dictation with no cleanup/agent configured.
+- **Capture**: `windows-active-window-info.exe` (built from `resources/windows-active-window-info.c`)
+  is a one-shot helper that grabs the focused window's bitmap via `PrintWindow`/`BitBlt`,
+  excluding EktosWhispr's own windows (mirrors `windows-system-audio-helper.exe`'s
+  self-exclusion). Obtained via `scripts/build-windows-active-window-info.js`, run as part of
+  the `compile:native` chain: 1. up-to-date check (skip if the binary is newer than the `.c`
+  source), 2. compile locally with MSVC/MinGW-w64/Clang (`gdiplus.lib`/`gdi32.lib`/`user32.lib`/
+  `ole32.lib`, mirroring `build-windows-key-listener.js`'s strategy), 3. fall back to
+  downloading a prebuilt binary via `scripts/download-windows-active-window-info.js` only if
+  local compilation is unavailable. Wrapped by `src/helpers/activeWindowCapture.js`
+  (Windows-only; no-op elsewhere).
+- **OCR**: `src/helpers/activeWindowOcr.js` tries native Windows OCR (a short PowerShell/WinRT
+  bridge) first, with local Tesseract.js as a fallback, per the `screenContextOcrEngine`
+  setting (`"auto"`/`"native"`/`"tesseract"`). Tesseract's WASM+language-data assets are a
+  downloadable, on-demand asset (`src/helpers/tesseractOcrManager.js`, modeled on
+  `llamaCudaManager.js`/`llamaVulkanManager.js` — see below), not bundled in the app package.
+- **OCR-reuse cache** (`src/helpers/screenContextCache.js`): rapid consecutive dictations in
+  the same app (≤2000ms since the previous recording stopped) reuse the cached OCR text
+  instead of re-capturing — purely in-memory, process-lifetime only.
+- **Threading into the LLM request**: `audioManager.js`'s `warmupScreenContext()` fires
+  alongside `warmupTranscriptionEngine()`/`warmupReasoningServer()`, bounded-awaited before
+  the cleanup/agent request is assembled (`appendScreenContextSuffix()` in
+  `src/config/prompts/index.ts`, re-exported from `src/config/prompts.ts`).
+- **History**: the `screen_context_text` column on `transcriptions` (nullable, additive
+  migration) stores whatever screen context actually got used for a given turn.
+- **Persistence/retention**: screenshots are never persisted to disk by default
+  (`persistActiveWindowScreenshots`, default off). When opted in, screenshots land in
+  `userData/screen-context-captures/` (`src/helpers/screenContextStorage.js`, mirrors
+  `audioStorage.js`) and are collected/ephemeral data per Premise #7 — own independent
+  `screenContextRetentionDays` setting (identical default/fallback semantics to
+  `audioRetentionDays`; `_setupScreenContextCleanup()` in `ipcHandlers.js` mirrors
+  `_setupAudioCleanup()` exactly, reusing `audioCleanupPolicy.js`'s `decideAudioCleanup()`/
+  `shouldRunImmediateCleanup()` unchanged).
+
+**Tests**: `test/helpers/activeWindowCapture.test.js`, `test/helpers/activeWindowOcr.test.js`,
+`test/helpers/screenContextCache.test.js`, `test/helpers/screenContextStorage.test.js`,
+`test/helpers/screenContextRetentionSettings.test.js`, `test/helpers/screenContextRetentionSync.test.js`,
+`test/helpers/tesseractOcrManager.test.js`, `test/helpers/ipcHandlers.screenContextCleanup.test.js`,
+`test/helpers/database.screenContextMigration.test.js`, `test/components/prompts.screenContext.test.js`
+(run with `node --test`)
 
 ## Development Guidelines
 

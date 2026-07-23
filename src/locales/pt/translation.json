@@ -403,6 +403,8 @@
       "audioNotFound": "Arquivo de áudio não encontrado ou expirado",
       "noAiProcessing": "Nenhum processamento de IA foi aplicado a esta transcrição",
       "rawTranscript": "Transcrição bruta",
+      "viewScreenContext": "Ver contexto de tela usado",
+      "screenContextUsed": "Contexto de Tela Usado",
       "discarded": {
         "show": "Mostrar descartadas",
         "hide": "Ocultar descartadas",
@@ -1107,6 +1109,21 @@
     "title": "Configurações"
   },
   "settingsPage": {
+    "screenContext": {
+      "title": "Contexto da Tela",
+      "description": "Permite que a IA veja o texto visível na sua janela ativa",
+      "toggleLabel": "Incluir texto da janela ativa como contexto",
+      "toggleDescription": "Extrai por OCR o texto visível da janela em foco e o envia para a etapa de limpeza/agente LLM, além das suas palavras ditadas. Somente Windows; nunca é enviada uma imagem, apenas o texto extraído.",
+      "engineLabel": "Motor de OCR",
+      "engineDescription": "Qual estratégia local de OCR usar para ler a janela ativa",
+      "engineAuto": "Automático",
+      "engineNative": "OCR Nativo do Windows",
+      "engineTesseract": "Tesseract",
+      "tesseractDownloadRequired": "Os arquivos do Tesseract OCR ainda não foram baixados",
+      "downloadButton": "Baixar",
+      "persistLabel": "Salvar capturas de tela no disco",
+      "persistDescription": "Também grava a captura de tela feita como um arquivo PNG, sujeito à configuração de retenção abaixo (Configurações → Privacidade e Dados). Desativado por padrão."
+    },
     "account": {
       "badges": {
         "free": "Gratuito",
@@ -1685,6 +1702,12 @@
       "meetingAudioStorageUsageDescription": "Áudio de gravações de reuniões armazenado neste dispositivo. O áudio de reuniões nunca é excluído automaticamente — exclua-o manualmente abaixo.",
       "meetingAudioStorageEmpty": "Nenhum arquivo de áudio de reunião armazenado",
       "clearAllMeetingAudio": "Excluir todo o áudio de reuniões",
+      "screenContextRetention": "Retenção de Capturas de Contexto de Tela",
+      "screenContextRetentionDescription": "Por quanto tempo as capturas de tela da janela ativa são mantidas antes da exclusão automática",
+      "screenContextStorageUsage": "Armazenamento de Capturas de Contexto de Tela",
+      "screenContextStorageUsageDescription": "Capturas de tela salvas em disco quando \"Salvar capturas de tela no disco\" está ativado",
+      "screenContextStorageEmpty": "Nenhuma captura de contexto de tela armazenada",
+      "clearAllScreenContext": "Excluir Todas as Capturas de Contexto de Tela",
       "localModelPerformance": "Desempenho do modelo local",
       "localModelPerformanceDescription": "Controle por quanto tempo os modelos locais de transcrição e IA permanecem carregados na memória após o uso. Nada é carregado até que você realmente comece a usá-lo.",
       "transcriptionIdleTimeout": "Tempo limite de inatividade da transcrição",

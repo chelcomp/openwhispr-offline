@@ -32,3 +32,26 @@ export function resolveDictationRouteKind({
   }
   return "skip";
 }
+
+// Requirement 1a's synchronous gate (see
+// docs/specs/active-window-screen-context.md's "Threading OCR text into the
+// LLM context" Design section): screen-context capture only ever fires when
+// the dictation would actually route through a pass that consumes it —
+// either the cleanup LLM is enabled/configured, or the dictation-agent route
+// will apply. Deliberately takes only synchronous inputs (no async calls),
+// since this decision gates whether `warmupScreenContext()` spawns anything
+// at all, and must not itself add latency to hotkey-down.
+export function shouldCaptureScreenContext({
+  cleanupReachable,
+  agentReachable,
+  agentInvoked,
+  voiceAgentRequested,
+}) {
+  const routeKind = resolveDictationRouteKind({
+    cleanupReachable,
+    agentReachable,
+    agentInvoked,
+    voiceAgentRequested,
+  });
+  return routeKind === "cleanup" || routeKind === "agent";
+}

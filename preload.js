@@ -87,7 +87,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
   },
   getLastTargetAppName: () => ipcRenderer.invoke("get-last-target-app-name"),
   getNoteAudio: (noteId) => ipcRenderer.invoke("get-note-audio", noteId),
-  retranscribeMeeting: (noteId, options) => ipcRenderer.invoke("retranscribe-meeting", noteId, options),
+  retranscribeMeeting: (noteId, options) =>
+    ipcRenderer.invoke("retranscribe-meeting", noteId, options),
   onRetranscribeProgress: (callback) => {
     const listener = (_event, data) => callback?.(data);
     ipcRenderer.on("retranscribe-progress", listener);
@@ -396,6 +397,30 @@ contextBridge.exposeInMainWorld("electronAPI", {
   getAudioRetentionDays: () => ipcRenderer.invoke("get-audio-retention-days"),
   saveAudioRetentionDays: (days) => ipcRenderer.invoke("save-audio-retention-days", days),
   getAudioRetentionSyncState: () => ipcRenderer.invoke("get-audio-retention-sync-state"),
+
+  // Active-window screen context (docs/specs/active-window-screen-context.md)
+  getActiveWindowContextPlatformSupport: () =>
+    ipcRenderer.invoke("get-active-window-context-platform-support"),
+  detectActiveAppForScreenContext: () => ipcRenderer.invoke("detect-active-app-for-screen-context"),
+  captureActiveWindowContext: (options) =>
+    ipcRenderer.invoke("capture-active-window-context", options),
+  getScreenContextRetentionDays: () => ipcRenderer.invoke("get-screen-context-retention-days"),
+  saveScreenContextRetentionDays: (days) =>
+    ipcRenderer.invoke("save-screen-context-retention-days", days),
+  getScreenContextRetentionSyncState: () =>
+    ipcRenderer.invoke("get-screen-context-retention-sync-state"),
+  getScreenContextStorageUsage: () => ipcRenderer.invoke("get-screen-context-storage-usage"),
+  deleteAllScreenContextScreenshots: () =>
+    ipcRenderer.invoke("delete-all-screen-context-screenshots"),
+
+  getTesseractOcrStatus: () => ipcRenderer.invoke("get-tesseract-ocr-status"),
+  downloadTesseractOcrAssets: () => ipcRenderer.invoke("download-tesseract-ocr-assets"),
+  cancelTesseractOcrDownload: () => ipcRenderer.invoke("cancel-tesseract-ocr-download"),
+  deleteTesseractOcrAssets: () => ipcRenderer.invoke("delete-tesseract-ocr-assets"),
+  onTesseractOcrDownloadProgress: registerListener(
+    "tesseract-ocr-download-progress",
+    (callback) => (_event, data) => callback(data)
+  ),
 
   getTranscriptionIdleTimeoutMs: () => ipcRenderer.invoke("get-transcription-idle-timeout-ms"),
   saveTranscriptionIdleTimeoutMs: (ms) =>

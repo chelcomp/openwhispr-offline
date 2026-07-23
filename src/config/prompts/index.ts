@@ -48,6 +48,24 @@ export function appendDictionarySuffix(
   return prompt + suffix + customDictionary.join(", ");
 }
 
+// Mirrors appendDictionarySuffix() — appended after the dictionary suffix so
+// the LLM sees dictionary hints, then screen context, in a stable order. A
+// no-op when there's no screen text (feature off/gated-off/capture-or-OCR
+// failed). See docs/specs/active-window-screen-context.md's "Threading OCR
+// text into the LLM context" Design section.
+export function appendScreenContextSuffix(
+  prompt: string,
+  screenText?: string | null,
+  uiLanguage?: string
+): string {
+  if (!screenText?.trim()) return prompt;
+  const locale = normalizeUiLanguage(uiLanguage || "en");
+  const leadIn = i18n.getFixedT(locale, "prompts")("screenContextLeadIn", {
+    defaultValue: enPrompts.screenContextLeadIn,
+  });
+  return `${prompt}${leadIn}\n<screen_context>\n${screenText}\n</screen_context>`;
+}
+
 function applySubstitutions(template: string, opts: ResolvePromptOptions): string {
   const name = opts.agentName?.trim() || "Assistant";
   let prompt = template.replace(/\{\{agentName\}\}/g, name);

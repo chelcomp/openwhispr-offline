@@ -5,6 +5,7 @@ export interface PromptBundle {
   cleanupPrompt: string;
   fullPrompt: string;
   dictionarySuffix: string;
+  screenContextLeadIn: string;
 }
 
 export const en: PromptBundle = enPrompts;

@@ -77,6 +77,17 @@ class DatabaseManager {
       } catch (err) {
         if (!err.message.includes("duplicate column")) throw err;
       }
+      // Screen-context OCR text actually threaded into this transcription's
+      // cleanup/agent LLM request (see docs/specs/active-window-screen-context.md
+      // Requirement 14). Nullable, no default — NULL means "no screen context
+      // was captured or used for this transcription" (feature off, gated off,
+      // platform unsupported, or capture/OCR failed), never an empty string.
+      // Additive-only migration: existing rows get NULL, no backfill attempted.
+      try {
+        this.db.exec("ALTER TABLE transcriptions ADD COLUMN screen_context_text TEXT");
+      } catch (err) {
+        if (!err.message.includes("duplicate column")) throw err;
+      }
 
       this.db.exec(`
         CREATE TABLE IF NOT EXISTS custom_dictionary (
@@ -691,6 +702,30 @@ class DatabaseManager {
       return { success: true };
     } catch (error) {
       debugLogger.error("Error updating transcription text", { error: error.message }, "database");
+      throw error;
+    }
+  }
+
+  // Writes whatever screen-context text (or null) ended up threaded into this
+  // transcription's cleanup/agent LLM request — including a cache-reused value
+  // per Requirement 13, stored identically to a freshly captured one. Set on
+  // the same two-phase-write cadence as updateTranscriptionText (after the
+  // LLM pass resolves), not at insert time, since screen context is only
+  // known once the reasoning route/OCR promise resolves.
+  updateTranscriptionScreenContext(id, screenContextText) {
+    try {
+      if (!this.db) throw new Error("Database not initialized");
+      const stmt = this.db.prepare(
+        "UPDATE transcriptions SET screen_context_text = ? WHERE id = ?"
+      );
+      stmt.run(screenContextText ?? null, id);
+      return { success: true };
+    } catch (error) {
+      debugLogger.error(
+        "Error updating transcription screen context",
+        { error: error.message },
+        "database"
+      );
       throw error;
     }
   }

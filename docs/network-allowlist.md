@@ -34,11 +34,13 @@ configuration.
 Contacted only when a user opts into a local model (Whisper, Parakeet, or a
 local GGUF reasoning model). Not required otherwise.
 
-| Host                                                    | Protocol | Port | Purpose                                                                     |
-| ------------------------------------------------------- | -------- | ---- | --------------------------------------------------------------------------- |
-| `huggingface.co`                                        | HTTPS    | 443  | Whisper GGML, Parakeet, and GGUF model downloads.                           |
-| `cdn-lfs.huggingface.co`, `cdn-lfs-us-1.huggingface.co` | HTTPS    | 443  | HuggingFace large-file CDN (LFS-backed model files).                        |
-| `github.com`, `objects.githubusercontent.com`           | HTTPS    | 443  | sherpa-onnx, llama.cpp, and whisper.cpp binaries (GitHub releases).         |
+| Host                                                    | Protocol | Port | Purpose                                                                                                                                                                     |
+| ------------------------------------------------------- | -------- | ---- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `huggingface.co`                                        | HTTPS    | 443  | Whisper GGML, Parakeet, and GGUF model downloads.                                                                                                                           |
+| `cdn-lfs.huggingface.co`, `cdn-lfs-us-1.huggingface.co` | HTTPS    | 443  | HuggingFace large-file CDN (LFS-backed model files).                                                                                                                        |
+| `github.com`, `objects.githubusercontent.com`           | HTTPS    | 443  | sherpa-onnx, llama.cpp, and whisper.cpp binaries (GitHub releases). Also `windows-active-window-info.exe` (active-window screen-context capture helper, see CLAUDE.md §20). |
+| `cdn.jsdelivr.net`                                      | HTTPS    | 443  | Tesseract.js OCR WASM core, downloaded only when the user enables the active-window screen-context feature and selects/falls back to the Tesseract OCR engine (§20).        |
+| `raw.githubusercontent.com`                             | HTTPS    | 443  | Tesseract.js's `eng.traineddata` OCR language-data file (same feature/trigger as above).                                                                                    |
 
 ## BYOK provider hosts (only if configured)
 

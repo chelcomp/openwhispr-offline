@@ -44,6 +44,7 @@ const PERSISTED_KEYS = [
   "START_MINIMIZED",
   "UI_LANGUAGE",
   "AUDIO_RETENTION_DAYS",
+  "SCREEN_CONTEXT_RETENTION_DAYS",
   "TRANSCRIPTION_IDLE_TIMEOUT_MS",
   "LLM_IDLE_TIMEOUT_MS",
   "WHISPER_CUDA_ENABLED",
@@ -517,6 +518,31 @@ class EnvironmentManager {
   // its own since 0 is both the fallback and a valid explicit choice.
   hasAudioRetentionDaysBeenSet() {
     return this._getKey("AUDIO_RETENTION_DAYS") !== "";
+  }
+
+  // Screen-context screenshot retention (see docs/specs/active-window-screen-context.md).
+  // Ported line-for-line from the audio-retention trio above: identical
+  // fallback-to-0 semantics, per the project owner's explicit instruction that
+  // this artifact's retention defaults mirror audioRetentionDays exactly. This
+  // is a fully independent setting/env var — no shared state with
+  // AUDIO_RETENTION_DAYS.
+  getScreenContextRetentionDays() {
+    const raw = this._getKey("SCREEN_CONTEXT_RETENTION_DAYS");
+    if (raw === "") return 0;
+    const parsed = parseInt(raw, 10);
+    if (!Number.isFinite(parsed) || parsed < 0) return 0;
+    return parsed;
+  }
+
+  saveScreenContextRetentionDays(days) {
+    const normalized = Number.isFinite(days) && days >= 0 ? Math.floor(days) : 0;
+    const result = this._saveKey("SCREEN_CONTEXT_RETENTION_DAYS", String(normalized));
+    this.saveAllKeysToEnvFile().catch(() => {});
+    return { ...result, days: normalized };
+  }
+
+  hasScreenContextRetentionDaysBeenSet() {
+    return this._getKey("SCREEN_CONTEXT_RETENTION_DAYS") !== "";
   }
 
   // Two independent idle-timeout settings (transcriptionIdleTimeoutMs for

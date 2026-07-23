@@ -1,0 +1,75 @@
+name: Build Windows Active Window Info
+
+on:
+  push:
+    paths:
+      - 'resources/windows-active-window-info.c'
+      - '.github/workflows/build-windows-active-window-info.yml'
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version tag (e.g., 1.0.0)'
+        required: false
+        default: '1.0.0'
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup MSVC
+        uses: microsoft/setup-msbuild@v2
+
+      - name: Setup MSVC environment
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Compile Windows Active Window Info
+        run: |
+          cl /O2 /nologo /EHsc resources/windows-active-window-info.c /Fe:windows-active-window-info.exe user32.lib gdi32.lib gdiplus.lib ole32.lib
+        shell: cmd
+
+      - name: Verify binary
+        run: |
+          if (Test-Path "windows-active-window-info.exe") {
+            Write-Host "Binary built successfully"
+            Get-Item "windows-active-window-info.exe" | Select-Object Name, Length
+          } else {
+            Write-Error "Binary not found"
+            exit 1
+          }
+        shell: pwsh
+
+      - name: Create zip archive
+        run: |
+          Compress-Archive -Path windows-active-window-info.exe -DestinationPath windows-active-window-info-win32-x64.zip
+        shell: pwsh
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-active-window-info
+          path: windows-active-window-info-win32-x64.zip
+
+      - name: Create or update release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: windows-active-window-info-v${{ inputs.version || '1.0.0' }}
+          name: Windows Active Window Info v${{ inputs.version || '1.0.0' }}
+          body: |
+            Prebuilt windows-active-window-info binary for the active-window
+            screen-context feature (docs/specs/active-window-screen-context.md).
+
+            One-shot helper that captures the focused window's bitmap (PrintWindow/
+            BitBlt), excludes EktosWhispr's own windows, and writes framed PNG bytes
+            to stdout.
+          files: windows-active-window-info-win32-x64.zip
+          make_latest: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

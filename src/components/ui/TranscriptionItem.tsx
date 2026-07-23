@@ -11,6 +11,7 @@ import {
   Loader2,
   AlertCircle,
   ArchiveRestore,
+  Monitor,
 } from "lucide-react";
 import type {
   TranscriptionItem as TranscriptionItemType,
@@ -48,6 +49,7 @@ export default function TranscriptionItem({
   const { t, i18n } = useTranslation();
   const [isHovered, setIsHovered] = useState(false);
   const [isExpanded, setIsExpanded] = useState(false);
+  const [isScreenContextExpanded, setIsScreenContextExpanded] = useState(false);
   const [isRetrying, setIsRetrying] = useState(false);
 
   const timestampSource = item.timestamp.endsWith("Z") ? item.timestamp : `${item.timestamp}Z`;
@@ -76,6 +78,7 @@ export default function TranscriptionItem({
       ? formatMmSs(Math.round(item.audio_duration_ms / 1000))
       : null;
   const hasRawText = item.raw_text !== null;
+  const hasScreenContext = !!item.screen_context_text;
   const hasAudio = item.has_audio === 1;
   const showUtilityGroup = hasRawText || hasAudio;
 
@@ -227,6 +230,22 @@ export default function TranscriptionItem({
               </Button>
             </Tooltip>
           )}
+          {!isFailed && !isDiscarded && hasScreenContext && (
+            <Tooltip content={t("controlPanel.history.viewScreenContext")}>
+              <Button
+                size="icon"
+                variant="ghost"
+                aria-label={t("controlPanel.history.viewScreenContext")}
+                onClick={() => setIsScreenContextExpanded(!isScreenContextExpanded)}
+                className={cn(
+                  "h-6 w-6 rounded-sm text-muted-foreground hover:text-primary hover:bg-primary/10",
+                  isScreenContextExpanded && "text-primary"
+                )}
+              >
+                <Monitor size={12} />
+              </Button>
+            </Tooltip>
+          )}
           {hasAudio && (
             <Tooltip content={t(getShowInFolderKey())}>
               <Button
@@ -299,6 +318,24 @@ export default function TranscriptionItem({
                 {t("controlPanel.history.noAiProcessing")}
               </p>
             )}
+          </div>
+        </div>
+      )}
+
+      {!isFailed && !isDiscarded && hasScreenContext && (
+        <div
+          className={cn(
+            "overflow-hidden transition-all duration-200",
+            isScreenContextExpanded ? "max-h-96" : "max-h-0"
+          )}
+        >
+          <div className="border-t border-border/20 mt-2 pt-2">
+            <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">
+              {t("controlPanel.history.screenContextUsed")}
+            </span>
+            <p className="text-xs text-muted-foreground/80 leading-relaxed mt-1 wrap-break-word whitespace-pre-wrap">
+              {item.screen_context_text}
+            </p>
           </div>
         </div>
       )}

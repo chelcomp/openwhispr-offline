@@ -159,6 +159,48 @@ test("agent is reachable with an explicit model (BYOK/local/enterprise)", async 
   );
 });
 
+// shouldCaptureScreenContext (Requirement 1a — see
+// docs/specs/active-window-screen-context.md)
+
+test("shouldCaptureScreenContext is true when the route is cleanup", async () => {
+  const { shouldCaptureScreenContext } = await load();
+  assert.equal(
+    shouldCaptureScreenContext({
+      cleanupReachable: true,
+      agentReachable: false,
+      agentInvoked: false,
+      voiceAgentRequested: false,
+    }),
+    true
+  );
+});
+
+test("shouldCaptureScreenContext is true when the route is agent (voice agent hotkey)", async () => {
+  const { shouldCaptureScreenContext } = await load();
+  assert.equal(
+    shouldCaptureScreenContext({
+      cleanupReachable: false,
+      agentReachable: true,
+      agentInvoked: false,
+      voiceAgentRequested: true,
+    }),
+    true
+  );
+});
+
+test("shouldCaptureScreenContext is false when nothing is reachable (plain dictation, no cleanup/agent)", async () => {
+  const { shouldCaptureScreenContext } = await load();
+  assert.equal(
+    shouldCaptureScreenContext({
+      cleanupReachable: false,
+      agentReachable: false,
+      agentInvoked: false,
+      voiceAgentRequested: false,
+    }),
+    false
+  );
+});
+
 test("disabling the dictation agent overrides cloud reachability", async () => {
   const { resolveDictationAgentReachability } = await load();
 

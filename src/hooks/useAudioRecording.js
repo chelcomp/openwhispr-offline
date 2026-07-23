@@ -47,6 +47,12 @@ export const useAudioRecording = (toast, options = {}) => {
       // with the user speaking instead of blocking the paste after they release.
       audioManagerRef.current.warmupReasoningServer();
 
+      // Active-window screen context (docs/specs/active-window-screen-context.md)
+      // — fire-and-forget, gated internally on Requirement 1a's synchronous
+      // check; a no-op when the gate says this dictation won't route through
+      // a pass that consumes it.
+      audioManagerRef.current.warmupScreenContext();
+
       const autoUnmuteMic = getSettings().autoUnmuteMicEnabled;
       if (autoUnmuteMic) {
         // Querying prior mute state always goes through a slow PowerShell/COM
@@ -256,7 +262,10 @@ export const useAudioRecording = (toast, options = {}) => {
           if (autoPasteEnabled && isDuplicatePaste) {
             logger.warn(
               "Skipped duplicate auto-paste",
-              { textLength: result.text.length, sinceLastMs: Math.round(now - lastPasteRef.current.atMs) },
+              {
+                textLength: result.text.length,
+                sinceLastMs: Math.round(now - lastPasteRef.current.atMs),
+              },
               "audio"
             );
           } else if (autoPasteEnabled) {

@@ -483,6 +483,153 @@ function SpeechToTextTabs({
   );
 }
 
+// Settings → Speech-to-Text → Dictation's screen-context controls (see
+// docs/specs/active-window-screen-context.md's "Settings & IPC" Design
+// section). Hidden entirely on non-Windows platforms (feature absent, not
+// erroring) — matches the toggle's own no-op behavior on macOS/Linux.
+export function ScreenContextSettingsSection({
+  includeActiveWindowContext,
+  setIncludeActiveWindowContext,
+  screenContextOcrEngine,
+  setScreenContextOcrEngine,
+  persistActiveWindowScreenshots,
+  setPersistActiveWindowScreenshots,
+}: {
+  includeActiveWindowContext: boolean;
+  setIncludeActiveWindowContext: (v: boolean) => void;
+  screenContextOcrEngine: "auto" | "native" | "tesseract";
+  setScreenContextOcrEngine: (v: "auto" | "native" | "tesseract") => void;
+  persistActiveWindowScreenshots: boolean;
+  setPersistActiveWindowScreenshots: (v: boolean) => void;
+}) {
+  const { t } = useTranslation();
+  const [platformSupported, setPlatformSupported] = useState(true);
+  const [tesseractStatus, setTesseractStatus] = useState<{
+    supported: boolean;
+    downloaded: boolean;
+    downloading: boolean;
+  }>({ supported: true, downloaded: false, downloading: false });
+  const [downloadProgress, setDownloadProgress] = useState(0);
+
+  useEffect(() => {
+    window.electronAPI
+      ?.getActiveWindowContextPlatformSupport?.()
+      .then((result: { supported: boolean }) => setPlatformSupported(!!result?.supported))
+      .catch(() => setPlatformSupported(false));
+  }, []);
+
+  const refreshTesseractStatus = () => {
+    window.electronAPI
+      ?.getTesseractOcrStatus?.()
+      .then((status: { supported: boolean; downloaded: boolean; downloading: boolean }) => {
+        if (status) setTesseractStatus(status);
+      })
+      .catch(() => {});
+  };
+
+  useEffect(() => {
+    refreshTesseractStatus();
+    const dispose = window.electronAPI?.onTesseractOcrDownloadProgress?.(
+      (data: { progress: number }) => setDownloadProgress(Math.round((data?.progress || 0) * 100))
+    );
+    return () => dispose?.();
+  }, []);
+
+  if (!platformSupported) return null;
+
+  const needsTesseractDownload =
+    (screenContextOcrEngine === "tesseract" || screenContextOcrEngine === "auto") &&
+    !tesseractStatus.downloaded &&
+    !tesseractStatus.downloading;
+
+  const handleDownloadTesseract = async () => {
+    setDownloadProgress(0);
+    await window.electronAPI?.downloadTesseractOcrAssets?.();
+    refreshTesseractStatus();
+  };
+
+  return (
+    <div>
+      <SectionHeader
+        title={t("settingsPage.screenContext.title")}
+        description={t("settingsPage.screenContext.description")}
+      />
+      <SettingsPanel>
+        <SettingsPanelRow>
+          <SettingsRow
+            label={t("settingsPage.screenContext.toggleLabel")}
+            description={t("settingsPage.screenContext.toggleDescription")}
+          >
+            <Toggle checked={includeActiveWindowContext} onChange={setIncludeActiveWindowContext} />
+          </SettingsRow>
+        </SettingsPanelRow>
+        {includeActiveWindowContext && (
+          <>
+            <SettingsPanelRow>
+              <SettingsRow
+                label={t("settingsPage.screenContext.engineLabel")}
+                description={t("settingsPage.screenContext.engineDescription")}
+              >
+                <select
+                  value={screenContextOcrEngine}
+                  onChange={(e) =>
+                    setScreenContextOcrEngine(e.target.value as "auto" | "native" | "tesseract")
+                  }
+                  className="h-7 rounded border border-border/70 bg-surface-1/80 px-2.5 text-xs font-medium text-foreground shadow-sm backdrop-blur-sm hover:border-border-hover hover:bg-surface-2/70 focus:outline-none focus:ring-2 focus:ring-ring/30 focus:ring-offset-1 transition-colors duration-200"
+                >
+                  <option value="auto">{t("settingsPage.screenContext.engineAuto")}</option>
+                  <option value="native">{t("settingsPage.screenContext.engineNative")}</option>
+                  <option value="tesseract">
+                    {t("settingsPage.screenContext.engineTesseract")}
+                  </option>
+                </select>
+              </SettingsRow>
+            </SettingsPanelRow>
+            {needsTesseractDownload && (
+              <SettingsPanelRow>
+                <div className="flex items-center justify-between gap-3 px-3 py-2 rounded-md border border-border/60">
+                  <span className="text-xs text-muted-foreground">
+                    {t("settingsPage.screenContext.tesseractDownloadRequired")}
+                  </span>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="h-7 text-xs"
+                    onClick={handleDownloadTesseract}
+                  >
+                    {t("settingsPage.screenContext.downloadButton")}
+                  </Button>
+                </div>
+              </SettingsPanelRow>
+            )}
+            {tesseractStatus.downloading && (
+              <SettingsPanelRow>
+                <div className="w-full h-1.5 rounded bg-surface-2/70 overflow-hidden">
+                  <div
+                    className="h-full bg-primary transition-all"
+                    style={{ width: `${downloadProgress}%` }}
+                  />
+                </div>
+              </SettingsPanelRow>
+            )}
+            <SettingsPanelRow>
+              <SettingsRow
+                label={t("settingsPage.screenContext.persistLabel")}
+                description={t("settingsPage.screenContext.persistDescription")}
+              >
+                <Toggle
+                  checked={persistActiveWindowScreenshots}
+                  onChange={setPersistActiveWindowScreenshots}
+                />
+              </SettingsRow>
+            </SettingsPanelRow>
+          </>
+        )}
+      </SettingsPanel>
+    </div>
+  );
+}
+
 export function DictationVadTabs({
   initialTab,
   renderPreviewVadSettings,
@@ -726,6 +873,14 @@ export default function SettingsPage({
     setPanelStartPosition,
     audioRetentionDays,
     setAudioRetentionDays,
+    includeActiveWindowContext,
+    setIncludeActiveWindowContext,
+    screenContextOcrEngine,
+    setScreenContextOcrEngine,
+    persistActiveWindowScreenshots,
+    setPersistActiveWindowScreenshots,
+    screenContextRetentionDays,
+    setScreenContextRetentionDays,
     transcriptionIdleTimeoutMs,
     setTranscriptionIdleTimeoutMs,
     llmIdleTimeoutMs,
@@ -865,6 +1020,35 @@ export default function SettingsPage({
   if (activeSection === "localModel" && !hasMountedLocalModel) {
     setHasMountedLocalModel(true);
   }
+
+  const [screenContextStorageUsage, setScreenContextStorageUsage] = useState<{
+    fileCount: number;
+    totalBytes: number;
+  }>({ fileCount: 0, totalBytes: 0 });
+
+  useEffect(() => {
+    if (activeSection !== "privacyData") return;
+    const refreshScreenContextStorageUsage = () => {
+      window.electronAPI
+        ?.getScreenContextStorageUsage?.()
+        .then((usage: { fileCount: number; totalBytes: number }) => {
+          if (usage) setScreenContextStorageUsage(usage);
+        })
+        .catch(() => {});
+    };
+    refreshScreenContextStorageUsage();
+  }, [activeSection]);
+
+  const handleClearAllScreenContextScreenshots = async () => {
+    if (!window.electronAPI?.deleteAllScreenContextScreenshots) return;
+    try {
+      await window.electronAPI.deleteAllScreenContextScreenshots();
+      setScreenContextStorageUsage({ fileCount: 0, totalBytes: 0 });
+      toast({ title: t("settingsPage.privacy.clearAllScreenContext"), variant: "default" });
+    } catch {
+      // silent fail
+    }
+  };
 
   const handleClearAllAudio = async () => {
     if (!window.electronAPI?.deleteAllAudio) return;
@@ -1440,9 +1624,7 @@ export default function SettingsPage({
             </div>
             <div className="space-y-1.5">
               <VADLabelWithInfo
-                label={t(
-                  "settingsPage.transcription.previewVad.fields.minSilenceDurationMs.label"
-                )}
+                label={t("settingsPage.transcription.previewVad.fields.minSilenceDurationMs.label")}
                 description={t(
                   "settingsPage.transcription.previewVad.fields.minSilenceDurationMs.info"
                 )}
@@ -1472,9 +1654,7 @@ export default function SettingsPage({
             </div>
             <div className="space-y-1.5">
               <VADLabelWithInfo
-                label={t(
-                  "settingsPage.transcription.previewVad.fields.maxSpeechDurationS.label"
-                )}
+                label={t("settingsPage.transcription.previewVad.fields.maxSpeechDurationS.label")}
                 description={t(
                   "settingsPage.transcription.previewVad.fields.maxSpeechDurationS.info"
                 )}
@@ -1491,9 +1671,7 @@ export default function SettingsPage({
             <div className="space-y-1.5">
               <VADLabelWithInfo
                 label={t("settingsPage.transcription.previewVad.fields.samplesOverlap.label")}
-                description={t(
-                  "settingsPage.transcription.previewVad.fields.samplesOverlap.info"
-                )}
+                description={t("settingsPage.transcription.previewVad.fields.samplesOverlap.info")}
               />
               <Input
                 type="number"
@@ -1507,9 +1685,7 @@ export default function SettingsPage({
             <div className="space-y-1.5">
               <VADLabelWithInfo
                 label={t("settingsPage.transcription.previewVad.fields.energyThreshold.label")}
-                description={t(
-                  "settingsPage.transcription.previewVad.fields.energyThreshold.info"
-                )}
+                description={t("settingsPage.transcription.previewVad.fields.energyThreshold.info")}
               />
               <Input
                 type="number"
@@ -1523,9 +1699,7 @@ export default function SettingsPage({
             <div className="space-y-1.5">
               <VADLabelWithInfo
                 label={t("settingsPage.transcription.previewVad.fields.minSegmentRms.label")}
-                description={t(
-                  "settingsPage.transcription.previewVad.fields.minSegmentRms.info"
-                )}
+                description={t("settingsPage.transcription.previewVad.fields.minSegmentRms.info")}
               />
               <Input
                 type="number"
@@ -1538,9 +1712,7 @@ export default function SettingsPage({
             </div>
             <div className="space-y-1.5">
               <VADLabelWithInfo
-                label={t(
-                  "settingsPage.transcription.previewVad.fields.noiseFloorFactor.label"
-                )}
+                label={t("settingsPage.transcription.previewVad.fields.noiseFloorFactor.label")}
                 description={t(
                   "settingsPage.transcription.previewVad.fields.noiseFloorFactor.info"
                 )}
@@ -1557,9 +1729,7 @@ export default function SettingsPage({
             <div className="space-y-1.5">
               <VADLabelWithInfo
                 label={t("settingsPage.transcription.previewVad.fields.noiseFloorAlpha.label")}
-                description={t(
-                  "settingsPage.transcription.previewVad.fields.noiseFloorAlpha.info"
-                )}
+                description={t("settingsPage.transcription.previewVad.fields.noiseFloorAlpha.info")}
               />
               <Input
                 type="number"
@@ -2650,6 +2820,84 @@ EOF`,
               </SettingsPanel>
             </div>
 
+            {/* Active-window screen context screenshots — collected/ephemeral data
+                per CLAUDE.md §7, own independent retention setting (see
+                docs/specs/active-window-screen-context.md). Only shown once
+                persistActiveWindowScreenshots has ever been (or is) enabled,
+                since leftover files need a manual escape hatch even after the
+                toggle is turned back off. */}
+            {(persistActiveWindowScreenshots || screenContextStorageUsage.fileCount > 0) && (
+              <div>
+                <SectionHeader
+                  title={t("settingsPage.privacy.screenContextStorageUsage")}
+                  description={t("settingsPage.privacy.screenContextStorageUsageDescription")}
+                />
+                <SettingsPanel>
+                  {persistActiveWindowScreenshots && (
+                    <SettingsPanelRow>
+                      <SettingsRow
+                        label={t("settingsPage.privacy.screenContextRetention")}
+                        description={t("settingsPage.privacy.screenContextRetentionDescription")}
+                      >
+                        <select
+                          value={screenContextRetentionDays}
+                          onChange={(e) =>
+                            setScreenContextRetentionDays(parseInt(e.target.value, 10))
+                          }
+                          className="h-7 rounded border border-border/70 bg-surface-1/80 px-2.5 text-xs font-medium text-foreground shadow-sm backdrop-blur-sm hover:border-border-hover hover:bg-surface-2/70 focus:outline-none focus:ring-2 focus:ring-ring/30 focus:ring-offset-1 transition-colors duration-200"
+                        >
+                          <option value={0}>
+                            {t("settingsPage.privacy.audioRetentionDisabled")}
+                          </option>
+                          <option value={1}>
+                            {t("settingsPage.privacy.audioRetentionDays", { count: 1 })}
+                          </option>
+                          <option value={7}>
+                            {t("settingsPage.privacy.audioRetentionDays", { count: 7 })}
+                          </option>
+                          <option value={14}>
+                            {t("settingsPage.privacy.audioRetentionDays", { count: 14 })}
+                          </option>
+                          <option value={30}>
+                            {t("settingsPage.privacy.audioRetentionDays", { count: 30 })}
+                          </option>
+                          <option value={60}>
+                            {t("settingsPage.privacy.audioRetentionDays", { count: 60 })}
+                          </option>
+                          <option value={90}>
+                            {t("settingsPage.privacy.audioRetentionDays", { count: 90 })}
+                          </option>
+                        </select>
+                      </SettingsRow>
+                    </SettingsPanelRow>
+                  )}
+                  <SettingsPanelRow>
+                    <SettingsRow
+                      label={t("settingsPage.privacy.screenContextStorageUsage")}
+                      description={
+                        screenContextStorageUsage.fileCount > 0
+                          ? t("settingsPage.privacy.audioStorageFiles", {
+                              count: screenContextStorageUsage.fileCount,
+                              size: formatBytes(screenContextStorageUsage.totalBytes),
+                            })
+                          : t("settingsPage.privacy.screenContextStorageEmpty")
+                      }
+                    >
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="h-7 text-xs"
+                        disabled={screenContextStorageUsage.fileCount === 0}
+                        onClick={handleClearAllScreenContextScreenshots}
+                      >
+                        {t("settingsPage.privacy.clearAllScreenContext")}
+                      </Button>
+                    </SettingsRow>
+                  </SettingsPanelRow>
+                </SettingsPanel>
+              </div>
+            )}
+
             {/* Meeting Audio — never auto-purged (CLAUDE.md §7); manual controls only */}
             <div>
               <SectionHeader
@@ -3092,12 +3340,18 @@ EOF`,
                   <DictationVadTabs
                     renderPreviewVadSettings={renderPreviewVadSettings}
                     renderWhisperVadSettings={
-                      localTranscriptionProvider !== "nvidia"
-                        ? renderWhisperVadSettings
-                        : undefined
+                      localTranscriptionProvider !== "nvidia" ? renderWhisperVadSettings : undefined
                     }
                   />
                 )}
+                <ScreenContextSettingsSection
+                  includeActiveWindowContext={includeActiveWindowContext}
+                  setIncludeActiveWindowContext={setIncludeActiveWindowContext}
+                  screenContextOcrEngine={screenContextOcrEngine}
+                  setScreenContextOcrEngine={setScreenContextOcrEngine}
+                  persistActiveWindowScreenshots={persistActiveWindowScreenshots}
+                  setPersistActiveWindowScreenshots={setPersistActiveWindowScreenshots}
+                />
               </div>
             )}
             renderNoteRecording={() => (
