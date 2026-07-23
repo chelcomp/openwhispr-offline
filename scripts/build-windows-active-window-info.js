@@ -15,10 +15,6 @@ const fs = require("fs");
 const path = require("path");
 
 const isWindows = process.platform === "win32";
-if (!isWindows) {
-  // Only needed on Windows
-  process.exit(0);
-}
 
 const projectRoot = path.resolve(__dirname, "..");
 const cSource = path.join(projectRoot, "resources", "windows-active-window-info.c");
@@ -74,8 +70,17 @@ async function tryDownload() {
   return false;
 }
 
+// Escapes a filesystem path for embedding as a single double-quoted argument
+// in a shell: true command line (built for MSVC's cl.exe argument parser).
+// Backslashes must be doubled unconditionally before quotes are escaped —
+// otherwise a backslash sitting immediately before the closing quote (or any
+// embedded quote) is interpreted by Windows CRT-style argv parsing as
+// escaping that quote rather than being a literal backslash, corrupting the
+// command. This function only ever receives absolute filesystem paths (never
+// attacker-controlled strings), so unconditionally doubling every backslash
+// is always safe and produces a correctly quoted argument.
 function quotePath(p) {
-  return `"${p.replace(/"/g, '\\"')}"`;
+  return `"${p.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
 }
 
 // GDI+ requires linking gdiplus, gdi32, user32; IStream/CreateStreamOnHGlobal
@@ -176,9 +181,7 @@ async function main() {
     return;
   }
 
-  console.warn(
-    "[windows-active-window-info] Could not obtain windows-active-window-info binary."
-  );
+  console.warn("[windows-active-window-info] Could not obtain windows-active-window-info binary.");
   console.warn(
     "[windows-active-window-info] Screen-context capture will gracefully no-op (Requirement 7)."
   );
@@ -187,7 +190,19 @@ async function main() {
   );
 }
 
-main().catch((error) => {
-  console.error("[windows-active-window-info] Unexpected error:", error);
-  // Don't fail the build
-});
+module.exports = {
+  quotePath,
+};
+
+// Only run the build when executed directly (not when required by tests).
+if (require.main === module) {
+  if (!isWindows) {
+    // Only needed on Windows
+    process.exit(0);
+  }
+
+  main().catch((error) => {
+    console.error("[windows-active-window-info] Unexpected error:", error);
+    // Don't fail the build
+  });
+}

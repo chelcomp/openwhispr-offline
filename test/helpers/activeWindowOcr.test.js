@@ -6,6 +6,12 @@ const os = require("node:os");
 const modulePath = require.resolve("../../src/helpers/activeWindowOcr");
 const originalLoad = Module._load;
 
+// Escapes all regex metacharacters (not just `.`) before interpolating an
+// arbitrary string into a `new RegExp(...)` constructor.
+function escapeRegExp(str) {
+  return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 // Installs the mock Module._load and returns the freshly-required module
 // PLUS a `restore()` callback. `runTesseractOcr`/`runNativeOcr` call
 // `require("tesseract.js")`/spawn asynchronously — after `require()` itself
@@ -209,7 +215,7 @@ test("native OCR PowerShell script uses the WinRT-await workaround, not a bare .
   ]) {
     assert.match(
       capturedScript,
-      new RegExp(`\\[${winrtType.replace(/\./g, "\\.")},[^\\]]*ContentType=WindowsRuntime\\]`),
+      new RegExp(`\\[${escapeRegExp(winrtType)},[^\\]]*ContentType=WindowsRuntime\\]`),
       `must force-load the WinRT type accelerator for ${winrtType}`
     );
   }
