@@ -41,15 +41,38 @@ function sanitizeEngine(engine) {
 // process (mirrors clipboard.js's existing PowerShell SendKeys pattern).
 function runNativeOcr(pngPath) {
   return new Promise((resolve) => {
+    // WinRT's IAsyncOperation<T> is not directly awaitable from PowerShell
+    // (it has no .GetAwaiter()) — the standard workaround is to reflectively
+    // invoke System.WindowsRuntimeSystemExtensions.AsTask<T> to project it to
+    // a real .NET Task, then block on that. Each WinRT type used below must
+    // also be force-loaded once via the `[Type,Contract,ContentType=
+    // WindowsRuntime]` accelerator syntax before PowerShell's type resolver
+    // can see it.
     const script = `
+      [Windows.Media.Ocr.OcrEngine,Windows.Foundation.UniversalApiContract,ContentType=WindowsRuntime] | Out-Null
+      [Windows.Storage.StorageFile,Windows.Foundation.UniversalApiContract,ContentType=WindowsRuntime] | Out-Null
+      [Windows.Graphics.Imaging.BitmapDecoder,Windows.Foundation.UniversalApiContract,ContentType=WindowsRuntime] | Out-Null
       Add-Type -AssemblyName System.Runtime.WindowsRuntime
+
+      $asTaskGeneric = ([System.WindowsRuntimeSystemExtensions].GetMethods() | Where-Object {
+        $_.Name -eq 'AsTask' -and $_.GetParameters().Count -eq 1 -and $_.GetParameters()[0].ParameterType.Name -eq 'IAsyncOperation\`1'
+      })[0]
+
+      function Await($WinRtTask, $ResultType) {
+        $asTask = $asTaskGeneric.MakeGenericMethod($ResultType)
+        $netTask = $asTask.Invoke($null, @($WinRtTask))
+        $netTask.Wait(-1) | Out-Null
+        $netTask.Result
+      }
+
       $ocrEngine = [Windows.Media.Ocr.OcrEngine]::TryCreateFromUserProfileLanguages()
       if ($null -eq $ocrEngine) { Write-Output '{"text":null}'; exit 0 }
-      $file = [Windows.Storage.StorageFile]::GetFileFromPathAsync('${pngPath.replace(/'/g, "''")}')
-      $stream = $file.GetAwaiter().GetResult().OpenAsync([Windows.Storage.FileAccessMode]::Read)
-      $decoder = [Windows.Graphics.Imaging.BitmapDecoder]::CreateAsync($stream.GetAwaiter().GetResult())
-      $bitmap = $decoder.GetAwaiter().GetResult().GetSoftwareBitmapAsync().GetAwaiter().GetResult()
-      $result = $ocrEngine.RecognizeAsync($bitmap).GetAwaiter().GetResult()
+
+      $file = Await ([Windows.Storage.StorageFile]::GetFileFromPathAsync('${pngPath.replace(/'/g, "''")}')) ([Windows.Storage.StorageFile])
+      $stream = Await ($file.OpenAsync([Windows.Storage.FileAccessMode]::Read)) ([Windows.Storage.Streams.IRandomAccessStream])
+      $decoder = Await ([Windows.Graphics.Imaging.BitmapDecoder]::CreateAsync($stream)) ([Windows.Graphics.Imaging.BitmapDecoder])
+      $bitmap = Await ($decoder.GetSoftwareBitmapAsync()) ([Windows.Graphics.Imaging.SoftwareBitmap])
+      $result = Await ($ocrEngine.RecognizeAsync($bitmap)) ([Windows.Media.Ocr.OcrResult])
       $text = $result.Text
       $obj = @{ text = $text } | ConvertTo-Json -Compress
       Write-Output $obj

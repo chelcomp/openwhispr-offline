@@ -334,8 +334,10 @@ class ReasoningService extends BaseReasoningService {
       throw new Error(`Unsupported reasoning provider: ${providerId}`);
     }
 
+    const resolvedSystemPromptForLog =
+      config.systemPrompt || this.getSystemPrompt(agentName, config.screenContextText);
     console.log(`[LLM] ▶ provider=${providerId} model=${trimmedModel}`);
-    console.log(`[LLM] System prompt:\n${config.systemPrompt || "(default cleanup prompt)"}`);
+    console.log(`[LLM] System prompt:\n${resolvedSystemPromptForLog}`);
     console.log(
       `[LLM] User input (${text.length} chars):\n${text.length > 800 ? text.substring(0, 800) + "…" : text}`
     );
@@ -407,7 +409,7 @@ class ReasoningService extends BaseReasoningService {
       { role: "user", content: userContent },
     ];
 
-    logger.logReasoning("LOCAL_STREAM_START", { model: trimmedModel, agentName });
+    logger.logReasoning("LOCAL_STREAM_START", { model: trimmedModel, agentName, messages });
     const startTime = Date.now();
     let accumulated = "";
 
@@ -541,6 +543,7 @@ class ReasoningService extends BaseReasoningService {
       isLocal: isLocalProvider,
       isLan: !!isLanCleanup,
       messageCount: messages.length,
+      messages,
     });
 
     const headers: Record<string, string> = {
@@ -739,6 +742,7 @@ class ReasoningService extends BaseReasoningService {
       hasTools: !!tools,
       toolCount: tools ? Object.keys(tools).length : 0,
       messageCount: messages.length,
+      messages,
     });
 
     const useTemperature = isLocalProvider || isLanCleanup || apiConfig.supportsTemperature;

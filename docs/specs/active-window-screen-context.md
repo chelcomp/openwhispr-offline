@@ -23,12 +23,30 @@ disclosed deviations from the letter of the Design section:
    section's reference implementation describes. Flagged as a mechanical follow-up (still
    open — only the missing-dependency defect from the first pr-reviewer pass was fixed, not
    this architectural deviation).
-3. `windows-active-window-info.c`, its download script, and its CI workflow are written to
-   the spec's protocol contract but are **unvalidated** — this sandbox has no Windows/MSVC
-   toolchain to compile or run them. The JS layer's `activeWindowCapture.js` degrades
-   gracefully (returns null) if the binary is ever missing, so this does not block the
-   rest of the feature working end-to-end once the binary is built (e.g. via the new CI
-   workflow) and shipped.
+3. **Validated on real Windows hardware (updated after a live-testing pass)**:
+   `windows-active-window-info.c` was originally broken C++-in-.c GDI+ usage (a `Bitmap`
+   class instance and `using namespace Gdiplus`, neither of which compiles as C) and has
+   been rewritten against GDI+'s flat C API (`GdipCreateBitmapFromHBITMAP`,
+   `GdipSaveImageToStream`, `GdipDisposeImage`, `COBJMACROS`/`IStream_Release`). Compiles
+   clean with MinGW/Clang and produces correct protocol output (the JSON metadata header
+   followed by a valid PNG). A new local-compile-first build script,
+   `scripts/build-windows-active-window-info.js`, mirrors `build-windows-key-listener.js`'s
+   strategy (up-to-date check → compile locally → download-prebuilt fallback) and is now
+   the primary path in `compile:native`; the original download-only script and CI workflow
+   remain as the fallback. Separately, the native Windows OCR PowerShell bridge in
+   `activeWindowOcr.js` was found to be silently non-functional end-to-end on real
+   hardware — it called `.GetAwaiter().GetResult()` directly on a WinRT
+   `IAsyncOperation<T>`, which PowerShell cannot invoke (WinRT operations have no
+   `.GetAwaiter()` PowerShell can see), and never force-loaded the WinRT types via the
+   `[Type,Contract,ContentType=WindowsRuntime]` accelerator syntax — so native OCR always
+   returned null/empty despite every existing automated test passing, because those tests
+   mock the PowerShell invocation entirely rather than inspecting the generated script.
+   Fixed using the standard PowerShell WinRT-await workaround (reflectively invoking
+   `System.WindowsRuntimeSystemExtensions.AsTask<T>` to project the WinRT operation to a
+   real .NET `Task`, then blocking on that) and verified to extract real OCR text from a
+   real screenshot. New regression tests assert on the generated script/source text itself
+   (see the "Tests" list below) so a regression to either the broken C++-in-.c form or the
+   broken direct-`.GetAwaiter()` form fails loudly instead of passing silently as before.
 
 Renderer wiring: `warmupScreenContext()`, the OCR-reuse cache, the cleanup-and-agent prompt
 threading (`appendScreenContextSuffix()` wired into both `ReasoningService.ts`'s cleanup

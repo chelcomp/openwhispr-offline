@@ -1,10 +1,11 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const {
-  ScreenContextCache,
-  resolveScreenContextWithCache,
-  OCR_REUSE_WINDOW_MS,
-} = require("../../src/helpers/screenContextCache");
+const fs = require("node:fs");
+const path = require("node:path");
+
+const load = () => import("../../src/helpers/screenContextCache.js");
+
+const SOURCE_PATH = path.join(__dirname, "../../src/helpers/screenContextCache.js");
 
 function mockIdentify(appIdentifier) {
   return async () => appIdentifier;
@@ -21,6 +22,7 @@ function mockCaptureAndOcr(appIdentifier, ocrText) {
 }
 
 test("same app, second hotkey-down within the reuse window: full capture+OCR invoked once, cached text reused", async () => {
+  const { ScreenContextCache, resolveScreenContextWithCache, OCR_REUSE_WINDOW_MS } = await load();
   const cache = new ScreenContextCache();
   const capture1 = mockCaptureAndOcr("notepad.exe", "first turn OCR text");
 
@@ -49,6 +51,7 @@ test("same app, second hotkey-down within the reuse window: full capture+OCR inv
 });
 
 test("same app, second hotkey-down beyond the reuse window: full capture+OCR runs twice", async () => {
+  const { ScreenContextCache, resolveScreenContextWithCache, OCR_REUSE_WINDOW_MS } = await load();
   const cache = new ScreenContextCache();
   const capture1 = mockCaptureAndOcr("notepad.exe", "turn 1 text");
   await resolveScreenContextWithCache({
@@ -73,6 +76,7 @@ test("same app, second hotkey-down beyond the reuse window: full capture+OCR run
 });
 
 test("different app within the reuse window: cache is not reused across an app switch", async () => {
+  const { ScreenContextCache, resolveScreenContextWithCache } = await load();
   const cache = new ScreenContextCache();
   const capture1 = mockCaptureAndOcr("notepad.exe", "notepad text");
   await resolveScreenContextWithCache({
@@ -97,6 +101,7 @@ test("different app within the reuse window: cache is not reused across an app s
 });
 
 test("no prior cached entry (first-ever dictation): full capture+OCR runs, seeds the cache", async () => {
+  const { ScreenContextCache, resolveScreenContextWithCache } = await load();
   const cache = new ScreenContextCache();
   const capture = mockCaptureAndOcr("notepad.exe", "seed text");
 
@@ -119,6 +124,7 @@ test("no prior cached entry (first-ever dictation): full capture+OCR runs, seeds
 });
 
 test("identity comparison is case/`.exe`-suffix insensitive (identify-only vs. full-capture identifier formats)", async () => {
+  const { ScreenContextCache, resolveScreenContextWithCache } = await load();
   const cache = new ScreenContextCache();
   // Full capture path reports the raw executable filename, original case.
   const capture1 = mockCaptureAndOcr("Notepad.exe", "first turn text");
@@ -148,6 +154,7 @@ test("identity comparison is case/`.exe`-suffix insensitive (identify-only vs. f
 });
 
 test("a failed/null fresh capture does not overwrite a prior valid cache entry", async () => {
+  const { ScreenContextCache, resolveScreenContextWithCache, OCR_REUSE_WINDOW_MS } = await load();
   const cache = new ScreenContextCache();
   await resolveScreenContextWithCache({
     cache,
@@ -168,4 +175,32 @@ test("a failed/null fresh capture does not overwrite a prior valid cache entry",
 
   assert.equal(result.text, null, "this turn's LLM pass gets no context per Requirement 7");
   assert.equal(cache.lastScreenContext.ocrText, "valid cached text", "prior cache entry survives");
+});
+
+test("source is real ESM, not CommonJS (regression guard — dynamic import() interops with CJS via cjs-module-lexer's static analysis and would pass either way, so this asserts on the raw source text instead)", () => {
+  const source = fs.readFileSync(SOURCE_PATH, "utf8");
+
+  assert.match(
+    source,
+    /export class ScreenContextCache/,
+    "must be a real ESM named export, not attached to module.exports"
+  );
+  assert.match(
+    source,
+    /export const OCR_REUSE_WINDOW_MS/,
+    "must be a real ESM named export, not attached to module.exports"
+  );
+  assert.match(
+    source,
+    /export async function resolveScreenContextWithCache/,
+    "must be a real ESM named export, not attached to module.exports"
+  );
+  assert.doesNotMatch(
+    source,
+    /^\s*module\.exports\s*=/m,
+    "must not regress to a top-level CommonJS module.exports assignment — this is imported via " +
+      "ESM `import` in audioManager.js, which runs in the Vite-bundled renderer; Vite does not " +
+      "CJS-interop renderer source files the way Node does, so a CJS form here crashes renderer " +
+      "startup with a SyntaxError on first load"
+  );
 });

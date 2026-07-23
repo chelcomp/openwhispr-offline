@@ -23,16 +23,17 @@
  *
  * NOTE: this source targets MinGW-w64/MSVC on Windows and requires a Windows
  * build environment to compile (see .github/workflows/build-windows-active-
- * window-info.yml) — it cannot be compiled or exercised in this development
- * environment. It is written to the spec's protocol contract and reviewed
- * for correctness, but is UNVALIDATED by an actual Windows build/run in this
- * task. Requirement 7's failure mode (missing/erroring binary -> capture
+ * window-info.yml). It is written to the spec's protocol contract, and uses
+ * GDI+'s "flat" C API (GdipXxx functions) rather than the C++ Gdiplus::
+ * wrapper classes, since this is a plain C translation unit (.c), not C++.
+ * Requirement 7's failure mode (missing/erroring binary -> capture
  * gracefully resolves to null) means the JS layer (activeWindowCapture.js)
  * degrades safely if this binary is ever missing or broken.
  */
 
-#define WIN32_LEAN_AND_MEAN
+#define COBJMACROS
 #include <windows.h>
+#include <objidl.h>
 #include <gdiplus.h>
 #include <tlhelp32.h>
 #include <stdio.h>
@@ -43,15 +44,13 @@
 #pragma comment(lib, "gdi32.lib")
 #pragma comment(lib, "user32.lib")
 
-using namespace Gdiplus;
-
 static int GetCLSIDForPngEncoder(CLSID *pClsid) {
   UINT num = 0, size = 0;
-  GetImageEncodersSize(&num, &size);
+  GdipGetImageEncodersSize(&num, &size);
   if (size == 0) return -1;
   ImageCodecInfo *info = (ImageCodecInfo *)malloc(size);
   if (!info) return -1;
-  GetImageEncoders(num, size, info);
+  GdipGetImageEncoders(num, size, info);
   for (UINT i = 0; i < num; i++) {
     if (wcscmp(info[i].MimeType, L"image/png") == 0) {
       *pClsid = info[i].Clsid;
@@ -151,6 +150,10 @@ int main() {
 
   ULONG_PTR gdiplusToken;
   GdiplusStartupInput gdiplusStartupInput;
+  gdiplusStartupInput.GdiplusVersion = 1;
+  gdiplusStartupInput.DebugEventCallback = NULL;
+  gdiplusStartupInput.SuppressBackgroundThread = FALSE;
+  gdiplusStartupInput.SuppressExternalCodecs = FALSE;
   GdiplusStartup(&gdiplusToken, &gdiplusStartupInput, NULL);
 
   HDC hdcScreen = GetDC(NULL);
@@ -180,23 +183,28 @@ int main() {
   WriteJsonHeader(processName[0] ? processName : NULL, TRUE);
 
   {
-    Bitmap bitmap(hBitmap, NULL);
-    CLSID pngClsid;
-    if (GetCLSIDForPngEncoder(&pngClsid) == 0) {
-      IStream *stream = NULL;
-      CreateStreamOnHGlobal(NULL, TRUE, &stream);
-      bitmap.Save(stream, &pngClsid, NULL);
-
-      HGLOBAL hMem = NULL;
-      GetHGlobalFromStream(stream, &hMem);
-      SIZE_T size = GlobalSize(hMem);
-      void *data = GlobalLock(hMem);
-      if (data && size > 0) {
-        fwrite(data, 1, size, stdout);
-        fflush(stdout);
+    GpBitmap *bitmap = NULL;
+    if (GdipCreateBitmapFromHBITMAP(hBitmap, NULL, &bitmap) == Ok && bitmap) {
+      CLSID pngClsid;
+      if (GetCLSIDForPngEncoder(&pngClsid) == 0) {
+        IStream *stream = NULL;
+        if (CreateStreamOnHGlobal(NULL, TRUE, &stream) == S_OK && stream) {
+          if (GdipSaveImageToStream(bitmap, stream, &pngClsid, NULL) == Ok) {
+            HGLOBAL hMem = NULL;
+            if (GetHGlobalFromStream(stream, &hMem) == S_OK && hMem) {
+              SIZE_T size = GlobalSize(hMem);
+              void *data = GlobalLock(hMem);
+              if (data && size > 0) {
+                fwrite(data, 1, size, stdout);
+                fflush(stdout);
+              }
+              GlobalUnlock(hMem);
+            }
+          }
+          IStream_Release(stream);
+        }
       }
-      GlobalUnlock(hMem);
-      stream->Release();
+      GdipDisposeImage(bitmap);
     }
   }
 

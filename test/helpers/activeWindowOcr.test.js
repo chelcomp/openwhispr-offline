@@ -172,3 +172,56 @@ test("runOcr resolves null for an empty/missing PNG buffer without throwing", as
     restore();
   }
 });
+
+test("native OCR PowerShell script uses the WinRT-await workaround, not a bare .GetAwaiter().GetResult() (regression guard — the previous form silently returned null/empty on every real invocation despite all mocked tests passing)", async () => {
+  let capturedScript = null;
+  await runOcrWithMocks(
+    {
+      execFileImpl: (bin, args, opts, cb) => {
+        // execFile("powershell", ["-NoProfile", "-NonInteractive", "-Command", script], ...)
+        capturedScript = args[args.length - 1];
+        cb(null, JSON.stringify({ text: "captured" }));
+      },
+    },
+    FAKE_PNG,
+    { engine: "native" }
+  );
+
+  assert.ok(capturedScript, "the generated PowerShell script must have been captured");
+
+  // The WinRT-await workaround: reflectively invoke
+  // System.WindowsRuntimeSystemExtensions.AsTask<T> to project the WinRT
+  // IAsyncOperation<T> to a real .NET Task, then block on that.
+  assert.match(capturedScript, /AsTask/, "must reflectively resolve AsTask");
+  assert.match(
+    capturedScript,
+    /MakeGenericMethod/,
+    "must construct the generic AsTask<T> via MakeGenericMethod"
+  );
+
+  // Each WinRT type used must be force-loaded via the
+  // [Type,Contract,ContentType=WindowsRuntime] accelerator syntax before
+  // PowerShell's type resolver can see it.
+  for (const winrtType of [
+    "Windows.Media.Ocr.OcrEngine",
+    "Windows.Storage.StorageFile",
+    "Windows.Graphics.Imaging.BitmapDecoder",
+  ]) {
+    assert.match(
+      capturedScript,
+      new RegExp(`\\[${winrtType.replace(/\./g, "\\.")},[^\\]]*ContentType=WindowsRuntime\\]`),
+      `must force-load the WinRT type accelerator for ${winrtType}`
+    );
+  }
+
+  // The bug this regresses against: calling .GetAwaiter().GetResult() directly
+  // on a WinRT IAsyncOperation<T> — PowerShell cannot invoke this (WinRT
+  // operations have no .GetAwaiter() PowerShell can see). Any bare occurrence
+  // outside of the Await helper function itself is the broken form.
+  assert.doesNotMatch(
+    capturedScript,
+    /\)\.GetAwaiter\(\)\.GetResult\(\)/,
+    "must not call .GetAwaiter().GetResult() directly on a WinRT operation " +
+      "(must go through the Await helper's AsTask projection instead)"
+  );
+});

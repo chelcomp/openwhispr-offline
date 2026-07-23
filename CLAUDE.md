@@ -241,6 +241,9 @@ pipeline previously backed a hybrid semantic search here but was removed — see
 - **download-sherpa-onnx.js**: Downloads sherpa-onnx binaries for Parakeet support
 - **build-globe-listener.js**: Compiles macOS Globe key listener from Swift source
 - **build-windows-key-listener.js**: Compiles Windows key listener (for local development)
+- **build-windows-active-window-info.js**: Compiles the active-window screen-context capture
+  helper (§20) from `resources/windows-active-window-info.c`; compile-first with a
+  download-prebuilt fallback, mirroring `build-windows-key-listener.js`'s strategy
 - **run-electron.js**: Development script to launch Electron with proper environment
 - **lib/download-utils.js**: Shared utilities for downloading and extracting files
   - `fetchLatestRelease(repo, options)`: Fetches latest release from GitHub API
@@ -814,11 +817,16 @@ step). See `docs/specs/active-window-screen-context.md` for the full design.
   or the dictation-agent route applies — evaluated synchronously at hotkey-down via
   `shouldCaptureScreenContext()` (`src/helpers/dictationRouting.js`). No helper process is
   ever spawned for a plain dictation with no cleanup/agent configured.
-- **Capture**: `windows-active-window-info.exe` (built from `resources/windows-active-window-info.c`,
-  downloaded via `scripts/download-windows-active-window-info.js`) is a one-shot helper that
-  grabs the focused window's bitmap via `PrintWindow`/`BitBlt`, excluding EktosWhispr's own
-  windows (mirrors `windows-system-audio-helper.exe`'s self-exclusion). Wrapped by
-  `src/helpers/activeWindowCapture.js` (Windows-only; no-op elsewhere).
+- **Capture**: `windows-active-window-info.exe` (built from `resources/windows-active-window-info.c`)
+  is a one-shot helper that grabs the focused window's bitmap via `PrintWindow`/`BitBlt`,
+  excluding EktosWhispr's own windows (mirrors `windows-system-audio-helper.exe`'s
+  self-exclusion). Obtained via `scripts/build-windows-active-window-info.js`, run as part of
+  the `compile:native` chain: 1. up-to-date check (skip if the binary is newer than the `.c`
+  source), 2. compile locally with MSVC/MinGW-w64/Clang (`gdiplus.lib`/`gdi32.lib`/`user32.lib`/
+  `ole32.lib`, mirroring `build-windows-key-listener.js`'s strategy), 3. fall back to
+  downloading a prebuilt binary via `scripts/download-windows-active-window-info.js` only if
+  local compilation is unavailable. Wrapped by `src/helpers/activeWindowCapture.js`
+  (Windows-only; no-op elsewhere).
 - **OCR**: `src/helpers/activeWindowOcr.js` tries native Windows OCR (a short PowerShell/WinRT
   bridge) first, with local Tesseract.js as a fallback, per the `screenContextOcrEngine`
   setting (`"auto"`/`"native"`/`"tesseract"`). Tesseract's WASM+language-data assets are a

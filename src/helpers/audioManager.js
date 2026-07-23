@@ -687,13 +687,22 @@ registerProcessor("pcm-collector-processor", PCMCollectorProcessor);
   async warmupScreenContext() {
     this.screenContextPromise = null;
     try {
-      if (typeof window === "undefined" || !window.electronAPI?.captureActiveWindowContext) return;
+      if (typeof window === "undefined" || !window.electronAPI?.captureActiveWindowContext) {
+        logger.debug("Screen context skipped: no electronAPI", {}, "screen-context");
+        return;
+      }
 
       const settings = getSettings();
-      if (!settings.includeActiveWindowContext) return;
+      if (!settings.includeActiveWindowContext) {
+        logger.debug("Screen context skipped: toggle off", {}, "screen-context");
+        return;
+      }
 
       const support = await window.electronAPI.getActiveWindowContextPlatformSupport?.();
-      if (!support?.supported) return;
+      if (!support?.supported) {
+        logger.debug("Screen context skipped: platform unsupported", { support }, "screen-context");
+        return;
+      }
 
       const gate = shouldCaptureScreenContext({
         cleanupReachable:
@@ -703,7 +712,20 @@ registerProcessor("pcm-collector-processor", PCMCollectorProcessor);
         agentInvoked: false, // wake-word detection needs the transcript, unknown at hotkey-down
         voiceAgentRequested: this.voiceAgentRequested,
       });
-      if (!gate) return;
+      if (!gate) {
+        logger.debug(
+          "Screen context skipped: gate false (no cleanup/agent reachable)",
+          {
+            useCleanupModel: settings.useCleanupModel,
+            effectiveCleanupModel: getEffectiveCleanupModel()?.trim(),
+            isCloudCleanupMode: isCloudCleanupMode(),
+            agentReachable: dictationAgentReachable(settings),
+          },
+          "screen-context"
+        );
+        return;
+      }
+      logger.debug("Screen context gate passed, capturing...", {}, "screen-context");
 
       const hotkeyDownTimestamp = Date.now();
       const currentAppIdentifier = await activeAppCaptureDetect();
@@ -1104,19 +1126,27 @@ registerProcessor("pcm-collector-processor", PCMCollectorProcessor);
       // Flush the PCM collector's partial buffer before stopping MediaRecorder.
       // The "done" (null) sentinel resolves the promise; onstop awaits it.
       if (this._pcmCollector) {
+        // Capture stable local references to the port and the in-flight
+        // chunks array at this exact moment. `this._pcmCollector` and
+        // `this._pcmChunks` can both be nulled/reassigned by other paths
+        // (cleanup(), teardownSpeechGate(), a failed startRecording() retry)
+        // before the worklet's async "done" sentinel arrives, so the closure
+        // below must never re-read them from `this` — only from these
+        // captured locals. See docs/specs/pcm-collector-stop-race-fix.md.
+        const capturedPort = this._pcmCollector.port;
+        const capturedChunks = this._pcmChunks;
         this._pcmFlushPromise = new Promise((resolve) => {
-          const orig = this._pcmCollector.port.onmessage;
-          this._pcmCollector.port.onmessage = (event) => {
+          capturedPort.onmessage = (event) => {
             if (event.data === null) {
-              // "done" sentinel — restore normal handler and resolve.
-              this._pcmCollector.port.onmessage = null;
+              // "done" sentinel — clear the temporary handler and resolve.
+              capturedPort.onmessage = null;
               resolve();
             } else {
               // partial chunk arriving just before "stop" was acknowledged.
-              this._pcmChunks.push(new Int16Array(event.data));
+              capturedChunks.push(new Int16Array(event.data));
             }
           };
-          this._pcmCollector.port.postMessage("stop");
+          capturedPort.postMessage("stop");
         });
       }
       this.mediaRecorder.stop();

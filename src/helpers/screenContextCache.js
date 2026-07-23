@@ -17,7 +17,7 @@
  * a second native binary code path.
  */
 
-const OCR_REUSE_WINDOW_MS = 2000;
+export const OCR_REUSE_WINDOW_MS = 2000;
 
 // Normalizes an app identifier for comparison — the cheap identity check
 // (activeAppCapture.detectAsync()) returns a lowercased, ".exe"-stripped
@@ -32,7 +32,7 @@ function normalizeAppIdentifier(appIdentifier) {
     .replace(/\.exe$/, "");
 }
 
-class ScreenContextCache {
+export class ScreenContextCache {
   constructor() {
     this.lastScreenContext = null; // { appIdentifier, ocrText, capturedAtTimestamp } | null
     this.lastRecordingStoppedAt = null;
@@ -86,7 +86,7 @@ class ScreenContextCache {
  * }} params
  * @returns {Promise<{ text: string|null, reused: boolean }>}
  */
-async function resolveScreenContextWithCache({
+export async function resolveScreenContextWithCache({
   cache,
   identify,
   captureAndOcr,
@@ -109,4 +109,3 @@ async function resolveScreenContextWithCache({
   return { text: null, reused: false };
 }
 
-module.exports = { ScreenContextCache, resolveScreenContextWithCache, OCR_REUSE_WINDOW_MS };

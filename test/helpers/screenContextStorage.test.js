@@ -120,3 +120,10 @@ test("getStorageUsage returns zero usage when the directory has never been creat
   const usage = manager.getStorageUsage();
   assert.deepEqual(usage, { fileCount: 0, totalBytes: 0 });
 });
+
+test("cleanupExpiredScreenshots no-ops (not an error) when the directory has never been created", () => {
+  resetUserDataDir();
+  const manager = new ScreenContextStorageManager();
+  const result = manager.cleanupExpiredScreenshots(30);
+  assert.deepEqual(result, { deleted: 0, kept: 0 });
+});

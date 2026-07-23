@@ -3750,11 +3750,17 @@ class IPCHandlers {
         try {
           const capture = await activeWindowCapture.captureActiveWindow();
           if (!capture?.png) {
+            debugLogger.debug("[ScreenContext] capture returned no image", {});
             return { text: null };
           }
           const text = await activeWindowOcr.runOcr(capture.png, {
             engine: screenContextOcrEngine,
             tesseractOcrManager: this.tesseractOcrManager,
+          });
+          debugLogger.debug("[ScreenContext] capture+OCR complete", {
+            appIdentifier: capture.appIdentifier,
+            textLength: text?.length ?? 0,
+            engine: screenContextOcrEngine,
           });
           if (persistActiveWindowScreenshots) {
             this.screenContextStorageManager.saveScreenshot(capture.png, Date.now());

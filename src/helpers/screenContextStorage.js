@@ -80,9 +80,16 @@ class ScreenContextStorageManager {
       );
       return { deleted: 0, kept };
     }
+    let files;
+    try {
+      files = fs.readdirSync(this.captureDir).filter((f) => f.endsWith(".png"));
+    } catch (error) {
+      // Directory doesn't exist yet — persistence is off, or nothing has ever
+      // been saved. Nothing to clean up; this is the common case, not an error.
+      return { deleted: 0, kept: 0 };
+    }
     try {
       const cutoffMs = Date.now() - retentionDays * 86400000;
-      const files = fs.readdirSync(this.captureDir).filter((f) => f.endsWith(".png"));
       let deleted = 0;
       let kept = 0;
 

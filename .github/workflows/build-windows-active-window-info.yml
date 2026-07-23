@@ -32,7 +32,7 @@ jobs:
 
       - name: Compile Windows Active Window Info
         run: |
-          cl /O2 /nologo /EHsc resources/windows-active-window-info.c /Fe:windows-active-window-info.exe user32.lib gdi32.lib gdiplus.lib
+          cl /O2 /nologo /EHsc resources/windows-active-window-info.c /Fe:windows-active-window-info.exe user32.lib gdi32.lib gdiplus.lib ole32.lib
         shell: cmd
 
       - name: Verify binary
