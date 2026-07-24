@@ -82,7 +82,7 @@ EktosWhispr starts with Windows and runs continuously in the background, so idle
    - Main Process: Electron main, IPC handlers, database operations
    - Renderer Process: React app with context isolation
    - Preload Script: Secure bridge between processes
-   - ONNX Utility Process: hosts all `onnxruntime-node` inference (text embeddings, speaker embeddings, fbank). Lazy-spawned on first use via `src/helpers/onnxWorkerClient.js` → `src/workers/onnxWorker.js`. Native crashes (e.g., ORT `bad_alloc`) confine to the worker; main process rejects in-flight requests and respawns with backoff. Stopped in `will-quit`.
+   - ONNX Utility Process: hosts `onnxruntime-node` inference (speaker embeddings, fbank). Lazy-spawned on first use via `src/helpers/onnxWorkerClient.js` → `src/workers/onnxWorker.js`. Native crashes (e.g., ORT `bad_alloc`) confine to the worker; main process rejects in-flight requests and respawns with backoff. Stopped in `will-quit`. Note: a generic text-embedding request type (`text.load`/`text.embed`) existed here historically but was removed along with the local semantic-search pipeline (`docs/specs/remove-qdrant-dependency.md`) — the worker's current `handlers` object only exposes `ping`/`speaker.load`/`speaker.extract`/`shutdown`. Dynamic Prompt Vocabulary (§13) originally proposed a semantic-grouping step reusing a text-embedding request, but that requirement (R11) was descoped entirely rather than shipped, since no such handler exists in production.
 
 3. **Audio Pipeline**:
    - MediaRecorder API → Blob → ArrayBuffer → IPC → File → whisper.cpp
@@ -324,6 +324,8 @@ Settings stored in localStorage with these keys:
 - `persistActiveWindowScreenshots`: whether captured screenshots are also written to disk (§20), default `false`
 - `screenContextRetentionDays`: retention window for persisted screenshots (§20), mirrors `audioRetentionDays`'s 0-fallback semantics
 - `transcriptionIdleTimeoutMs` / `llmIdleTimeoutMs`: idle-timeout durations (ms) for Whisper/Parakeet and llama-server respectively — see "On-Demand Model Lifecycle" (§18)
+- `dynamicPromptVocabularyEnabled`: master toggle for Dynamic Prompt Vocabulary's transcript-derived sources (see Custom Dictionary §13's "Dynamic Prompt Vocabulary" section), default `true`
+- `dynamicPromptVocabularyIncludeScreenContext`: separate opt-in gate for also mining `screen_context_text` into the dynamic vocabulary prompt, default `false`
 
 Secret env vars (16 total: 7 BYOK API keys + 5 enterprise cloud creds + 4 more — `ASSEMBLYAI_API_KEY`, `DEEPGRAM_API_KEY`, `CUSTOM_TRANSCRIPTION_API_KEY`, `CUSTOM_CLEANUP_API_KEY` — see `SECRET_KEYS` in `environment.js`) are encrypted at rest via Electron `safeStorage` and stored as per-key files under `userData/secure-keys/`. They are loaded into `process.env` at startup by `EnvironmentManager.init()`. Renderer reads them via IPC (`get-*-key`) and writes via debounced IPC (`save-*-key`). On Linux without a keyring, secrets fall back to plaintext.
 
@@ -533,6 +535,48 @@ API-hard-rejection-avoidance limit) but now truncates in the same tail-preservin
 instead of the old front-preserving one. `WhisperServerManager.transcribe()` also sends
 `carry_initial_prompt=true` per request whenever `initialPrompt` is set, so the whole prompt stays
 present across a multi-segment decode within one VAD-batched chunk instead of evicting mid-utterance.
+
+**Dynamic Prompt Vocabulary** (see `docs/specs/dynamic-prompt-vocabulary.md`): a second, fully
+automatic source of prompt words alongside the static Custom Dictionary above. A new pure,
+Electron/IPC-free module, `src/helpers/dynamicPromptVocabulary.js`, mines the last 20 non-discarded
+`getTranscriptions()` rows (`text`/`raw_text`, plus `screen_context_text` only when opted in — see
+below), reusing `correctionLearner.js`'s tokenizer:
+
+- `extractVocabularyTokens()` drops stopwords/fillers (`src/constants/dynamicVocabularyStopwords.json`,
+  covering `en`/`pt`/`universal`), purely-numeric tokens, and short tokens — normally a 3-char floor,
+  but a token whose *original* casing is fully uppercase/uppercase+digits or an acronym-like mixed
+  form (e.g. "API", "AWS", "K8s") survives from 2 chars (the R3a acronym exception).
+- `scoreVocabulary()` frequency-ranks the surviving tokens, case-folding for counting while keeping
+  the most-frequent casing variant, and excludes words already in the Custom Dictionary.
+- A persistent `vocabulary_stats` table (`word`, `count`, `last_seen_at` — additive
+  `CREATE TABLE IF NOT EXISTS` in `database.js`, no migration needed) accumulates recency-weighted
+  long-term frequency across the app's lifetime via `DatabaseManager.recordVocabularyOccurrences()`/
+  `getVocabularyStats()`. `recencyScore()` applies exponential decay
+  (`VOCAB_STATS_HALF_LIFE_DAYS = 14`); `finalScore()` blends the session-window count
+  (`SESSION_WEIGHT = 1.0`) with the decayed long-term score (`LONGTERM_WEIGHT = 0.3`), so a
+  word active this session always outranks a stale long-term-frequent one.
+- Near-duplicate word-variant grouping (e.g. "deploy"/"deployment") was proposed in an earlier
+  revision of this spec but was **descoped entirely, not shipped** — `onnxWorker.js` exposes no
+  generic text-embedding request handler in production, so an ONNX-embedding-based grouping step
+  could never actually run there. Near-duplicate variants are scored as separate entries in v1.
+- `buildDynamicVocabularyPrompt()` caps the result at `maxWords` (default 40) and joins it into a
+  comma-separated string identical in shape to the dictionary prompt.
+- `combineLocalTranscriptionPrompt()`/`combineCloudTranscriptionPrompt()` (`languageSupport.ts`)
+  gained a new **leading** optional parameter, `dynamicVocabPrompt`, joined as
+  `[dynamicVocabPrompt, dictionaryPrompt, langHint].filter(Boolean).join(" ")` — the existing
+  tail-preserving truncation direction is unchanged, so this new, lower-confidence segment is
+  dropped first, then the dictionary, with the language hint always safest at the end.
+- Main-process wiring: `ipcHandlers.js`'s `get-dynamic-vocabulary-prompt` IPC handler builds the
+  prompt server-side (it needs direct DB access); `db-save-transcription` also calls
+  `recordVocabularyOccurrences()` once per completed transcription. `audioManager.js`'s
+  `warmupDynamicVocabulary()` fires alongside `warmupTranscriptionEngine()`/
+  `warmupReasoningServer()`/`warmupScreenContext()` at hotkey-down, caching the resolved prompt
+  string for the whole recording (`getDynamicVocabularyPrompt()`), never re-queried per VAD chunk.
+- Two independent settings: `dynamicPromptVocabularyEnabled` (default **true** — transcript-derived
+  sources only) and `dynamicPromptVocabularyIncludeScreenContext` (default **false** — a separate,
+  explicit opt-in gating whether `screen_context_text` is also mined; applies to both local and
+  cloud transcription providers alike once enabled, since it's a blanket privacy acknowledgment, not
+  a per-provider one).
 
 **Auto-learn pipeline (learning corrections from the destination field)**:
 

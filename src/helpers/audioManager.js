@@ -456,6 +456,65 @@ registerProcessor("pcm-collector-processor", PCMCollectorProcessor);
     return words.length > 0 ? words.join(", ") : null;
   }
 
+  // Synchronous accessor for the dynamic-vocabulary prompt string computed by
+  // warmupDynamicVocabulary() at hotkey-down (docs/specs/dynamic-prompt-vocabulary.md).
+  // Returns null until the warmup round trip resolves or if the feature is
+  // disabled/unavailable — callers already treat a falsy dictionary/vocab
+  // prompt as "nothing to add" via combineLocalTranscriptionPrompt's Boolean filter.
+  getDynamicVocabularyPrompt() {
+    return this._dynamicVocabPromptCache || null;
+  }
+
+  // Fires alongside warmupTranscriptionEngine()/warmupReasoningServer()/
+  // warmupScreenContext() at hotkey-down. Fire-and-forget from the caller's
+  // perspective (useAudioRecording.js never awaits this), but the in-flight
+  // promise is stashed on `this._dynamicVocabWarmupPromise` so that
+  // startRecording()'s own batching-preview setup (the default local-Whisper/
+  // Parakeet path, §19) can `await waitForDynamicVocabularyPrompt()` a few
+  // lines later, before building that path's `initialPrompt` — otherwise
+  // that call site would race the IPC round trip and could read a still-null
+  // cache depending on how quickly `getUserMedia()` resolves. The two other
+  // combine call sites run well after hotkey release, by which point this
+  // promise has always settled. Gated on the dynamicPromptVocabularyEnabled
+  // setting (default true) and — separately — dynamicPromptVocabularyIncludeScreenContext
+  // (default false). Computed once per recording and cached for the whole
+  // session, never re-queried per VAD chunk (§18/§19 pattern).
+  warmupDynamicVocabulary() {
+    this._dynamicVocabPromptCache = null;
+    this._dynamicVocabWarmupPromise = this._warmupDynamicVocabularyInner();
+    return this._dynamicVocabWarmupPromise;
+  }
+
+  async _warmupDynamicVocabularyInner() {
+    try {
+      if (typeof window === "undefined" || !window.electronAPI?.getDynamicVocabularyPrompt) return;
+      const settings = getSettings();
+      if (settings.dynamicPromptVocabularyEnabled === false) return; // default true
+      const includeScreenContext = !!settings.dynamicPromptVocabularyIncludeScreenContext;
+      const result = await window.electronAPI.getDynamicVocabularyPrompt({
+        includeScreenContext,
+      });
+      this._dynamicVocabPromptCache = result || null;
+    } catch {
+      // Best-effort — a missing/failed dynamic-vocab prompt is a no-op, never
+      // a blocker for transcription itself.
+      this._dynamicVocabPromptCache = null;
+    }
+  }
+
+  // Awaits the in-flight warmupDynamicVocabulary() promise (if any) before
+  // returning the (possibly still-null) cached prompt — see
+  // warmupDynamicVocabulary()'s comment for why the batching-preview call
+  // site needs this instead of the plain synchronous getter.
+  async waitForDynamicVocabularyPrompt() {
+    try {
+      await this._dynamicVocabWarmupPromise;
+    } catch {
+      // Already swallowed inside _warmupDynamicVocabularyInner; nothing to do.
+    }
+    return this.getDynamicVocabularyPrompt();
+  }
+
   isDictionaryEcho(text) {
     return matchesDictionaryPrompt(text, this.getCustomDictionaryPrompt());
   }
@@ -1074,7 +1133,15 @@ registerProcessor("pcm-collector-processor", PCMCollectorProcessor);
           const langHint = getMultiLanguagePromptHint(preferredLanguage);
           const acceptedLanguages = getAcceptedLanguageCodes(preferredLanguage);
           const dictionaryWords = this.getCustomDictionaryPrompt();
-          const combined = combineLocalTranscriptionPrompt(dictionaryWords, langHint);
+          // Awaited (not the plain synchronous getter) — this call site runs
+          // immediately after mic capture starts, racing the warmup IPC
+          // round trip. See warmupDynamicVocabulary()'s comment.
+          const dynamicVocabPrompt = await this.waitForDynamicVocabularyPrompt();
+          const combined = combineLocalTranscriptionPrompt(
+            dynamicVocabPrompt,
+            dictionaryWords,
+            langHint
+          );
           const initialPrompt = combined.prompt || undefined;
           if (combined.truncated) {
             logger.debug(
@@ -1423,8 +1490,9 @@ registerProcessor("pcm-collector-processor", PCMCollectorProcessor);
 
       // Build initial prompt from custom dictionary + multi-language hint
       const dictionaryPrompt = this.getCustomDictionaryPrompt();
+      const dynamicVocabPrompt = this.getDynamicVocabularyPrompt();
       const langHint = getMultiLanguagePromptHint(preferredLanguage);
-      const combined = combineLocalTranscriptionPrompt(dictionaryPrompt, langHint);
+      const combined = combineLocalTranscriptionPrompt(dynamicVocabPrompt, dictionaryPrompt, langHint);
       if (combined.prompt) {
         options.initialPrompt = combined.prompt;
       }
@@ -2209,7 +2277,9 @@ registerProcessor("pcm-collector-processor", PCMCollectorProcessor);
       const MAX_PROMPT_CHARS = isGroqEndpoint ? 890 : 900;
       const langHintForApi = getMultiLanguagePromptHint(apiSettings.preferredLanguage);
       let dictionaryPrompt = this.getCustomDictionaryPrompt();
+      const dynamicVocabPromptForApi = this.getDynamicVocabularyPrompt();
       const combinedApiPromptResult = combineCloudTranscriptionPrompt(
+        dynamicVocabPromptForApi,
         dictionaryPrompt,
         langHintForApi,
         MAX_PROMPT_CHARS
@@ -2774,6 +2844,11 @@ registerProcessor("pcm-collector-processor", PCMCollectorProcessor);
         // a turn that never reached processTranscription's reasoning branch
         // (e.g. reasoning disabled) leaves this null, per the reset above.
         screenContextText: this.lastScreenContextTextUsed ?? null,
+        // Gates whether the main process mines this turn's surviving tokens
+        // into vocabulary_stats (docs/specs/dynamic-prompt-vocabulary.md R10a)
+        // — mirrors the renderer-owned master toggle since the setting lives
+        // in renderer localStorage, not main-process state.
+        dynamicPromptVocabularyEnabled: getSettings().dynamicPromptVocabularyEnabled !== false,
       });
       if (result?.id) syncService.debouncedPush("transcription", result.id);
 

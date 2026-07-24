@@ -86,6 +86,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
     return () => ipcRenderer.removeListener("dictionary-updated", listener);
   },
   getLastTargetAppName: () => ipcRenderer.invoke("get-last-target-app-name"),
+  getDynamicVocabularyPrompt: (options) =>
+    ipcRenderer.invoke("get-dynamic-vocabulary-prompt", options),
   getNoteAudio: (noteId) => ipcRenderer.invoke("get-note-audio", noteId),
   retranscribeMeeting: (noteId, options) =>
     ipcRenderer.invoke("retranscribe-meeting", noteId, options),

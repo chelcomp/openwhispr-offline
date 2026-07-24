@@ -53,6 +53,11 @@ export const useAudioRecording = (toast, options = {}) => {
       // a pass that consumes it.
       audioManagerRef.current.warmupScreenContext();
 
+      // Dynamic Prompt Vocabulary (docs/specs/dynamic-prompt-vocabulary.md) —
+      // fire-and-forget, gated internally on dynamicPromptVocabularyEnabled;
+      // cached for the whole recording, not re-queried per VAD chunk.
+      audioManagerRef.current.warmupDynamicVocabulary();
+
       const autoUnmuteMic = getSettings().autoUnmuteMicEnabled;
       if (autoUnmuteMic) {
         // Querying prior mute state always goes through a slow PowerShell/COM

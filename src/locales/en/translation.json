@@ -1239,6 +1239,14 @@
       "persistLabel": "Save screenshots to disk",
       "persistDescription": "Also writes the captured screenshot as a PNG file, subject to the retention setting below (Settings → Privacy & Data). Off by default."
     },
+    "dynamicVocabulary": {
+      "title": "Dynamic Vocabulary",
+      "description": "Automatically surface recently-used words to improve transcription accuracy",
+      "toggleLabel": "Learn vocabulary from recent dictations",
+      "toggleDescription": "Mines recent transcripts for proper nouns and jargon you've said before and hints them to the transcription engine. On by default.",
+      "includeScreenContextLabel": "Also learn from screen context",
+      "includeScreenContextDescription": "Additionally mines previously-captured on-screen text (OCR) for vocabulary hints, applying to any later dictation regardless of transcription provider. Off by default."
+    },
     "workspace": {
       "title": "Workspace",
       "description": "Collaborate with teammates, share notes, and manage billing in one place.",

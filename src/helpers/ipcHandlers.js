@@ -1057,15 +1057,33 @@ class IPCHandlers {
     }
 
     ipcMain.handle("db-save-transcription", async (event, text, rawText, options) => {
-      // screenContextText (Requirement 14) is not a saveTranscription() column
-      // — extracted here and written via updateTranscriptionScreenContext()
-      // right after insert, so options's shape stays otherwise unchanged.
-      const { screenContextText, ...saveOptions } = options || {};
+      // screenContextText (Requirement 14) and dynamicPromptVocabularyEnabled
+      // (docs/specs/dynamic-prompt-vocabulary.md R10a) are not
+      // saveTranscription() columns — extracted here so options's shape
+      // stays otherwise unchanged for the DB write itself.
+      const { screenContextText, dynamicPromptVocabularyEnabled, ...saveOptions } = options || {};
       const result = this.databaseManager.saveTranscription(text, rawText, saveOptions);
       if (result?.success && result?.transcription) {
         if (screenContextText) {
           this.databaseManager.updateTranscriptionScreenContext(result.id, screenContextText);
           result.transcription.screen_context_text = screenContextText;
+        }
+        if (dynamicPromptVocabularyEnabled !== false) {
+          try {
+            const { extractVocabularyTokens } = require("./dynamicPromptVocabulary");
+            const tokens = new Set();
+            for (const field of [text, rawText]) {
+              if (!field) continue;
+              for (const token of extractVocabularyTokens(field)) tokens.add(token);
+            }
+            if (tokens.size > 0) {
+              this.databaseManager.recordVocabularyOccurrences([...tokens]);
+            }
+          } catch (err) {
+            debugLogger.debug("[DynamicVocab] Failed to record occurrences", {
+              error: err.message,
+            });
+          }
         }
         setImmediate(() => {
           this.broadcastToWindows("transcription-added", result.transcription);
@@ -1076,6 +1094,28 @@ class IPCHandlers {
 
     ipcMain.handle("db-get-transcriptions", async (event, limit = 50, options = {}) => {
       return this.databaseManager.getTranscriptions(limit, options);
+    });
+
+    // Dynamic Prompt Vocabulary (docs/specs/dynamic-prompt-vocabulary.md):
+    // mines the last 20 non-discarded transcription rows into a
+    // frequency/recency-ranked prompt string. `includeScreenContext` mirrors
+    // the renderer's dynamicPromptVocabularyIncludeScreenContext toggle
+    // (R1c) — screen_context_text is only read when explicitly true.
+    ipcMain.handle("get-dynamic-vocabulary-prompt", async (_event, options = {}) => {
+      try {
+        const { buildDynamicVocabularyPrompt } = require("./dynamicPromptVocabulary");
+        const rows = this.databaseManager.getTranscriptions(20, { includeDiscarded: false });
+        const existingDictionary = this._getDictionarySafe();
+        const vocabularyStats = this.databaseManager.getVocabularyStats();
+        return await buildDynamicVocabularyPrompt(rows, {
+          existingDictionary,
+          includeScreenContext: !!options?.includeScreenContext,
+          vocabularyStats,
+        });
+      } catch (err) {
+        debugLogger.debug("[DynamicVocab] Failed to build prompt", { error: err.message });
+        return "";
+      }
     });
 
     ipcMain.handle("db-clear-transcriptions", async (event) => {

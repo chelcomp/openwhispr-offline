@@ -89,6 +89,18 @@ class DatabaseManager {
         if (!err.message.includes("duplicate column")) throw err;
       }
 
+      // Dynamic Prompt Vocabulary (docs/specs/dynamic-prompt-vocabulary.md R10):
+      // persistent, recency-weighted word-frequency bookkeeping feeding the
+      // long-term half of the dynamic vocabulary scoring. Purely additive —
+      // no existing table/column touched, no migration needed (Premise #6).
+      this.db.exec(`
+        CREATE TABLE IF NOT EXISTS vocabulary_stats (
+          word TEXT PRIMARY KEY,
+          count INTEGER NOT NULL DEFAULT 0,
+          last_seen_at DATETIME NOT NULL
+        )
+      `);
+
       this.db.exec(`
         CREATE TABLE IF NOT EXISTS custom_dictionary (
           id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -774,6 +786,54 @@ class DatabaseManager {
     } catch (error) {
       debugLogger.error("Error clearing audio flags", { error: error.message }, "database");
       throw error;
+    }
+  }
+
+  // Upserts each surviving token from a completed transcription's dynamic
+  // vocabulary filter pipeline (docs/specs/dynamic-prompt-vocabulary.md R10a).
+  // Called once per completed transcription, gated by the caller on
+  // dynamicPromptVocabularyEnabled.
+  recordVocabularyOccurrences(words) {
+    try {
+      if (!this.db) {
+        throw new Error("Database not initialized");
+      }
+      const list = Array.isArray(words) ? words.filter((w) => typeof w === "string" && w.trim()) : [];
+      if (list.length === 0) return { success: true };
+
+      const stmt = this.db.prepare(`
+        INSERT INTO vocabulary_stats (word, count, last_seen_at)
+        VALUES (?, 1, datetime('now'))
+        ON CONFLICT(word) DO UPDATE SET
+          count = count + 1,
+          last_seen_at = excluded.last_seen_at
+      `);
+      const transaction = this.db.transaction((entries) => {
+        for (const word of entries) {
+          stmt.run(word);
+        }
+      });
+      transaction(list);
+      return { success: true };
+    } catch (error) {
+      debugLogger.error(
+        "Error recording vocabulary occurrences",
+        { error: error.message },
+        "database"
+      );
+      return { success: false, error: error.message };
+    }
+  }
+
+  getVocabularyStats() {
+    try {
+      if (!this.db) {
+        throw new Error("Database not initialized");
+      }
+      return this.db.prepare("SELECT word, count, last_seen_at FROM vocabulary_stats").all();
+    } catch (error) {
+      debugLogger.error("Error getting vocabulary stats", { error: error.message }, "database");
+      return [];
     }
   }
 

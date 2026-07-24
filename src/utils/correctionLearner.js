@@ -180,4 +180,4 @@ function extractCorrections(originalText, fieldValue, existingDictionary) {
   return results;
 }
 
-module.exports = { extractCorrections };
+module.exports = { extractCorrections, tokenize };

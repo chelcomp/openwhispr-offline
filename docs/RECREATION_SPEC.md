@@ -45,7 +45,35 @@ Estas são as discrepâncias mais relevantes encontradas entre a documentação 
     consecutivos rápidos (≤2s, mesmo app); nova coluna `screen_context_text` em
     `transcriptions` (migração aditiva); Tesseract.js é asset baixado sob demanda, não
     empacotado. Ver CLAUDE.md §20 e `docs/specs/active-window-screen-context.md`.
-11. ✅ **Corrigido.** Um `whisper-server` ausente (`resources/bin/`) costumava ser um beco sem saída: `WhisperManager.transcribeLocalWhisper()` lançava um erro sem `.code`, o `catch` de `transcribe-local-whisper` em `ipcHandlers.js` não reconhecia a mensagem (nenhum branch de substring casava), e o erro chegava ao renderer sem estrutura — a única recuperação era o script de dev `npm run download:whisper-cpp`. Agora: o erro carrega `err.code = "WHISPER_SERVER_BINARY_MISSING"` desde o throw site (`whisperServer.js`/`whisper.js`), passa por uma função pura de classificação extraída (`src/helpers/whisperErrorClassifier.js`'s `classifyLocalWhisperError()`), sobrevive aos dois pontos de re-wrap em `audioManager.js`, e chega ao toast de erro no `useAudioRecording.js` com um botão de ação "Download" que baixa e instala o binário em tempo de execução (`src/helpers/whisperBinaryInstaller.js`, IPC `download-whisper-server-binary`) em `userData/bin/` — local que `WhisperServerManager.getServerBinaryPath()` já verifica (mesmo padrão do binário CUDA). Escopo apenas para `whisper-server`; `llama-server` tem a mesma lacuna e é um follow-up documentado, não implementado. Ver `docs/specs/whisper-binary-missing-ux.md`.
+11. 🆕 **Novo (não é divergência, é feature nova).** Dynamic Prompt Vocabulary: uma segunda
+    fonte, totalmente automática, de palavras para o `initialPrompt` do Whisper, ao lado do
+    Custom Dictionary estático (CLAUDE.md §13). Um novo módulo puro, sem Electron/IPC,
+    `src/helpers/dynamicPromptVocabulary.js`, minera as últimas 20 linhas não descartadas de
+    `getTranscriptions()` (`text`/`raw_text`, e `screen_context_text` apenas quando o usuário
+    opta explicitamente pelo toggle separado `dynamicPromptVocabularyIncludeScreenContext`,
+    default `false`), reaproveitando o tokenizador de `correctionLearner.js`. Filtra
+    stopwords/fillers (`src/constants/dynamicVocabularyStopwords.json`, `en`/`pt`/`universal`),
+    tokens puramente numéricos, e tokens curtos — piso normal de 3 caracteres, mas com exceção
+    para acrônimos (caixa alta ou caixa alta+dígitos na grafia original, incluindo formas mistas
+    como "K8s") que sobrevivem a partir de 2 caracteres. Uma nova tabela `vocabulary_stats`
+    (`word`, `count`, `last_seen_at` — `CREATE TABLE IF NOT EXISTS` aditiva, sem migração
+    destrutiva) acumula um sinal de frequência de longo prazo com decaimento exponencial
+    (`VOCAB_STATS_HALF_LIFE_DAYS = 14`), combinado com a contagem da janela de sessão
+    (`SESSION_WEIGHT = 1.0` / `LONGTERM_WEIGHT = 0.3`). Um agrupamento semântico de variantes
+    quase-duplicadas (ex.: "deploy"/"deployment") via embeddings do processo utilitário ONNX foi
+    proposto em uma revisão anterior desta spec mas foi **descartado do escopo por completo, não
+    implementado** — `onnxWorker.js` não expõe nenhum handler genérico de embedding de texto em
+    produção, então essa etapa nunca poderia rodar de fato; variantes quase-duplicadas são
+    pontuadas como entradas separadas na v1. `combineLocalTranscriptionPrompt()`/
+    `combineCloudTranscriptionPrompt()` (`languageSupport.ts`) ganharam um novo parâmetro
+    líder opcional, `dynamicVocabPrompt`, unido como
+    `[dynamicVocabPrompt, dictionaryPrompt, langHint]` — a direção de truncamento
+    "preserva-o-final" já existente permanece inalterada, então esse novo segmento (de
+    confiança mais baixa) é descartado primeiro. Duas configurações novas e independentes:
+    `dynamicPromptVocabularyEnabled` (default `true`) e
+    `dynamicPromptVocabularyIncludeScreenContext` (default `false`). Ver CLAUDE.md §13 ("Dynamic
+    Prompt Vocabulary") e `docs/specs/dynamic-prompt-vocabulary.md`.
+12. ✅ **Corrigido.** Um `whisper-server` ausente (`resources/bin/`) costumava ser um beco sem saída: `WhisperManager.transcribeLocalWhisper()` lançava um erro sem `.code`, o `catch` de `transcribe-local-whisper` em `ipcHandlers.js` não reconhecia a mensagem (nenhum branch de substring casava), e o erro chegava ao renderer sem estrutura — a única recuperação era o script de dev `npm run download:whisper-cpp`. Agora: o erro carrega `err.code = "WHISPER_SERVER_BINARY_MISSING"` desde o throw site (`whisperServer.js`/`whisper.js`), passa por uma função pura de classificação extraída (`src/helpers/whisperErrorClassifier.js`'s `classifyLocalWhisperError()`), sobrevive aos dois pontos de re-wrap em `audioManager.js`, e chega ao toast de erro no `useAudioRecording.js` com um botão de ação "Download" que baixa e instala o binário em tempo de execução (`src/helpers/whisperBinaryInstaller.js`, IPC `download-whisper-server-binary`) em `userData/bin/` — local que `WhisperServerManager.getServerBinaryPath()` já verifica (mesmo padrão do binário CUDA). Escopo apenas para `whisper-server`; `llama-server` tem a mesma lacuna e é um follow-up documentado, não implementado. Ver `docs/specs/whisper-binary-missing-ux.md`.
 
 ---
 

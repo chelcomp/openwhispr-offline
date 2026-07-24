@@ -630,6 +630,58 @@ export function ScreenContextSettingsSection({
   );
 }
 
+// Settings → Speech-to-Text → Dictation's dynamic-vocabulary controls (see
+// docs/specs/dynamic-prompt-vocabulary.md). The master toggle defaults ON;
+// the OCR-derived-vocabulary toggle defaults OFF and only has any effect
+// while the master toggle is on.
+export function DynamicVocabularySettingsSection({
+  dynamicPromptVocabularyEnabled,
+  setDynamicPromptVocabularyEnabled,
+  dynamicPromptVocabularyIncludeScreenContext,
+  setDynamicPromptVocabularyIncludeScreenContext,
+}: {
+  dynamicPromptVocabularyEnabled: boolean;
+  setDynamicPromptVocabularyEnabled: (v: boolean) => void;
+  dynamicPromptVocabularyIncludeScreenContext: boolean;
+  setDynamicPromptVocabularyIncludeScreenContext: (v: boolean) => void;
+}) {
+  const { t } = useTranslation();
+  return (
+    <div>
+      <SectionHeader
+        title={t("settingsPage.dynamicVocabulary.title")}
+        description={t("settingsPage.dynamicVocabulary.description")}
+      />
+      <SettingsPanel>
+        <SettingsPanelRow>
+          <SettingsRow
+            label={t("settingsPage.dynamicVocabulary.toggleLabel")}
+            description={t("settingsPage.dynamicVocabulary.toggleDescription")}
+          >
+            <Toggle
+              checked={dynamicPromptVocabularyEnabled}
+              onChange={setDynamicPromptVocabularyEnabled}
+            />
+          </SettingsRow>
+        </SettingsPanelRow>
+        {dynamicPromptVocabularyEnabled && (
+          <SettingsPanelRow>
+            <SettingsRow
+              label={t("settingsPage.dynamicVocabulary.includeScreenContextLabel")}
+              description={t("settingsPage.dynamicVocabulary.includeScreenContextDescription")}
+            >
+              <Toggle
+                checked={dynamicPromptVocabularyIncludeScreenContext}
+                onChange={setDynamicPromptVocabularyIncludeScreenContext}
+              />
+            </SettingsRow>
+          </SettingsPanelRow>
+        )}
+      </SettingsPanel>
+    </div>
+  );
+}
+
 export function DictationVadTabs({
   initialTab,
   renderPreviewVadSettings,
@@ -881,6 +933,10 @@ export default function SettingsPage({
     setPersistActiveWindowScreenshots,
     screenContextRetentionDays,
     setScreenContextRetentionDays,
+    dynamicPromptVocabularyEnabled,
+    setDynamicPromptVocabularyEnabled,
+    dynamicPromptVocabularyIncludeScreenContext,
+    setDynamicPromptVocabularyIncludeScreenContext,
     transcriptionIdleTimeoutMs,
     setTranscriptionIdleTimeoutMs,
     llmIdleTimeoutMs,
@@ -3351,6 +3407,16 @@ EOF`,
                   setScreenContextOcrEngine={setScreenContextOcrEngine}
                   persistActiveWindowScreenshots={persistActiveWindowScreenshots}
                   setPersistActiveWindowScreenshots={setPersistActiveWindowScreenshots}
+                />
+                <DynamicVocabularySettingsSection
+                  dynamicPromptVocabularyEnabled={dynamicPromptVocabularyEnabled}
+                  setDynamicPromptVocabularyEnabled={setDynamicPromptVocabularyEnabled}
+                  dynamicPromptVocabularyIncludeScreenContext={
+                    dynamicPromptVocabularyIncludeScreenContext
+                  }
+                  setDynamicPromptVocabularyIncludeScreenContext={
+                    setDynamicPromptVocabularyIncludeScreenContext
+                  }
                 />
               </div>
             )}

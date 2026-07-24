@@ -86,7 +86,12 @@ test("LOCAL_INITIAL_PROMPT_MAX_CHARS equals 650", () => {
 // --- combineCloudTranscriptionPrompt -----------------------------------------
 
 test("combineCloudTranscriptionPrompt orders dictionary-then-hint (matching local) and doesn't truncate short input", () => {
-  const result = combineCloudTranscriptionPrompt("apple, banana", "The audio may be in: English.", 900);
+  const result = combineCloudTranscriptionPrompt(
+    null,
+    "apple, banana",
+    "The audio may be in: English.",
+    900
+  );
   assert.equal(result.prompt, "apple, banana The audio may be in: English.");
   assert.equal(result.truncated, false);
 });
@@ -95,7 +100,7 @@ test("combineCloudTranscriptionPrompt keeps the tail (hint intact) when the comb
   const longDictionary = Array.from({ length: 200 }, (_, i) => `entry${i}`).join(", ");
   const hint = "The audio may be in: English or Portuguese.";
   const maxChars = 300;
-  const result = combineCloudTranscriptionPrompt(longDictionary, hint, maxChars);
+  const result = combineCloudTranscriptionPrompt(null, longDictionary, hint, maxChars);
 
   assert.equal(result.truncated, true);
   assert.ok(result.prompt.endsWith(hint), "hint must survive truncation intact (tail preserved)");
@@ -106,7 +111,7 @@ test("combineCloudTranscriptionPrompt does not begin mid-entry: starts after a c
   const longDictionary = Array.from({ length: 200 }, (_, i) => `entry${i}`).join(", ");
   const hint = "Hint.";
   const maxChars = 250;
-  const result = combineCloudTranscriptionPrompt(longDictionary, hint, maxChars);
+  const result = combineCloudTranscriptionPrompt(null, longDictionary, hint, maxChars);
 
   assert.equal(result.truncated, true);
   // The kept tail (before boundary trimming) must have contained a comma —
@@ -128,7 +133,7 @@ test("combineCloudTranscriptionPrompt falls back to the first whitespace boundar
   const longSingleEntry = "word".repeat(200);
   const hint = "Hint.";
   const maxChars = 50;
-  const result = combineCloudTranscriptionPrompt(longSingleEntry, hint, maxChars);
+  const result = combineCloudTranscriptionPrompt(null, longSingleEntry, hint, maxChars);
 
   assert.equal(result.truncated, true);
   const combined = [longSingleEntry, hint].filter(Boolean).join(" ");
@@ -141,8 +146,74 @@ test("combineCloudTranscriptionPrompt never truncates the hint itself, even when
   const longDictionary = Array.from({ length: 50 }, (_, i) => `dictword${i}`).join(", ");
   const hint = "Short hint.";
   const maxChars = hint.length + 20; // smaller than the dictionary, larger than the hint
-  const result = combineCloudTranscriptionPrompt(longDictionary, hint, maxChars);
+  const result = combineCloudTranscriptionPrompt(null, longDictionary, hint, maxChars);
 
   assert.equal(result.truncated, true);
   assert.equal(result.prompt.endsWith(hint), true);
+});
+
+// --- Dynamic Prompt Vocabulary: new leading parameter (backward-compat + priority) ---
+
+// Construct a combined string that overflows maxChars only after the dynamic
+// vocab segment is added, so we can prove: (a) without vocab, dictionary+hint
+// alone fit and would not be truncated; (b) with vocab prepended, the
+// truncation drops the vocab segment first, in full, leaving both the
+// dictionary and hint segments intact. `dictionaryPrompt`/`langHint` are
+// deliberately comma-free here so neither truncation algorithm's
+// comma-boundary logic can catch on them instead of the vocab/dictionary
+// join point.
+function buildVocabPriorityFixture() {
+  const vocabWords = Array.from({ length: 100 }, (_, i) => `xvocab${i}`);
+  const dynamicVocab = vocabWords.join(", ");
+  const dictionaryPrompt = "widgetword";
+  const langHint = "Hint.";
+  const suffix = ` ${dictionaryPrompt} ${langHint}`;
+  const bleed = 3; // < last vocab word's length, and it itself has no comma/space
+  const maxChars = suffix.length + bleed;
+  return { dynamicVocab, dictionaryPrompt, langHint, maxChars };
+}
+
+test("combineLocalTranscriptionPrompt places dynamicVocabPrompt first and drops it before dictionary/hint on truncation", () => {
+  const { dynamicVocab, dictionaryPrompt, langHint, maxChars } = buildVocabPriorityFixture();
+
+  // Sanity: dictionary + hint alone (no vocab) fit comfortably without truncation.
+  const withoutVocab = combineLocalTranscriptionPrompt(null, dictionaryPrompt, langHint, maxChars);
+  assert.equal(withoutVocab.truncated, false);
+
+  const result = combineLocalTranscriptionPrompt(
+    dynamicVocab,
+    dictionaryPrompt,
+    langHint,
+    maxChars
+  );
+  assert.equal(result.truncated, true);
+  assert.equal(result.prompt, `${dictionaryPrompt} ${langHint}`);
+  assert.ok(!result.prompt.includes("xvocab"), "dynamic vocab segment must be dropped entirely");
+});
+
+test("combineCloudTranscriptionPrompt places dynamicVocabPrompt first and drops it before dictionary/hint on truncation", () => {
+  const { dynamicVocab, dictionaryPrompt, langHint, maxChars } = buildVocabPriorityFixture();
+
+  const withoutVocab = combineCloudTranscriptionPrompt(null, dictionaryPrompt, langHint, maxChars);
+  assert.equal(withoutVocab.truncated, false);
+
+  const result = combineCloudTranscriptionPrompt(
+    dynamicVocab,
+    dictionaryPrompt,
+    langHint,
+    maxChars
+  );
+  assert.equal(result.truncated, true);
+  assert.equal(result.prompt, `${dictionaryPrompt} ${langHint}`);
+  assert.ok(!result.prompt.includes("xvocab"), "dynamic vocab segment must be dropped entirely");
+});
+
+test("combineLocalTranscriptionPrompt omitting dynamicVocabPrompt (undefined) preserves prior 2-arg behavior", () => {
+  const result = combineLocalTranscriptionPrompt(
+    undefined,
+    "apple, banana",
+    "The audio may be in: English."
+  );
+  assert.equal(result.prompt, "apple, banana The audio may be in: English.");
+  assert.equal(result.truncated, false);
 });

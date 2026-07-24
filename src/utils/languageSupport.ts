@@ -71,21 +71,26 @@ export interface CombinedTranscriptionPrompt {
 }
 
 /**
- * Combines the custom-dictionary prompt and the multi-language hint for local
- * (whisper.cpp) transcription, in dictionary-then-hint order (hint last).
- * whisper.cpp's own prompt handling drops content from the front as the
- * prompt overflows its token window, so the hint — short and specifically
- * relevant to the language-detection bug this exists to fix — must sit at
- * the end, where it's safest. If the combined string exceeds `maxChars`,
- * keeps the last `maxChars` characters, then trims forward to the next word
- * boundary so the retained text doesn't begin mid-word.
+ * Combines the dynamic-vocabulary prompt (docs/specs/dynamic-prompt-vocabulary.md),
+ * the custom-dictionary prompt, and the multi-language hint for local
+ * (whisper.cpp) transcription, in vocab-then-dictionary-then-hint order (hint
+ * last). whisper.cpp's own prompt handling drops content from the front as
+ * the prompt overflows its token window, so the hint — short and
+ * specifically relevant to the language-detection bug this exists to fix —
+ * must sit at the end, where it's safest, and the lower-confidence dynamic
+ * vocabulary segment is dropped first. `dynamicVocabPrompt` is optional —
+ * omitting it (undefined/null/empty) preserves prior behavior exactly. If
+ * the combined string exceeds `maxChars`, keeps the last `maxChars`
+ * characters, then trims forward to the next word boundary so the retained
+ * text doesn't begin mid-word.
  */
 export function combineLocalTranscriptionPrompt(
+  dynamicVocabPrompt: string | null | undefined,
   dictionaryPrompt: string | null | undefined,
   langHint: string | null | undefined,
   maxChars: number = LOCAL_INITIAL_PROMPT_MAX_CHARS
 ): CombinedTranscriptionPrompt {
-  const combined = [dictionaryPrompt, langHint].filter(Boolean).join(" ");
+  const combined = [dynamicVocabPrompt, dictionaryPrompt, langHint].filter(Boolean).join(" ");
   const originalLength = combined.length;
 
   if (originalLength <= maxChars) {
@@ -104,10 +109,11 @@ export function combineLocalTranscriptionPrompt(
 }
 
 /**
- * Combines the custom-dictionary prompt and the multi-language hint for
- * cloud (OpenAI/Groq/self-hosted "custom") transcription. Shares
- * combineLocalTranscriptionPrompt()'s order (dictionary, then hint) and
- * keep-tail truncation direction — both OpenAI's and Groq's documented
+ * Combines the dynamic-vocabulary prompt, the custom-dictionary prompt, and
+ * the multi-language hint for cloud (OpenAI/Groq/self-hosted "custom")
+ * transcription. `dynamicVocabPrompt` is optional — omitting it preserves
+ * prior behavior exactly. Shares combineLocalTranscriptionPrompt()'s order
+ * (vocab, dictionary, then hint) and keep-tail truncation direction — both OpenAI's and Groq's documented
  * behavior keep the final ~224 tokens of an over-length prompt and drop the
  * front, the same direction and ceiling already source-verified for the
  * bundled whisper.cpp fork. See docs/specs/dictation-language-detection-fix.md
@@ -119,11 +125,12 @@ export function combineLocalTranscriptionPrompt(
  * the first whitespace character if the kept tail contains no comma at all.
  */
 export function combineCloudTranscriptionPrompt(
+  dynamicVocabPrompt: string | null | undefined,
   dictionaryPrompt: string | null | undefined,
   langHint: string | null | undefined,
   maxChars: number
 ): CombinedTranscriptionPrompt {
-  const combined = [dictionaryPrompt, langHint].filter(Boolean).join(" ");
+  const combined = [dynamicVocabPrompt, dictionaryPrompt, langHint].filter(Boolean).join(" ");
   const originalLength = combined.length;
 
   if (originalLength <= maxChars) {

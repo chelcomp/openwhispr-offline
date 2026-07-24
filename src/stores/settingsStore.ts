@@ -211,6 +211,8 @@ const BOOLEAN_SETTINGS = new Set([
   "notifyUpdates",
   "includeActiveWindowContext",
   "persistActiveWindowScreenshots",
+  "dynamicPromptVocabularyEnabled",
+  "dynamicPromptVocabularyIncludeScreenContext",
 ]);
 
 const ARRAY_SETTINGS = new Set(["customDictionary", "snippets", "onboardingUseCases"]);
@@ -747,6 +749,8 @@ export interface SettingsState
   setScreenContextOcrEngine: (value: "auto" | "native" | "tesseract") => void;
   setPersistActiveWindowScreenshots: (value: boolean) => void;
   setScreenContextRetentionDays: (days: number) => void;
+  setDynamicPromptVocabularyEnabled: (value: boolean) => void;
+  setDynamicPromptVocabularyIncludeScreenContext: (value: boolean) => void;
   setTranscriptionIdleTimeoutMs: (ms: number) => void;
   setLlmIdleTimeoutMs: (ms: number) => void;
   setDataRetentionEnabled: (value: boolean) => void;
@@ -1152,6 +1156,15 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
     return v === "native" || v === "tesseract" ? v : ("auto" as const);
   })() as "auto" | "native" | "tesseract",
   persistActiveWindowScreenshots: readBoolean("persistActiveWindowScreenshots", false),
+  // Dynamic Prompt Vocabulary (docs/specs/dynamic-prompt-vocabulary.md).
+  // Master toggle (transcript-derived sources) defaults ON; the separate
+  // OCR-derived-vocabulary gate defaults OFF (opt-in, per the spec's
+  // resolved privacy decision).
+  dynamicPromptVocabularyEnabled: readBoolean("dynamicPromptVocabularyEnabled", true),
+  dynamicPromptVocabularyIncludeScreenContext: readBoolean(
+    "dynamicPromptVocabularyIncludeScreenContext",
+    false
+  ),
   screenContextRetentionDays: (() => {
     if (!isBrowser) return 0;
     const stored = localStorage.getItem("screenContextRetentionDays");
@@ -1722,6 +1735,10 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
     set({ screenContextOcrEngine: value });
   },
   setPersistActiveWindowScreenshots: createBooleanSetter("persistActiveWindowScreenshots"),
+  setDynamicPromptVocabularyEnabled: createBooleanSetter("dynamicPromptVocabularyEnabled"),
+  setDynamicPromptVocabularyIncludeScreenContext: createBooleanSetter(
+    "dynamicPromptVocabularyIncludeScreenContext"
+  ),
   setScreenContextRetentionDays: (days: number) => {
     if (isBrowser) localStorage.setItem("screenContextRetentionDays", String(days));
     set({ screenContextRetentionDays: days });

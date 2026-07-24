@@ -1130,6 +1130,14 @@
       "persistLabel": "Salvar capturas de tela no disco",
       "persistDescription": "Também grava a captura de tela feita como um arquivo PNG, sujeito à configuração de retenção abaixo (Configurações → Privacidade e Dados). Desativado por padrão."
     },
+    "dynamicVocabulary": {
+      "title": "Vocabulário Dinâmico",
+      "description": "Reconhece automaticamente palavras usadas recentemente para melhorar a precisão da transcrição",
+      "toggleLabel": "Aprender vocabulário de ditados recentes",
+      "toggleDescription": "Analisa transcrições recentes em busca de nomes próprios e termos técnicos já ditados antes e os sugere ao motor de transcrição. Ativado por padrão.",
+      "includeScreenContextLabel": "Também aprender com o contexto da tela",
+      "includeScreenContextDescription": "Analisa adicionalmente o texto extraído por OCR de capturas de tela anteriores, aplicando-se a qualquer ditado posterior, independente do provedor de transcrição. Desativado por padrão."
+    },
     "account": {
       "badges": {
         "free": "Gratuito",

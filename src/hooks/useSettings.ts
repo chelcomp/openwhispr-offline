@@ -90,6 +90,8 @@ export interface PrivacySettings {
   screenContextOcrEngine: "auto" | "native" | "tesseract";
   persistActiveWindowScreenshots: boolean;
   screenContextRetentionDays: number;
+  dynamicPromptVocabularyEnabled: boolean;
+  dynamicPromptVocabularyIncludeScreenContext: boolean;
 }
 
 export interface ThemeSettings {
@@ -425,6 +427,11 @@ function useSettingsInternal() {
     setPersistActiveWindowScreenshots: store.setPersistActiveWindowScreenshots,
     screenContextRetentionDays: store.screenContextRetentionDays,
     setScreenContextRetentionDays: store.setScreenContextRetentionDays,
+    dynamicPromptVocabularyEnabled: store.dynamicPromptVocabularyEnabled,
+    setDynamicPromptVocabularyEnabled: store.setDynamicPromptVocabularyEnabled,
+    dynamicPromptVocabularyIncludeScreenContext: store.dynamicPromptVocabularyIncludeScreenContext,
+    setDynamicPromptVocabularyIncludeScreenContext:
+      store.setDynamicPromptVocabularyIncludeScreenContext,
     transcriptionIdleTimeoutMs: store.transcriptionIdleTimeoutMs,
     setTranscriptionIdleTimeoutMs: store.setTranscriptionIdleTimeoutMs,
     llmIdleTimeoutMs: store.llmIdleTimeoutMs,
